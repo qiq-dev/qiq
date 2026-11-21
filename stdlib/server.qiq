@@ -22,7 +22,7 @@ import gmdate, date, time, microtime from "date";
 import exit from "program";
 import strtolower, strtoupper, substr, strpos, str_contains, str_starts_with, str_ends_with, explode, implode, trim, string_to_bytes, bytes_to_string, htmlspecialchars from "string";
 import urldecode, rawurldecode, rawurlencode, __http_hex from "http";
-import __socket_write, __socket_write_bytes, __socket_read_line, __socket_read_exactly, __socket_close, __socket_peer, __socket_set_timeout, __server_listen, __server_listen_unix, __server_close, __server_accept, __server_wait_request, __server_stopping, __server_cpu_count, __server_start from "net";
+import __socket_write, __socket_write_bytes, __socket_read_line, __socket_read_exactly, __socket_close, __socket_peer, __socket_set_timeout, __server_listen, __server_listen_unix, __server_close, __server_accept, __server_wait_request, __server_stopping, __server_cpu_count, __server_start, __server_file_length, __socket_send_file from "net";
 
 // An HTTP request received by the server.
 class Request {
@@ -116,11 +116,17 @@ final class ResponseWriter {
     private int code;
     private map[string, string] fields;
     private byte[] body;
+    // A file whose first `fileLength` bytes are the body, or null: set by
+    // http_file_server and sent straight from the file (__socket_send_file).
+    // Reading or adding to the body loads it into `body` first.
+    private string file;
+    private int fileLength;
 
     function __construct() {
         this->code = 200;
         this->fields = {};
         this->body = [];
+        this->file = null;
     }
 
     // Sets the status code (200 by default).
@@ -157,10 +163,12 @@ final class ResponseWriter {
 
     // Appends text to the body.
     function write(string text): void {
+        this->__loadFile();
         array_splice(this->body, len(this->body), 0, string_to_bytes(text));
     }
 
     function writeBytes(byte[] data): void {
+        this->__loadFile();
         array_splice(this->body, len(this->body), 0, data);
     }
 
@@ -168,6 +176,7 @@ final class ResponseWriter {
     function redirect(string url, int code = 302): void {
         this->status(code);
         this->header("Location", url);
+        this->file = null;
         this->body = string_to_bytes("<a href=\"" + htmlspecialchars(url) + "\">" + __server_reason(code) + "</a>.\n");
         this->header("Content-Type", "text/html; charset=utf-8");
     }
@@ -176,12 +185,14 @@ final class ResponseWriter {
     // w->error(404) sends "404 Not Found".
     function error(int code, string message = null): void {
         this->status(code);
+        this->file = null;
         this->body = string_to_bytes((message ?? to_string(code) + " " + __server_reason(code)) + "\n");
         this->header("Content-Type", "text/plain; charset=utf-8");
     }
 
     // The body written so far.
     function bytes(): byte[] {
+        this->__loadFile();
         return this->body;
     }
 
@@ -193,6 +204,35 @@ final class ResponseWriter {
         this->code = 200;
         this->fields = {};
         this->body = [];
+        this->file = null;
+    }
+
+    // Makes the first `length` bytes of `path` the body, to be sent from the
+    // file without reading it into memory.
+    function __sendFile(string path, int length): void {
+        this->body = [];
+        this->file = path;
+        this->fileLength = length;
+    }
+
+    function __file(): string {
+        return this->file;
+    }
+
+    function __fileLength(): int {
+        return this->fileLength;
+    }
+
+    // Reads a file body set by __sendFile into `body`.
+    function __loadFile(): void {
+        if (this->file != null) {
+            byte[] data = file_get_bytes(this->file);
+            if (len(data) > this->fileLength) {
+                array_splice(data, this->fileLength, len(data) - this->fileLength);
+            }
+            this->body = data;
+            this->file = null;
+        }
     }
 }
 
@@ -525,16 +565,17 @@ function http_file_server(string directory): function(Request, ResponseWriter): 
     };
 }
 
+// Replies with a file. It's sent straight from the file when the response is
+// sent, so serving a large file doesn't read it into memory.
 function __server_send_file(ResponseWriter w, string file): void {
-    byte[] data = [];
-    try {
-        data = file_get_bytes(file);
-    } catch (Exception e) {
+    int length = __server_file_length(file);
+    if (length < 0) {
+        // Not readable.
         w->error(403);
         return;
     }
     w->header("Content-Type", http_content_type(file));
-    w->writeBytes(data);
+    w->__sendFile(file, length);
 }
 
 function __server_send_listing(ResponseWriter w, string directory, string path): void {
@@ -919,7 +960,14 @@ function __server_reply_error(int connection, int code, string protocol): void {
 
 function __server_send(int connection, string protocol, string method, ResponseWriter writer, bool keepAlive): void {
     int code = writer->statusCode();
-    byte[] body = writer->bytes();
+    // A file body is sent from the file; anything else from `body`.
+    string file = writer->__file();
+    byte[] body = [];
+    int length = writer->__fileLength();
+    if (file == null) {
+        body = writer->bytes();
+        length = len(body);
+    }
     string head = protocol + " " + to_string(code) + " " + __server_reason(code) + "\r\n";
     map[string, string] fields = writer->__fields();
     if (writer->getHeader("Date") == null) {
@@ -936,7 +984,7 @@ function __server_send(int connection, string protocol, string method, ResponseW
         }
     }
     if (!bodyless) {
-        head = head + "Content-Length: " + to_string(len(body)) + "\r\n";
+        head = head + "Content-Length: " + to_string(length) + "\r\n";
     }
     if (keepAlive) {
         if (protocol == "HTTP/1.0") {
@@ -946,8 +994,12 @@ function __server_send(int connection, string protocol, string method, ResponseW
         head = head + "Connection: close\r\n";
     }
     __socket_write(connection, head + "\r\n");
-    if (method != "HEAD" && !bodyless && len(body) > 0) {
-        __socket_write_bytes(connection, body);
+    if (method != "HEAD" && !bodyless && length > 0) {
+        if (file != null) {
+            __socket_send_file(connection, file, length);
+        } else {
+            __socket_write_bytes(connection, body);
+        }
     }
 }
 

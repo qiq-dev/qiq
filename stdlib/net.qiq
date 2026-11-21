@@ -21,6 +21,8 @@ extern function __server_wait_request(int handle, int listener, int timeout): bo
 extern function __server_stopping(): bool;
 extern function __server_cpu_count(): int;
 extern function __server_start(int workers): int;
+extern function __server_file_length(string path): int;
+extern function __socket_send_file(int handle, string path, int length): void;
 
 // A connection to a server. Every connect, read, and write waits at most
 // `timeout` seconds. With `tls`, the connection is encrypted and the

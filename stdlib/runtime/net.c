@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <signal.h>
+#include <sys/sendfile.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -418,6 +419,68 @@ QIQ_GUARDED_VOID(qiq_stdlib___socket_write, (int64_t handle, const char *text), 
     QiqSocket *socket = qiq_socket(handle);
     if (text == NULL) qiq_throw(QIQ_RUNTIME_EXCEPTION, "cannot write a null string");
     qiq_send_all(socket, (const unsigned char *)text, strlen(text));
+}
+
+// The length of the regular file at `path` if it can be opened for reading,
+// otherwise -1. For http_file_server, which then streams the file with
+// __socket_send_file.
+int64_t qiq_stdlib___server_file_length(const char *path) {
+    if (path == NULL) return -1;
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return -1;
+    struct stat info;
+    int64_t length = fstat(fd, &info) == 0 && S_ISREG(info.st_mode) ? (int64_t)info.st_size : -1;
+    close(fd);
+    return length;
+}
+
+// Sends the first `length` bytes of the file at `path`, straight from the
+// file to the socket with sendfile (or, over TLS, through a 64 KB buffer),
+// so a large file is never read into memory.
+QIQ_GUARDED_VOID(qiq_stdlib___socket_send_file, (int64_t handle, const char *path, int64_t length),
+                 (handle, path, length)) {
+    QiqSocket *socket = qiq_socket(handle);
+    if (path == NULL) qiq_throw(QIQ_RUNTIME_EXCEPTION, "file path is null");
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) qiq_throwf(QIQ_NETWORK_EXCEPTION, "sending %s failed: %s", path, strerror(errno));
+    // Closes the file when anything below throws, then passes the exception on.
+    jmp_buf environment;
+    jmp_buf *previous = qiq_guard_enter(&environment);
+    if (setjmp(environment)) {
+        qiq_guard_leave(previous);
+        close(fd);
+        longjmp(*previous, 1);
+    }
+    off_t offset = 0;
+    bool use_sendfile = !socket->tls;
+    while (offset < length) {
+        if (use_sendfile) {
+            ssize_t sent = sendfile(socket->fd, fd, &offset, (size_t)(length - offset));
+            if (sent > 0) continue;
+            if (sent < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                qiq_wait(socket, POLLOUT, "writing to");
+                continue;
+            }
+            if (sent < 0 && errno == EINTR) continue;
+            if (sent < 0 && (errno == EINVAL || errno == ENOSYS)) {
+                // Not supported for this file or socket: copy it instead.
+                use_sendfile = false;
+                continue;
+            }
+            if (sent == 0) qiq_throwf(QIQ_NETWORK_EXCEPTION, "sending %s failed: it got shorter", path);
+            qiq_throwf(QIQ_NETWORK_EXCEPTION, "writing to %s failed: %s", socket->peer, strerror(errno));
+        }
+        unsigned char buffer[65536];
+        size_t wanted = (size_t)(length - offset) < sizeof buffer ? (size_t)(length - offset) : sizeof buffer;
+        ssize_t got = pread(fd, buffer, wanted, offset);
+        if (got < 0 && errno == EINTR) continue;
+        if (got < 0) qiq_throwf(QIQ_NETWORK_EXCEPTION, "sending %s failed: %s", path, strerror(errno));
+        if (got == 0) qiq_throwf(QIQ_NETWORK_EXCEPTION, "sending %s failed: it got shorter", path);
+        qiq_send_all(socket, buffer, (size_t)got);
+        offset += got;
+    }
+    qiq_guard_leave(previous);
+    close(fd);
 }
 
 QIQ_GUARDED_VOID(qiq_stdlib___socket_write_bytes, (int64_t handle, void *data), (handle, data)) {

@@ -220,6 +220,22 @@ QIQ_GUARDED(void *, qiq_stdlib_file_get_bytes, NULL, (const char *path), (path))
     if (stat(path, &info) == 0 && S_ISDIR(info.st_mode)) qiq_throw_file_error(EISDIR, "read", path);
     FILE *file = fopen(path, "rb");
     if (file == NULL) qiq_throw_file_error(errno, "read", path);
+    // A regular file is read straight into an array of its size. Reading into
+    // a growing buffer and copying that into the array took ten times as long
+    // for a 1 MB file, mostly in page faults for the extra memory.
+    if (fstat(fileno(file), &info) == 0 && S_ISREG(info.st_mode) && info.st_size > 0) {
+        size_t expected = (size_t)info.st_size;
+        void *bytes = qiq_array_create((int64_t)expected, 1, 0);
+        size_t read = fread(QIQ_ARRAY_DATA(bytes), 1, expected, file);
+        if (read == expected && fgetc(file) == EOF && !ferror(file)) {
+            fclose(file);
+            return bytes;
+        }
+        // It changed size while being read, or a read failed: read it again
+        // below, which handles both.
+        qiq_release(bytes);
+        rewind(file);
+    }
     size_t capacity = 4096;
     size_t length = 0;
     unsigned char *contents = malloc(capacity);
