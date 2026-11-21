@@ -51,13 +51,20 @@ int qiq_format_int(char *buffer, int64_t value);
 // static headers and are never freed.
 
 typedef struct {
-    int64_t references;   // > 0 while in use; QIQ_STATIC_REFERENCES for literals
+    int32_t references;   // > 0 while in use; QIQ_STATIC_REFERENCES for literals
+    uint32_t hash;        // a string's hash for maps, once QIQ_HASHED is set
     uint32_t kind;        // QIQ_KIND_*, which includes QIQ_KIND_MAGIC
     uint32_t flags;       // QIQ_*_ARE_REFERENCES
 } QiqHeader;
+// The compiler lays out string literals' headers as { i64 -1, i32 kind, i32 0 }.
+_Static_assert(sizeof(QiqHeader) == 16, "QiqHeader must stay 16 bytes");
 
 #define QIQ_HEADER(value) ((QiqHeader *)((char *)(value) - sizeof(QiqHeader)))
 #define QIQ_STATIC_REFERENCES (-1)
+// A count that reached this stays there: the value is never freed rather
+// than freed while still referenced (it takes 2^31 references, 16 GB of
+// them, to get there).
+#define QIQ_SATURATED_REFERENCES INT32_MAX
 
 #define QIQ_KIND_MAGIC 0x71690000u
 #define QIQ_KIND_STRING (QIQ_KIND_MAGIC | 1u)
@@ -81,6 +88,9 @@ typedef struct {
 #define QIQ_WHITE (2u << 8)          // garbage, unless found to be reachable
 #define QIQ_PURPLE (3u << 8)         // a possible root of a garbage cycle
 #define QIQ_BUFFERED (1u << 10)      // in the list of possible roots
+// String flag: `hash` holds the string's hash (map.c). Strings are immutable,
+// so it stays right; literals, which are read-only, never get one.
+#define QIQ_HASHED (1u << 11)
 // Bits 24 to 31 hold the block's size class for memory.c's cache of freed
 // blocks; flags must otherwise stay below them.
 

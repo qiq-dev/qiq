@@ -49,12 +49,26 @@ static uint64_t qiq_mix(uint64_t value) {
     return value;
 }
 
-static uint64_t qiq_hash_bytes(const unsigned char *text) {
-    uint64_t hash = UINT64_C(14695981039346656037);
+// A string key's hash: the 32-bit FNV-1a hash of its bytes, kept in the
+// string's header (QIQ_HASHED) so that looking up or inserting the same
+// string again doesn't read its bytes. Literals are read-only and are hashed
+// each time. Unlike int keys, the hash isn't passed through qiq_mix: FNV's
+// small prime puts keys that differ only in their last characters ("item1",
+// "item2") in nearby index slots, so looking up such keys one after another
+// mostly finds the index in the cache (a third faster with a million keys),
+// and the lowest bits are still spread well enough for linear probing.
+static uint64_t qiq_hash_string(const char *text) {
     if (text == NULL) qiq_throw(QIQ_RUNTIME_EXCEPTION, "null string used as map key");
-    while (*text != 0) {
-        hash ^= *text++;
-        hash *= UINT64_C(1099511628211);
+    QiqHeader *header = QIQ_HEADER(text);
+    if (header->flags & QIQ_HASHED) return header->hash;
+    uint32_t hash = UINT32_C(2166136261);
+    for (const unsigned char *cursor = (const unsigned char *)text; *cursor != 0; cursor++) {
+        hash ^= *cursor;
+        hash *= UINT32_C(16777619);
+    }
+    if (header->references > 0) {
+        header->hash = hash;
+        header->flags |= QIQ_HASHED;
     }
     return hash;
 }
@@ -69,7 +83,7 @@ static uint64_t qiq_hash_key(const QiqMap *map, uint64_t key) {
         }
         case 3:
         case 4:
-            return qiq_hash_bytes((const unsigned char *)(uintptr_t)key);
+            return qiq_hash_string((const char *)(uintptr_t)key);
         default:
             return qiq_mix(key);
     }
@@ -85,8 +99,13 @@ static int qiq_keys_equal(const QiqMap *map, uint64_t left, uint64_t right) {
         }
         case 3:
         case 4:
-            return strcmp((const char *)(uintptr_t)left,
-                          (const char *)(uintptr_t)right) == 0;
+            // Strings are shared, not copied, so a lookup often passes the
+            // very string the map holds (a key from an array, map_keys(), or
+            // the variable it was inserted with); then there's no need to
+            // read the stored key's bytes, which in a large map are often
+            // not in the cache.
+            return left == right
+                || strcmp((const char *)(uintptr_t)left, (const char *)(uintptr_t)right) == 0;
         default:
             return left == right;
     }

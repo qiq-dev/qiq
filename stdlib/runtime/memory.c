@@ -106,7 +106,9 @@ static QiqHeader *qiq_block(size_t bytes, bool zero) {
         header = zero ? calloc(1, bytes) : malloc(bytes);
     } else if (qiq_cached[class] != NULL) {
         header = qiq_cached[class];
-        qiq_cached[class] = (QiqHeader *)(intptr_t)header->references;
+        QiqHeader *next;
+        memcpy(&next, header, sizeof next);
+        qiq_cached[class] = next;
         qiq_cached_count[class]--;
         if (zero) memset(header, 0, QIQ_CLASS_BYTES(class));
     } else {
@@ -172,7 +174,7 @@ static QiqHeader *qiq_checked_header(void *value) {
 void qiq_retain(void *value) {
     if (value == NULL) return;
     QiqHeader *header = qiq_checked_header(value);
-    if (header->references > 0) header->references++;
+    if (header->references > 0 && header->references < QIQ_SATURATED_REFERENCES) header->references++;
 }
 
 static void qiq_free_header(QiqHeader *header) {
@@ -188,7 +190,9 @@ static void qiq_free_header(QiqHeader *header) {
     }
     // A cleared kind makes a stray use of the block fail qiq_checked_header.
     header->kind = 0;
-    header->references = (int64_t)(intptr_t)qiq_cached[class];
+    // The link to the next cached block takes the place of the count and hash.
+    QiqHeader *next = qiq_cached[class];
+    memcpy(header, &next, sizeof next);
     qiq_cached[class] = header;
     qiq_cached_count[class]++;
 }
@@ -240,6 +244,7 @@ static void qiq_drop(QiqHeader *header) {
 void qiq_release(void *value) {
     if (value == NULL) return;
     QiqHeader *header = qiq_checked_header(value);
+    if (header->references == QIQ_SATURATED_REFERENCES) return;
     if (header->references > 1) {
         header->references--;
         if (header->flags & QIQ_MAY_CYCLE) qiq_possible_root(header);
