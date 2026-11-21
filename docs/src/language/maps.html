@@ -43,7 +43,7 @@ print(names);
 ```
 
 <h2>Maps are references</h2>
-<p>Like arrays, maps are shared when assigned or passed, so a function can fill in a map it's given. Map variables can be reassigned, for example to <code>{}</code> to start over.</p>
+<p>Like arrays, maps are shared when assigned or passed, so a function can fill in a map it's given. Map variables can be reassigned, for example to <code>{}</code> to start over. Comparing two maps with <code>==</code> compares their keys and values, in any order, not whether they're the same map; see <a href="operators.html">Operators</a>.</p>
 
 <h2>Order</h2>
 <p>Maps keep their entries in the order the keys were first added, as PHP arrays and Python dicts do. <code>foreach</code>, <code>print</code>, <a href="function.map-keys.html"><code>map_keys</code></a>, and <a href="function.json-encode.html"><code>json_encode</code></a> all follow that order. Updating a key's value keeps its place; removing a key and adding it again moves it to the end.</p>

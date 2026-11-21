@@ -41,11 +41,37 @@ caught: division by zero
 <table>
 <thead><tr><th>Operator</th><th>True when</th><th>Works on</th></tr></thead>
 <tbody>
-<tr><td><code>a == b</code>, <code>a != b</code></td><td>Equal, not equal</td><td><code>int</code>, <code>double</code>, <code>bool</code>, <code>byte</code>, <code>string</code>, <code>char</code>, <code>null</code></td></tr>
+<tr><td><code>a == b</code>, <code>a != b</code></td><td>Equal, not equal</td><td><code>int</code>, <code>double</code>, <code>bool</code>, <code>byte</code>, <code>string</code>, <code>char</code>, <code>null</code>, and arrays and maps of those</td></tr>
 <tr><td><code>a &lt; b</code>, <code>a &gt; b</code>, <code>a &lt;= b</code>, <code>a &gt;= b</code></td><td>Ordering</td><td><code>int</code>, <code>double</code>, <code>byte</code> (unsigned), <code>string</code>, <code>char</code></td></tr>
 </tbody>
 </table>
-<p>Comparisons produce a <code>bool</code> and can be used anywhere, not only in <code>if</code>. Strings and chars compare by content; ordering uses UTF-8 byte order, which is Unicode code-point order, not locale-aware alphabetical order. Arrays, maps, and objects can't be compared with each other. Comparisons can't be chained: write <code>0 &lt; n &amp;&amp; n &lt; 5</code>, not <code>0 &lt; n &lt; 5</code>.</p>
+<p>Comparisons produce a <code>bool</code> and can be used anywhere, not only in <code>if</code>. Strings and chars compare by content; ordering uses UTF-8 byte order, which is Unicode code-point order, not locale-aware alphabetical order. Arrays and maps compare by contents (see below); objects and functions can only be compared with <code>null</code>. Comparisons can't be chained: write <code>0 &lt; n &amp;&amp; n &lt; 5</code>, not <code>0 &lt; n &lt; 5</code>.</p>
+
+<h3>Comparing arrays and maps</h3>
+<p><code>==</code> and <code>!=</code> compare two arrays or two maps of the same type by what they hold, like strings, not by whether they're the same array or map:</p>
+<ul>
+<li>Two arrays are equal when they have the same length and equal elements in the same order.</li>
+<li>Two maps are equal when they have the same keys, each with an equal value. The order the keys were added in doesn't matter.</li>
+<li>Elements compare as <code>==</code> compares them on their own, so nested arrays and maps are compared all the way down, <code>0.0</code> equals <code>-0.0</code>, and a NaN is unequal to every other value.</li>
+<li>Arrays and maps that can hold objects or functions can't be compared, and neither can arrays and maps be ordered with <code>&lt;</code> or <code>&gt;</code>; both are compile errors.</li>
+</ul>
+
+```qiq
+int[] picked = [3, 1, 2];
+print(picked == [3, 1, 2], picked == [1, 2, 3], picked != []);
+map[string, int] stock = {"apples" => 5, "pears" => 2};
+print(stock == {"pears" => 2, "apples" => 5});
+map[string, int[]] groups = {"odd" => [1, 3], "even" => [2]};
+print(groups == {"even" => [2], "odd" => [1, 3]}, groups["odd"] == [3, 1]);
+```
+```output
+1 0 1
+1
+1 0
+```
+
+<p>Comparing takes time proportional to the size of what's compared, except that an array or map compared with itself is equal straight away, and two of different lengths are unequal straight away. <a href="function.in-map.html"><code>in_map</code></a> compares values the same way.</p>
+<div class="note"><strong>Note:</strong> PHP's <code>==</code> on arrays works the same way for values of the same type: lists compare in order, and string-keyed arrays in any order. qiq has no <code>===</code>, since it never converts between types.</div>
 
 <h3>Comparing with null</h3>
 <p>Strings, chars, arrays, maps, and objects can be compared with <code>null</code> using <code>==</code> and <code>!=</code>, to test whether they have a value. A null string is equal only to <code>null</code>, so comparing one with a string is <code>false</code> rather than an error; ordering a null string with <code>&lt;</code> or <code>&gt;</code> throws <code>RuntimeException</code>.</p>

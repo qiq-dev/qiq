@@ -1,0 +1,57 @@
+// == and != on arrays and maps compare contents.
+
+// Arrays: the same elements in the same order.
+int[] a = [1, 2, 3];
+int[] b = [1, 2, 3];
+int[] alias = a;
+print(a == b, a != b, a == alias, a == [1, 2], a == [3, 2, 1], [1, 2, 3] == a);
+b[2] = 4;
+print(a == b, a != b);
+int[] none = [];
+print(none == [], a == []);
+
+// Elements of every comparable type.
+print(["x", "y"] == ["x", "y"], ["x"] == ["X"], [1.5, -0.0] == [1.5, 0.0], [true, false] == [true, false]);
+char[] letters = ['é', 'a'];
+print(letters == ['é', 'a'], letters == ['a', 'é']);
+byte[] data = [0, 255];
+byte[] same = [0, 255];
+print(data == same);
+double nan = 0.0 / 0.0;
+double[] withNan = [nan];
+print(withNan == withNan, [1.0] == [1.0]);  // the same array; NaN never equals NaN otherwise
+
+// Strings can be null inside arrays: null equals only null.
+string[] holes = new string[2];
+string[] alsoHoles = new string[2];
+print(holes == alsoHoles, holes == ["", ""]);
+
+// Maps: the same keys with equal values; insertion order doesn't matter.
+map[string, int] stock = {"apples" => 5, "pears" => 2};
+map[string, int] reordered = {"pears" => 2, "apples" => 5};
+print(stock == reordered, stock == {"apples" => 5}, stock == {"apples" => 5, "pears" => 3}, stock == {"apples" => 5, "plums" => 2});
+map[string, int] empty = {};
+print(empty == {}, stock != {});
+unset(reordered["pears"]);
+reordered["pears"] = 2;
+print(stock == reordered);
+map[int, string] byId = {1 => "a", 2 => "b"};
+print(byId == {2 => "b", 1 => "a"});
+map[double, bool] flags = {0.0 => true};
+print(flags == {-0.0 => true});
+
+// Nested arrays and maps compare all the way down.
+int[][] grid = [[1, 2], [3]];
+print(grid == [[1, 2], [3]], grid == [[1, 2], [4]], grid == [[1, 2]]);
+map[string, int[]] lists = {"a" => [1], "b" => [2, 3]};
+print(lists == {"b" => [2, 3], "a" => [1]}, lists == {"a" => [1], "b" => [3, 2]});
+map[string, map[string, int]] nested = {"x" => {"y" => 1}};
+print(nested == {"x" => {"y" => 1}}, nested == {"x" => {"y" => 2}});
+
+// in_map compares values the same way.
+print(in_map([2, 3], lists), in_map([3, 2], lists), in_map({"y" => 1}, nested));
+
+// Elements read from containers, in conditions.
+if (lists["b"] == [2, 3] && grid[0] != grid[1]) {
+    print("conditions work");
+}

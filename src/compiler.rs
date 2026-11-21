@@ -2970,7 +2970,7 @@ impl Emitter {
             ir.push_str(&self.emit_dispatch_table(*owner, method_name, Some(supplied)));
         }
         ir.push_str(
-            "\ndeclare i32 @printf(ptr, ...)\ndeclare i32 @strcmp(ptr, ptr)\ndeclare ptr @calloc(i64, i64)\ndeclare ptr @qiq_map_new(i32, i32)\ndeclare void @qiq_retain(ptr)\ndeclare void @qiq_release(ptr)\ndeclare ptr @qiq_object_new(i64, i64)\ndeclare void @qiq_map_set(ptr, i64, i64)\ndeclare i64 @qiq_map_get(ptr, i64)\ndeclare i64 @qiq_map_iteration_end(ptr)\ndeclare i64 @qiq_map_version(ptr)\ndeclare zeroext i1 @qiq_map_entry_live(ptr, i64, i64)\ndeclare zeroext i1 @qiq_map_find(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_map_has(ptr, i64)\ndeclare void @qiq_map_remove(ptr, i64)\ndeclare ptr @qiq_map_keys(ptr, i64, i32)\ndeclare ptr @qiq_map_values(ptr, i64, i32)\ndeclare zeroext i1 @qiq_map_contains_value(ptr, i64, i32)\ndeclare i64 @qiq_map_key_at(ptr, i64)\ndeclare i64 @qiq_map_value_at(ptr, i64)\ndeclare i64 @qiq_string_len(ptr)\ndeclare ptr @qiq_sprintf(ptr, ptr, ptr, i64)\ndeclare ptr @qiq_json_encode(ptr, i64, i1 zeroext)\ndeclare i64 @qiq_json_decode(ptr, ptr)\ndeclare i32 @qiq_string_equality(ptr, ptr)\ndeclare i32 @qiq_string_compare(ptr, ptr)\ndeclare ptr @qiq_string_char_at(ptr, i64)\ndeclare ptr @qiq_string_concat(ptr, ptr)\ndeclare i64 @qiq_int_divide(i64, i64)\ndeclare i64 @qiq_int_modulo(i64, i64)\ndeclare i64 @qiq_int_power(i64, i64)\ndeclare i64 @qiq_int_shift_left(i64, i64)\ndeclare i64 @qiq_int_shift_right(i64, i64)\ndeclare double @llvm.pow.f64(double, double)\ndeclare void @qiq_uncaught(ptr, ptr)\ndeclare ptr @qiq_array_new(i64, i64, i32)\ndeclare void @qiq_set_arguments(i32, ptr)\ndeclare void @qiq_check_callable(ptr)\ndeclare void @qiq_array_push(ptr, i64, i64)\ndeclare i64 @qiq_range_plan(i64, i64, i64, i1 zeroext, ptr)\ndeclare ptr @qiq_range_int(i64, i64, i64, i1 zeroext)\ndeclare ptr @qiq_range_double(double, double, double, i1 zeroext)\ndeclare ptr @qiq_range_char(ptr, ptr, i64, i1 zeroext)\ndeclare i64 @qiq_array_pop(ptr, i64)\ndeclare i64 @qiq_array_shift(ptr, i64)\ndeclare void @qiq_array_insert(ptr, i64, i64, i64)\ndeclare ptr @qiq_array_splice(ptr, i64, i64, i64, i1 zeroext, ptr)\ndeclare i64 @qiq_array_length(ptr)\ndeclare i64 @qiq_len_string(ptr)\ndeclare i64 @qiq_len_array(ptr)\ndeclare i64 @qiq_len_map(ptr)\ndeclare void @qiq_array_check_index(ptr, i64)\ndeclare void @qiq_print_value(ptr, i64)\ndeclare void @qiq_print_space()\ndeclare void @qiq_print_newline()\ndeclare i64 @qiq_double_to_int(double)\ndeclare zeroext i8 @qiq_int_to_byte(i64)\ndeclare i64 @qiq_string_to_int(ptr)\ndeclare double @qiq_string_to_double(ptr)\ndeclare ptr @qiq_int_to_string(i64)\ndeclare ptr @qiq_double_to_string(double)\n",
+            "\ndeclare i32 @printf(ptr, ...)\ndeclare i32 @strcmp(ptr, ptr)\ndeclare ptr @calloc(i64, i64)\ndeclare ptr @qiq_map_new(i32, i32)\ndeclare void @qiq_retain(ptr)\ndeclare void @qiq_release(ptr)\ndeclare ptr @qiq_object_new(i64, i64)\ndeclare void @qiq_map_set(ptr, i64, i64)\ndeclare i64 @qiq_map_get(ptr, i64)\ndeclare i64 @qiq_map_iteration_end(ptr)\ndeclare i64 @qiq_map_version(ptr)\ndeclare zeroext i1 @qiq_map_entry_live(ptr, i64, i64)\ndeclare zeroext i1 @qiq_map_find(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_map_has(ptr, i64)\ndeclare void @qiq_map_remove(ptr, i64)\ndeclare ptr @qiq_map_keys(ptr, i64, i32)\ndeclare ptr @qiq_map_values(ptr, i64, i32)\ndeclare zeroext i1 @qiq_map_contains_value(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_values_equal(ptr, ptr, ptr)\ndeclare i64 @qiq_map_key_at(ptr, i64)\ndeclare i64 @qiq_map_value_at(ptr, i64)\ndeclare i64 @qiq_string_len(ptr)\ndeclare ptr @qiq_sprintf(ptr, ptr, ptr, i64)\ndeclare ptr @qiq_json_encode(ptr, i64, i1 zeroext)\ndeclare i64 @qiq_json_decode(ptr, ptr)\ndeclare i32 @qiq_string_equality(ptr, ptr)\ndeclare i32 @qiq_string_compare(ptr, ptr)\ndeclare ptr @qiq_string_char_at(ptr, i64)\ndeclare ptr @qiq_string_concat(ptr, ptr)\ndeclare i64 @qiq_int_divide(i64, i64)\ndeclare i64 @qiq_int_modulo(i64, i64)\ndeclare i64 @qiq_int_power(i64, i64)\ndeclare i64 @qiq_int_shift_left(i64, i64)\ndeclare i64 @qiq_int_shift_right(i64, i64)\ndeclare double @llvm.pow.f64(double, double)\ndeclare void @qiq_uncaught(ptr, ptr)\ndeclare ptr @qiq_array_new(i64, i64, i32)\ndeclare void @qiq_set_arguments(i32, ptr)\ndeclare void @qiq_check_callable(ptr)\ndeclare void @qiq_array_push(ptr, i64, i64)\ndeclare i64 @qiq_range_plan(i64, i64, i64, i1 zeroext, ptr)\ndeclare ptr @qiq_range_int(i64, i64, i64, i1 zeroext)\ndeclare ptr @qiq_range_double(double, double, double, i1 zeroext)\ndeclare ptr @qiq_range_char(ptr, ptr, i64, i1 zeroext)\ndeclare i64 @qiq_array_pop(ptr, i64)\ndeclare i64 @qiq_array_shift(ptr, i64)\ndeclare void @qiq_array_insert(ptr, i64, i64, i64)\ndeclare ptr @qiq_array_splice(ptr, i64, i64, i64, i1 zeroext, ptr)\ndeclare i64 @qiq_array_length(ptr)\ndeclare i64 @qiq_len_string(ptr)\ndeclare i64 @qiq_len_array(ptr)\ndeclare i64 @qiq_len_map(ptr)\ndeclare void @qiq_array_check_index(ptr, i64)\ndeclare void @qiq_print_value(ptr, i64)\ndeclare void @qiq_print_space()\ndeclare void @qiq_print_newline()\ndeclare i64 @qiq_double_to_int(double)\ndeclare zeroext i8 @qiq_int_to_byte(i64)\ndeclare i64 @qiq_string_to_int(ptr)\ndeclare double @qiq_string_to_double(ptr)\ndeclare ptr @qiq_int_to_string(i64)\ndeclare ptr @qiq_double_to_string(double)\n",
         );
         ir.push_str(&extern_declarations);
         ir.push('\n');
@@ -4327,10 +4327,10 @@ impl Emitter {
                     return Err("bool values support only == and != comparisons".to_string());
                 }
             },
-            ValueType::Array(_)
-            | ValueType::Map(_)
-            | ValueType::Class(_)
-            | ValueType::Function(_) => {
+            ValueType::Array(_) | ValueType::Map(_) => {
+                return self.emit_contents_comparison(left, operator, right, body);
+            }
+            ValueType::Class(_) | ValueType::Function(_) => {
                 return Err(format!("{} values can only be compared with null", self.type_name(left.value_type)));
             }
             ValueType::Null => match operator {
@@ -4366,6 +4366,50 @@ impl Emitter {
             operand: register,
             slot: None,
         })
+    }
+
+    /// `==` and `!=` on two arrays or two maps of the same type: equal when
+    /// they hold equal elements in the same order, or the same keys with
+    /// equal values in any order (qiq_values_equal in map.c). Their elements
+    /// can't be objects or functions, which can only be compared with null,
+    /// so a value can't contain itself and the comparison always ends.
+    fn emit_contents_comparison(&mut self, left: Value, operator: CompareOp, right: Value, body: &mut String) -> Result<Value, String> {
+        if !matches!(operator, CompareOp::Equal | CompareOp::NotEqual) {
+            return Err(format!("{} values support only == and != comparisons", self.type_name(left.value_type)));
+        }
+        if !self.compares_by_contents(left.value_type) {
+            return Err(format!(
+                "{} values can't be compared: objects and functions in them can only be compared with null",
+                self.type_name(left.value_type)
+            ));
+        }
+        let descriptor = self.type_descriptor(left.value_type);
+        let descriptor = self.string_literal(descriptor.as_bytes());
+        let equal = self.new_register();
+        body.push_str(&format!(
+            "  {equal} = call zeroext i1 @qiq_values_equal(ptr {descriptor}, ptr {}, ptr {})\n",
+            left.operand, right.operand
+        ));
+        if matches!(operator, CompareOp::Equal) {
+            return Ok(Value { value_type: ValueType::Bool, operand: equal, slot: None });
+        }
+        let different = self.new_register();
+        body.push_str(&format!("  {different} = xor i1 {equal}, true\n"));
+        Ok(Value { value_type: ValueType::Bool, operand: different, slot: None })
+    }
+
+    /// Whether `==` can compare values of this type: numbers, bools, strings,
+    /// chars, and arrays and maps of those, at any depth.
+    fn compares_by_contents(&self, value_type: ValueType) -> bool {
+        match value_type {
+            ValueType::Array(_) => self.compares_by_contents(self.element_of(value_type).expect("array type")),
+            ValueType::Map(type_id) => {
+                let map = self.map_types[type_id as usize];
+                self.compares_by_contents(map.key_type) && self.compares_by_contents(map.value_type)
+            }
+            ValueType::Int | ValueType::Double | ValueType::Bool | ValueType::Byte | ValueType::String | ValueType::Char => true,
+            ValueType::Class(_) | ValueType::Function(_) | ValueType::Null | ValueType::Void => false,
+        }
     }
 
     /// Notes that the program uses `class_id` (and so its ancestors' methods).
@@ -6091,19 +6135,17 @@ impl Emitter {
                             self.type_name(looked_for.value_type)
                         ));
                     }
-                    let kind = match signature.value_type {
-                        ValueType::Double => 1,
-                        ValueType::String | ValueType::Char => 2,
-                        ValueType::Array(_) | ValueType::Map(_) | ValueType::Class(_) => 3,
-                        _ => 0,
-                    };
+                    // How values compare: as == does (arrays and maps by
+                    // contents), and objects and functions by identity ("o").
+                    let descriptor = self.type_descriptor(signature.value_type);
+                    let descriptor = self.string_literal(descriptor.as_bytes());
                     let bits = if looked_for.value_type == ValueType::Null || looked_for.operand == "null" {
                         "0".to_string()
                     } else {
                         self.encode_payload(&looked_for, body)?
                     };
                     body.push_str(&format!(
-                        "  {register} = call zeroext i1 @qiq_map_contains_value(ptr {}, i64 {bits}, i32 {kind})\n",
+                        "  {register} = call zeroext i1 @qiq_map_contains_value(ptr {}, i64 {bits}, ptr {descriptor})\n",
                         map.operand
                     ));
                 }
@@ -7881,7 +7923,14 @@ impl Emitter {
                     } else {
                         self.emit_expression(left, variables, body)?
                     };
-                    let expected = (left.value_type == ValueType::Byte).then_some(ValueType::Byte);
+                    // A literal `[]` or `{}` takes the other side's type, as
+                    // in `list == []`; `null` stays a null test.
+                    let literal = matches!(**right, Expr::ArrayLiteral(_) | Expr::MapLiteral(_));
+                    let expected = match left.value_type {
+                        ValueType::Byte => Some(ValueType::Byte),
+                        ValueType::Array(_) | ValueType::Map(_) if literal => Some(left.value_type),
+                        _ => None,
+                    };
                     let right = self.emit_borrowed(right, expected, variables, body)?;
                     (left, right)
                 };
@@ -10235,7 +10284,7 @@ mod tests {
         assert!(main.contains("call ptr @qiq_map_keys(ptr") && main.contains(", i64 8, i32 1)"), "{main}");
         // map_values of int[] values: elements are references that can't cycle.
         assert!(main.contains("call ptr @qiq_map_values(ptr"), "{main}");
-        assert!(main.contains("call zeroext i1 @qiq_map_contains_value(ptr") && main.contains(", i32 3)"), "{main}");
+        assert!(main.contains("call zeroext i1 @qiq_map_contains_value(ptr"), "{main}");
         assert!(main.contains("call void @qiq_map_remove(ptr"), "{main}");
         for (source, error) in [
             ("int[] xs = [1]; unset(xs[0]);", "unset can't remove array elements"),
@@ -10417,6 +10466,29 @@ mod tests {
         }
         // A function named fn still works: only `fn(...) =>` is an arrow function.
         assert!(compile_source("function fn(int x): int { return x; } int y = fn(2);").is_ok());
+    }
+
+    #[test]
+    fn arrays_and_maps_compare_by_contents() {
+        let main = main_ir(&compile_source("int[] a = [1]; int[] b = [1]; bool same = a == b; bool different = a != []; map[string, int[]] m = {}; bool maps = m == {\"k\" => [1]};").unwrap()).to_string();
+        assert_eq!(main.matches("call zeroext i1 @qiq_values_equal(ptr").count(), 3, "{main}");
+        // != negates the result; the descriptor says what to compare.
+        assert!(main.contains("xor i1 %v"), "{main}");
+        let ir = compile_source("map[string, int[]] m = {}; bool maps = m == {};").unwrap();
+        assert!(ir.contains("c\"msai\\00\""), "{ir}");
+        // Comparing with null is still a pointer test.
+        let null_test = main_ir(&compile_source("int[] a = [1]; bool none = a == null;").unwrap()).to_string();
+        assert!(!null_test.contains("@qiq_values_equal") && null_test.contains("icmp eq ptr"), "{null_test}");
+        for (source, error) in [
+            ("int[] a = [1]; int[] b = [2]; bool c = a < b;", "int[] values support only == and != comparisons"),
+            ("Exception[] a = []; Exception[] b = []; bool c = a == b;", "Exception[] values can't be compared: objects and functions in them can only be compared with null"),
+            ("map[string, function(): void] a = {}; bool c = a == a;", "can't be compared: objects and functions in them"),
+            ("int[] a = [1]; string[] b = [\"1\"]; bool c = a == b;", "comparison requires matching types, found int[] and string[]"),
+            ("Exception e = new Exception(\"x\"); bool c = e == e;", "Exception values can only be compared with null"),
+        ] {
+            let message = compile_source(source).unwrap_err();
+            assert!(message.contains(error), "{source}: {message}");
+        }
     }
 
     #[test]

@@ -309,33 +309,98 @@ QIQ_GUARDED(void *, qiq_map_values, NULL, (void *handle, int64_t element_size, i
     return qiq_map_column(qiq_require_map(handle, "map_values: the map is null"), false, element_size, flags);
 }
 
-// in_map(value, map). `kind` says how values compare: 0 by their bits
-// (ints, bools, bytes), 1 as doubles, 2 as strings (by content), 3 by
-// identity (arrays, maps, objects).
-QIQ_GUARDED(bool, qiq_map_contains_value, false, (void *handle, uint64_t value, int32_t kind), (handle, value, kind)) {
+// ---------------------------------------------------------------------------
+// == and != on arrays and maps, which compare contents, and in_map.
+//
+// Values are described as for json_encode (see json.c): i int, d double,
+// b bool, y byte, s string, c char, a<element>, m<key><value>. The compiler
+// allows == only on types without objects or functions, so a value can't
+// contain itself and the comparison always ends.
+
+static const char *qiq_skip_value_descriptor(const char *descriptor) {
+    switch (*descriptor) {
+    case 'a': return qiq_skip_value_descriptor(descriptor + 1);
+    case 'm': return qiq_skip_value_descriptor(qiq_skip_value_descriptor(descriptor + 1));
+    default: return descriptor + 1;
+    }
+}
+
+static bool qiq_payloads_equal(const char *descriptor, uint64_t left, uint64_t right);
+
+// Same length, and equal elements in order.
+static bool qiq_arrays_equal(const char *element, void *left, void *right) {
+    int64_t length = QIQ_ARRAY_LENGTH(left);
+    if (length != QIQ_ARRAY_LENGTH(right)) return false;
+    if (*element == 'b' || *element == 'y') {
+        return memcmp(QIQ_ARRAY_DATA(left), QIQ_ARRAY_DATA(right), (size_t)length) == 0;
+    }
+    const uint64_t *a = QIQ_ARRAY_DATA(left);
+    const uint64_t *b = QIQ_ARRAY_DATA(right);
+    if (*element == 'i') return memcmp(a, b, (size_t)length * sizeof *a) == 0;
+    for (int64_t index = 0; index < length; index++) {
+        if (!qiq_payloads_equal(element, a[index], b[index])) return false;
+    }
+    return true;
+}
+
+// The same keys, each with an equal value; insertion order doesn't matter.
+static bool qiq_maps_equal(const char *key, QiqMap *left, QiqMap *right) {
+    if (left->length != right->length) return false;
+    const char *value = qiq_skip_value_descriptor(key);
+    for (size_t position = 0; position < left->used; position++) {
+        QiqEntry *entry = &left->entries[position];
+        if (!entry->live) continue;
+        // Both maps have the same key type, so the stored hash is valid in
+        // `right` too.
+        QiqEntry *other = qiq_find(right, entry->key, entry->hash);
+        if (other == NULL || !qiq_payloads_equal(value, entry->value, other->value)) return false;
+    }
+    return true;
+}
+
+// Two payloads (as stored in arrays of 8-byte elements and in maps) of the
+// type `descriptor` describes: numbers and bools by value (so NaN isn't
+// equal to itself, and -0.0 equals 0.0), strings and chars by content,
+// arrays and maps by contents; null equals only null.
+static bool qiq_payloads_equal(const char *descriptor, uint64_t left, uint64_t right) {
+    switch (*descriptor) {
+    case 'd': {
+        double a, b;
+        memcpy(&a, &left, sizeof a);
+        memcpy(&b, &right, sizeof b);
+        return a == b;
+    }
+    case 's':
+    case 'c':
+        return left == right
+            || (left != 0 && right != 0 && strcmp((const char *)(uintptr_t)left, (const char *)(uintptr_t)right) == 0);
+    case 'a':
+    case 'm':
+        if (left == right) return true;
+        if (left == 0 || right == 0) return false;
+        return *descriptor == 'a'
+            ? qiq_arrays_equal(descriptor + 1, (void *)(uintptr_t)left, (void *)(uintptr_t)right)
+            : qiq_maps_equal(descriptor + 1, (QiqMap *)(uintptr_t)left, (QiqMap *)(uintptr_t)right);
+    default:
+        return left == right;
+    }
+}
+
+// `left == right` for two arrays or two maps of the type `descriptor`
+// describes ("a..." or "m...").
+bool qiq_values_equal(const char *descriptor, void *left, void *right) {
+    return qiq_payloads_equal(descriptor, (uint64_t)(uintptr_t)left, (uint64_t)(uintptr_t)right);
+}
+
+// in_map(value, map): whether an entry's value equals `value` as == would
+// say (by contents for arrays and maps), or for objects, the same object.
+// `descriptor` describes the map's values, as above, or is "o" for objects.
+QIQ_GUARDED(bool, qiq_map_contains_value, false, (void *handle, uint64_t value, const char *descriptor), (handle, value, descriptor)) {
     QiqMap *map = qiq_require_map(handle, "in_map: the map is null");
     for (size_t position = 0; position < map->used; position++) {
         QiqEntry *entry = &map->entries[position];
         if (!entry->live) continue;
-        uint64_t stored = entry->value;
-        bool equal;
-        switch (kind) {
-        case 1: {
-            double a, b;
-            memcpy(&a, &stored, sizeof a);
-            memcpy(&b, &value, sizeof b);
-            equal = a == b;
-            break;
-        }
-        case 2:
-            equal = stored == value
-                || (stored != 0 && value != 0 && strcmp((const char *)(uintptr_t)stored, (const char *)(uintptr_t)value) == 0);
-            break;
-        default:
-            equal = stored == value;
-            break;
-        }
-        if (equal) return true;
+        if (qiq_payloads_equal(descriptor, entry->value, value)) return true;
     }
     return false;
 }

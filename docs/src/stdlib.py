@@ -1247,7 +1247,7 @@ MAPS = {
             "purpose": "Check whether a map has a value",
             "params": [param("value", "V", "The value to look for, of the map's value type."), param("map", "map[K, V]", "The map.")],
             "returns": "bool",
-            "description": "Returns whether any entry of <code>map</code> has <code>value</code>. Numbers and bools compare by value, strings and chars by content, and arrays, maps, and objects by identity: the same instance, not an equal one.",
+            "description": "Returns whether any entry of <code>map</code> has <code>value</code>. Values compare as <code>==</code> compares them: numbers and bools by value, strings and chars by content, and arrays and maps by contents (the same elements in order, or the same keys and values in any order). Objects and functions compare by identity: the same instance, not an equal one.",
             "return_description": "<code>true</code> if the value is present.",
             "errors": ["<code>RuntimeException</code> if the map is <code>null</code>. A value of the wrong type is a compile error."],
             "examples": [

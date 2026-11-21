@@ -74,7 +74,7 @@ a d ["b", "c"] b
 <p>Appending is fast: an array keeps spare room and doubles it when it runs out. Adding or removing at the front moves every element, so it takes time proportional to the length.</p>
 
 <h2>Arrays are references</h2>
-<p>Arrays can be passed to and returned from functions, stored in properties, and used as map values. Assigning an array to another variable, or passing it, shares it rather than copying it, so a function can add to an array it's given, and every variable that refers to it sees the change. Array variables can be reassigned to another array of the same type.</p>
+<p>Arrays can be passed to and returned from functions, stored in properties, and used as map values. Assigning an array to another variable, or passing it, shares it rather than copying it, so a function can add to an array it's given, and every variable that refers to it sees the change. Array variables can be reassigned to another array of the same type. Comparing two arrays with <code>==</code> compares their elements, not whether they're the same array; see <a href="operators.html">Operators</a>.</p>
 
 ```qiq
 function squares(int count): int[] {
