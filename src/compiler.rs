@@ -2683,6 +2683,9 @@ struct Emitter {
     /// one scope per statement being emitted, plus one for the right side of
     /// `&&` and `||`. A scope's temporaries are released when it closes.
     temporaries: Vec<Vec<String>>,
+    /// Set by emit_borrowed for the element or property read it emits next:
+    /// that read skips the retain (see emit_borrowed).
+    borrow_read: bool,
     /// Stack slots in the current function that own a reference, released
     /// before every `ret`.
     owned_slots: Vec<String>,
@@ -2791,6 +2794,7 @@ impl Emitter {
             next_string: 0,
             next_label: 0,
             temporaries: vec![Vec::new()],
+            borrow_read: false,
             owned_slots: Vec::new(),
             next_release: 0,
             handler_scopes: Vec::new(),
@@ -4412,6 +4416,34 @@ impl Emitter {
         self.own(value)
     }
 
+    /// Emits `expression` for a caller that uses its value straight away,
+    /// before any other code runs, in a runtime call that neither keeps it
+    /// nor releases anything (a map lookup's key, an operand of `+` or a
+    /// string comparison, len's argument). An element or property read is
+    /// then borrowed instead of retained: nothing can replace it in its
+    /// array, map, or object before that use, and the container itself is a
+    /// variable or an owned temporary that outlives the statement. Saves a
+    /// retain and a release, which both write to the value's header, for
+    /// each such read: `m[keys[i]]` in a loop, `a[i] == b[j]`. Something that
+    /// keeps a borrowed value still gets its own reference from `take`.
+    fn emit_borrowed(
+        &mut self,
+        expression: &Expr,
+        expected: Option<ValueType>,
+        variables: &HashMap<String, Value>,
+        body: &mut String,
+    ) -> Result<Value, String> {
+        // Only the read itself is borrowed: Index and Member clear the flag
+        // before emitting their own operands.
+        self.borrow_read = matches!(expression, Expr::Index(..) | Expr::Member(..));
+        let value = match expected {
+            None => self.emit_expression(expression, variables, body),
+            Some(_) => self.emit_expecting(expression, expected, variables, body),
+        };
+        self.borrow_read = false;
+        value
+    }
+
     fn open_scope(&mut self) {
         self.temporaries.push(Vec::new());
     }
@@ -5168,11 +5200,12 @@ impl Emitter {
         if matches!(argument, Expr::NamedArgument(..)) {
             return Err(format!("{name} takes no named arguments"));
         }
-        let value = self.emit_expression(argument, variables, body)?;
-        let from = value.value_type;
         if name == "len" {
+            let value = self.emit_borrowed(argument, None, variables, body)?;
             return self.emit_len(value, body);
         }
+        let value = self.emit_expression(argument, variables, body)?;
+        let from = value.value_type;
         let result = |value_type: ValueType, operand: String| Value {
             value_type,
             operand,
@@ -5342,7 +5375,8 @@ impl Emitter {
         let left_value = match left {
             Expr::Index(container_expression, key_expression) => {
                 let container = self.emit_expression(container_expression, variables, body)?;
-                let key = self.emit_expression(key_expression, variables, body)?;
+                // Used by qiq_map_find (or the bounds check) straight away.
+                let key = self.emit_borrowed(key_expression, None, variables, body)?;
                 if let ValueType::Map(type_id) = container.value_type {
                     let signature = self.map_types[type_id as usize];
                     if key.value_type != signature.key_type {
@@ -6028,7 +6062,12 @@ impl Emitter {
                         (self.emit_expecting(&arguments[0], Some(expected), variables, body)?, map)
                     }
                     None => {
-                        let looked_for = self.emit_expression(&arguments[0], variables, body)?;
+                        // Borrowed when evaluating the map can't change anything.
+                        let looked_for = if is_pure(&arguments[1]) {
+                            self.emit_borrowed(&arguments[0], None, variables, body)?
+                        } else {
+                            self.emit_expression(&arguments[0], variables, body)?
+                        };
                         (looked_for, self.emit_expression(&arguments[1], variables, body)?)
                     }
                 };
@@ -7138,8 +7177,10 @@ impl Emitter {
                 })
             }
             Expr::Index(array_expression, index_expression) => {
+                let borrow = std::mem::take(&mut self.borrow_read);
                 let array = self.emit_expression(array_expression, variables, body)?;
-                let index = self.emit_expression(index_expression, variables, body)?;
+                // The key is used by qiq_map_get as soon as it's evaluated.
+                let index = self.emit_borrowed(index_expression, None, variables, body)?;
                 if let Some(element_type) = self.element_of(array.value_type) {
                     if index.value_type != ValueType::Int {
                         return Err("array index must be an int".to_string());
@@ -7156,7 +7197,7 @@ impl Emitter {
                         operand: loaded,
                         slot: None,
                     };
-                    Ok(self.retained(value, body))
+                    Ok(if borrow { value } else { self.retained(value, body) })
                 } else if let ValueType::Map(type_id) = array.value_type {
                     let signature = *self
                         .map_types
@@ -7177,12 +7218,13 @@ impl Emitter {
                     ));
                     self.emit_exception_check(body);
                     let value = self.decode_payload(signature.value_type, &loaded_bits, body)?;
-                    Ok(self.retained(value, body))
+                    Ok(if borrow { value } else { self.retained(value, body) })
                 } else {
                     Err("indexed value is not an array or map".to_string())
                 }
             }
             Expr::Member(object_expression, property_name) => {
+                let borrow = std::mem::take(&mut self.borrow_read);
                 let object = self.emit_expression(object_expression, variables, body)?;
                 let class_id = match object.value_type {
                     ValueType::Class(class_id) => class_id,
@@ -7199,7 +7241,7 @@ impl Emitter {
                 let encoded = self.new_register();
                 body.push_str(&format!("  {encoded} = load i64, ptr {address}, align 8\n"));
                 let value = self.decode_payload(property_type, &encoded, body)?;
-                Ok(self.retained(value, body))
+                Ok(if borrow { value } else { self.retained(value, body) })
             }
             Expr::MethodCall(object_expression, method_name, arguments) => {
                 let object = self.emit_expression(object_expression, variables, body)?;
@@ -7689,8 +7731,16 @@ impl Emitter {
                 }))
             }
             Expr::Binary(operator, left, right) => {
-                let left = self.emit_expression(left, variables, body)?;
-                let right = self.emit_expression(right, variables, body)?;
+                // Operands are used by one instruction or runtime call (such
+                // as qiq_string_concat) right after the right one is
+                // evaluated, so it can always be borrowed, and the left one
+                // when evaluating the right one can't change anything.
+                let left = if is_pure(right) {
+                    self.emit_borrowed(left, None, variables, body)?
+                } else {
+                    self.emit_expression(left, variables, body)?
+                };
+                let right = self.emit_borrowed(right, None, variables, body)?;
                 let is_text = |value: &Value| matches!(value.value_type, ValueType::String | ValueType::Char);
                 if *operator == BinaryOp::Add && is_text(&left) && is_text(&right) {
                     // Concatenation: any mix of strings and chars produces a string.
@@ -7825,9 +7875,14 @@ impl Emitter {
                     let expected = (right.value_type == ValueType::Byte).then_some(ValueType::Byte);
                     (self.emit_expecting(left, expected, variables, body)?, right)
                 } else {
-                    let left = self.emit_expression(left, variables, body)?;
+                    // Borrowed as for Binary: emit_comparison uses both at once.
+                    let left = if is_pure(right) {
+                        self.emit_borrowed(left, None, variables, body)?
+                    } else {
+                        self.emit_expression(left, variables, body)?
+                    };
                     let expected = (left.value_type == ValueType::Byte).then_some(ValueType::Byte);
-                    let right = self.emit_expecting(right, expected, variables, body)?;
+                    let right = self.emit_borrowed(right, expected, variables, body)?;
                     (left, right)
                 };
                 self.emit_comparison(left, *operator, right, body)
@@ -8144,6 +8199,19 @@ fn sprintf_arguments_required(format: &str) -> Result<usize, String> {
 
 /// Whether values of this type are reference counted: strings, chars,
 /// arrays, maps, and objects.
+/// Whether evaluating `expression` can't run code that changes the program's
+/// arrays, maps, objects, or variables, so a value borrowed before it stays
+/// valid: literals, variables, and element and property reads of those (which
+/// at most throw). See emit_borrowed.
+fn is_pure(expression: &Expr) -> bool {
+    match expression {
+        Expr::Number(_) | Expr::Decimal(_) | Expr::Boolean(_) | Expr::Null | Expr::Text(_) | Expr::Character(_) | Expr::Variable(_) => true,
+        Expr::Index(container, key) => is_pure(container) && is_pure(key),
+        Expr::Member(object, _) => is_pure(object),
+        _ => false,
+    }
+}
+
 fn is_reference(value_type: ValueType) -> bool {
     matches!(
         value_type,
