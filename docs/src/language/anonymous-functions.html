@@ -1,0 +1,122 @@
+<!-- title: Anonymous functions -->
+<h1>Anonymous functions</h1>
+<p>Functions are values: you can store them in variables, properties, arrays, and maps, pass them to other functions, and return them. An anonymous function (a closure) is written like a named function without the name, and can use the variables around it.</p>
+
+```qiq
+function(int, int): int add = function(int a, int b): int {
+    return a + b;
+};
+print(add(2, 3));
+
+// The short form for a single expression; its return type is inferred.
+twice = fn(int x) => x * 2;
+print(twice(21));
+```
+```output
+5
+42
+```
+
+<h2>Function types</h2>
+<p>The type of a function value is written <code>function(parameter types): return type</code>, such as <code>function(string): bool</code> or <code>function(): void</code>. It's used like any other type, for variables, parameters, return values, properties, and map values. For an array of functions, put the function type in parentheses: <code>(function(): int)[]</code>, since <code>function(): int[]</code> is a function that returns an array.</p>
+
+```qiq
+function applyAll(int[] values, function(int): int f): int[] {
+    int[] results;
+    foreach (values as value) {
+        array_push(results, f(value));
+    }
+    return results;
+}
+print(applyAll([1, 2, 3], fn(int v) => v * v));
+
+map[string, function(int, int): int] operations = {
+    "add" => fn(int a, int b) => a + b,
+    "multiply" => fn(int a, int b) => a * b
+};
+print(operations["multiply"](6, 7));
+```
+```output
+[1, 4, 9]
+42
+```
+
+<ul>
+<li>A function value must be called with exactly its parameters: no defaults or named arguments.</li>
+<li>Function values can be <code>null</code>; calling a null one throws <code>RuntimeException</code>. Compare with <code>== null</code>.</li>
+<li>A named function can be used as a value where its type is expected: <code>applyAll(values, square)</code>. Built-in functions such as <code>len</code> can't; wrap them: <code>fn(string s) =&gt; len(s)</code>.</li>
+</ul>
+
+<h2>Capturing variables</h2>
+<p>An anonymous function can use any variable in scope where it's written. It shares the variable with the code around it, as in Go, JavaScript, and Python: changes made inside the function are seen outside, and the other way round.</p>
+
+```qiq
+int count = 0;
+function(): void increment = function(): void {
+    count = count + 1;
+};
+increment();
+increment();
+print(count);
+```
+```output
+2
+```
+
+<p>A captured variable lives as long as any function that uses it, so a function can return a closure that keeps its own state:</p>
+
+```qiq
+function makeCounter(int start): function(): int {
+    int current = start;
+    return function(): int {
+        current = current + 1;
+        return current;
+    };
+}
+function(): int a = makeCounter(10);
+function(): int b = makeCounter(100);
+print(a(), a(), b(), a());
+```
+```output
+11 12 101 13
+```
+
+<ul>
+<li>Each pass through a loop has its own loop variable, so closures made in a loop each see their own value.</li>
+<li>Inside a method, a closure can use <code>this</code> and the class's private members.</li>
+<li><code>foreach</code> and <code>catch</code> variables stay read-only inside closures.</li>
+<li>A function can call itself through a variable it captures, for recursion: declare the variable first (<code>function(int): int fib = null;</code>), then assign the function to it.</li>
+</ul>
+
+```qiq
+(function(): string)[] greeters = [];
+foreach (["Ada", "Lin"] as name) {
+    array_push(greeters, fn() => "hello " + name);
+}
+foreach (greeters as greet) {
+    print(greet());
+}
+
+function(int): int factorial = null;
+factorial = function(int n): int {
+    if (n <= 1) {
+        return 1;
+    }
+    return n * factorial(n - 1);
+};
+print(factorial(10));
+```
+```output
+hello Ada
+hello Lin
+3628800
+```
+
+<h2>Arrow functions</h2>
+<p><code>fn(parameters) =&gt; expression</code> is a function whose body is one expression, like PHP's arrow functions. Its return type is the expression's type, or the expected type when it's passed or assigned where a function type is known. An expression that is a call to a void function makes a void function. <code>print</code> is a statement, so it can't be an arrow function's body.</p>
+
+<h2>Calling function values</h2>
+<p>Call a function value like a function: <code>f(x)</code> for a variable, <code>object-&gt;callback(x)</code> for a property holding one (when the class has no method of that name), and <code>expression(x)</code> for anything else, such as <code>makeAdder(2)(3)</code> or <code>(fn(int x) =&gt; x + 1)(41)</code>.</p>
+
+<h2>Memory</h2>
+<p>A function value is reference counted like an object. Its captured variables stay alive while any function that uses them does. Closures often form reference cycles (an object holding a closure that uses <code>this</code>, or a recursive closure), and the <a href="memory.html">cycle collector</a> frees those.</p>

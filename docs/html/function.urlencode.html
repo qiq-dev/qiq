@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>urlencode - qiq Manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <button class="menu-toggle" aria-label="Show menu" onclick="document.body.classList.toggle('menu-open')">☰</button>
+  <a class="brand" href="introduction.html"><span class="logo">qiq</span><span class="brand-text">Manual</span></a>
+  <div class="search">
+    <input id="search" type="search" placeholder="Search the manual" autocomplete="off" aria-label="Search the manual">
+    <ul id="search-results" hidden></ul>
+  </div>
+</header>
+<div class="layout">
+<nav class="sidebar" aria-label="Manual">
+<h2>Getting started</h2><ul>
+<li><a href="introduction.html">Introduction</a>
+</li>
+<li><a href="installation.html">Installing and running</a>
+</li>
+</ul>
+<h2>Language reference</h2><ul>
+<li><a href="basic-syntax.html">Basic syntax</a>
+</li>
+<li><a href="types.html">Types</a>
+</li>
+<li><a href="variables.html">Variables</a>
+</li>
+<li><a href="operators.html">Operators</a>
+</li>
+<li><a href="control-structures.html">Control structures</a>
+</li>
+<li><a href="functions.html">Functions</a>
+</li>
+<li><a href="anonymous-functions.html">Anonymous functions</a>
+</li>
+<li><a href="strings.html">Strings and chars</a>
+</li>
+<li><a href="arrays.html">Arrays</a>
+</li>
+<li><a href="maps.html">Maps</a>
+</li>
+<li><a href="classes.html">Classes and objects</a>
+</li>
+<li><a href="static.html">Static members</a>
+</li>
+<li><a href="interfaces.html">Interfaces</a>
+</li>
+<li><a href="exceptions.html">Exceptions</a>
+</li>
+<li><a href="modules.html">Modules</a>
+</li>
+<li><a href="packages.html">Packages</a>
+</li>
+<li><a href="memory.html">Memory management</a>
+</li>
+<li><a href="printing.html">Printing</a>
+</li>
+</ul>
+<h2>Standard library</h2><ul>
+<li><a href="stdlib.html">Overview</a>
+</li>
+<li><a href="ref.general.html">General</a>
+</li>
+<li><a href="ref.strings.html">Strings</a>
+</li>
+<li><a href="ref.arrays.html">Arrays</a>
+</li>
+<li><a href="ref.maps.html">Maps</a>
+</li>
+<li><a href="ref.files.html">Files</a>
+</li>
+<li><a href="ref.datetime.html">Date and time</a>
+</li>
+<li><a href="ref.json.html">JSON</a>
+</li>
+<li><a href="ref.http.html">HTTP</a>
+<ul class="children">
+<li><a href="function.http-request.html"><code>http_request</code></a></li>
+<li><a href="function.http-get.html"><code>http_get</code></a></li>
+<li><a href="function.http-post.html"><code>http_post</code></a></li>
+<li><a href="function.urlencode.html" class="active"><code>urlencode</code></a></li>
+<li><a href="function.rawurlencode.html"><code>rawurlencode</code></a></li>
+<li><a href="function.urldecode.html"><code>urldecode</code></a></li>
+<li><a href="function.rawurldecode.html"><code>rawurldecode</code></a></li>
+<li><a href="function.http-build-query.html"><code>http_build_query</code></a></li>
+</ul>
+</li>
+<li><a href="ref.http-server.html">HTTP server</a>
+</li>
+<li><a href="ref.program.html">Program</a>
+</li>
+<li><a href="ref.conversions.html">Conversions</a>
+</li>
+<li><a href="ref.output.html">Output</a>
+</li>
+<li><a href="class.file.html">The File class</a>
+</li>
+<li><a href="class.response.html">The Response class</a>
+</li>
+<li><a href="class.request.html">The Request class</a>
+</li>
+<li><a href="class.responsewriter.html">The ResponseWriter class</a>
+</li>
+<li><a href="class.router.html">The Router class</a>
+</li>
+<li><a href="class.socket.html">The Socket class</a>
+</li>
+<li><a href="exception-classes.html">Exception classes</a>
+</li>
+</ul>
+</nav>
+<main class="content">
+<div class="breadcrumbs"><a href="stdlib.html">Standard library</a> › <a href="ref.http.html">HTTP</a> › <span>urlencode</span></div>
+<h1 class="refname"><code>urlencode</code></h1>
+<p class="refpurpose"><code>urlencode</code> — Percent-encode text for a query string</p>
+<h2>Description</h2>
+<div class="synopsis"><code><span class="fn">urlencode</span>(<span class="type">string</span> <span class="param">text</span>): <span class="type">string</span></code></div>
+<p class="import">Import it with <code>import urlencode from "std/http";</code></p>
+<p>Encodes the text's UTF-8 bytes as <code>%XX</code>, except letters, digits, and <code>-_.</code>, and writes spaces as <code>+</code>, as PHP's <code>urlencode</code> does. Use it for query strings and form bodies; for path segments, use <a href="function.rawurlencode.html">rawurlencode</a>.</p>
+<h2>Parameters</h2>
+<dl class="parameters">
+<dt><code>text</code></dt><dd>The text to encode.</dd>
+</dl>
+<h2>Return values</h2><p>The encoded text.</p>
+<h2>Examples</h2>
+<div class="example"><p class="example-title"><strong>Example #1</strong> Encoding a query value</p>
+<div class="code qiq"><pre><code><span class="kw">import</span> urlencode <span class="kw">from</span> <span class="string">&quot;std/http&quot;</span>;
+
+<span class="kw">print</span>(<span class="fn">urlencode</span>(<span class="string">&quot;fish &amp; chips/é&quot;</span>));</code></pre></div>
+<div class="output"><div class="output-label">Output</div><pre>fish+%26+chips%2F%C3%A9</pre></div>
+</div>
+<h2>See also</h2><p><a href="function.rawurlencode.html"><code>rawurlencode</code></a>, <a href="function.urldecode.html"><code>urldecode</code></a>, <a href="function.http-build-query.html"><code>http_build_query</code></a></p>
+<nav class="pager"><a class="prev" href="function.http-post.html">« http_post</a><a class="next" href="function.rawurlencode.html">rawurlencode »</a></nav>
+</main>
+</div>
+<script src="search.js"></script>
+</body>
+</html>

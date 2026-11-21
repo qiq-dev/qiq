@@ -1,0 +1,98 @@
+// Functions
+function greet(string name, string greeting = "Hello", int times = 1): void {
+    print(str_repeat(greeting + ", " + name + "! ", times));
+}
+
+greet("Ada");
+greet("Ada", "Hi");
+greet("Ada", "Hi", 3);
+
+function scale(double value, double factor = -1.5): double {
+    return value * factor;
+}
+print(scale(2.0));
+
+// Methods, constructors, and parent::__construct(...)
+class Logger {
+    protected string prefix;
+
+    function __construct(string prefix = "[app]") {
+        this->prefix = prefix;
+    }
+
+    function log(string message, string level = "info"): void {
+        print(this->prefix + " " + level + ": " + message);
+    }
+}
+
+class FileLogger extends Logger {
+    function __construct(string path, string prefix = "[file]") {
+        parent::__construct(prefix);
+    }
+}
+
+Logger logger = new Logger();
+logger->log("started");
+logger->log("disk full", "error");
+Logger debug = new Logger("[debug]");
+debug->log("verbose");
+FileLogger file = new FileLogger("/tmp/app.log");
+file->log("written");
+
+// Interfaces: each implementation may declare its own default, and the
+// default of the method that actually runs is used.
+interface Template {
+    function render(string template, bool escape = true): string;
+}
+
+class Page implements Template {
+    function render(string template, bool escape = true): string {
+        if (escape) {
+            return "escaped " + template;
+        }
+        return "raw " + template;
+    }
+}
+
+class RawPage implements Template {
+    function render(string template, bool escape = false): string {
+        if (escape) {
+            return "escaped " + template;
+        }
+        return "raw " + template;
+    }
+}
+
+function show(Template view): void {
+    print(view->render("<p>"));          // each class's own default
+    print(view->render("<p>", true));    // explicit argument
+}
+
+show(new Page());
+show(new RawPage());
+
+// Abstract methods: same rule.
+abstract class Shape {
+    abstract function describe(string unit = "cm"): string;
+
+    function summary(): void {
+        print(this->describe());
+    }
+}
+
+class Square extends Shape {
+    function describe(string unit = "mm"): string {
+        return "square in " + unit;
+    }
+}
+
+Square square = new Square();
+square->summary();
+print(square->describe("in"));
+
+// Standard library functions with optional parameters
+print(substr("héllo wörld", 6));
+print(substr("héllo wörld", -5));
+print(strpos("ab-ab", "ab", 1));
+print(trim("  padded  "));
+print(trim("--==héllo==--", "-="));

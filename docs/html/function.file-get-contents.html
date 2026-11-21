@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>file_get_contents - qiq Manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <button class="menu-toggle" aria-label="Show menu" onclick="document.body.classList.toggle('menu-open')">☰</button>
+  <a class="brand" href="introduction.html"><span class="logo">qiq</span><span class="brand-text">Manual</span></a>
+  <div class="search">
+    <input id="search" type="search" placeholder="Search the manual" autocomplete="off" aria-label="Search the manual">
+    <ul id="search-results" hidden></ul>
+  </div>
+</header>
+<div class="layout">
+<nav class="sidebar" aria-label="Manual">
+<h2>Getting started</h2><ul>
+<li><a href="introduction.html">Introduction</a>
+</li>
+<li><a href="installation.html">Installing and running</a>
+</li>
+</ul>
+<h2>Language reference</h2><ul>
+<li><a href="basic-syntax.html">Basic syntax</a>
+</li>
+<li><a href="types.html">Types</a>
+</li>
+<li><a href="variables.html">Variables</a>
+</li>
+<li><a href="operators.html">Operators</a>
+</li>
+<li><a href="control-structures.html">Control structures</a>
+</li>
+<li><a href="functions.html">Functions</a>
+</li>
+<li><a href="anonymous-functions.html">Anonymous functions</a>
+</li>
+<li><a href="strings.html">Strings and chars</a>
+</li>
+<li><a href="arrays.html">Arrays</a>
+</li>
+<li><a href="maps.html">Maps</a>
+</li>
+<li><a href="classes.html">Classes and objects</a>
+</li>
+<li><a href="static.html">Static members</a>
+</li>
+<li><a href="interfaces.html">Interfaces</a>
+</li>
+<li><a href="exceptions.html">Exceptions</a>
+</li>
+<li><a href="modules.html">Modules</a>
+</li>
+<li><a href="packages.html">Packages</a>
+</li>
+<li><a href="memory.html">Memory management</a>
+</li>
+<li><a href="printing.html">Printing</a>
+</li>
+</ul>
+<h2>Standard library</h2><ul>
+<li><a href="stdlib.html">Overview</a>
+</li>
+<li><a href="ref.general.html">General</a>
+</li>
+<li><a href="ref.strings.html">Strings</a>
+</li>
+<li><a href="ref.arrays.html">Arrays</a>
+</li>
+<li><a href="ref.maps.html">Maps</a>
+</li>
+<li><a href="ref.files.html">Files</a>
+<ul class="children">
+<li><a href="function.file-get-contents.html" class="active"><code>file_get_contents</code></a></li>
+<li><a href="function.file-put-contents.html"><code>file_put_contents</code></a></li>
+<li><a href="function.file.html"><code>file</code></a></li>
+<li><a href="function.file-exists.html"><code>file_exists</code></a></li>
+<li><a href="function.is-file.html"><code>is_file</code></a></li>
+<li><a href="function.is-dir.html"><code>is_dir</code></a></li>
+<li><a href="function.scandir.html"><code>scandir</code></a></li>
+<li><a href="function.file-get-bytes.html"><code>file_get_bytes</code></a></li>
+<li><a href="function.file-put-bytes.html"><code>file_put_bytes</code></a></li>
+</ul>
+</li>
+<li><a href="ref.datetime.html">Date and time</a>
+</li>
+<li><a href="ref.json.html">JSON</a>
+</li>
+<li><a href="ref.http.html">HTTP</a>
+</li>
+<li><a href="ref.http-server.html">HTTP server</a>
+</li>
+<li><a href="ref.program.html">Program</a>
+</li>
+<li><a href="ref.conversions.html">Conversions</a>
+</li>
+<li><a href="ref.output.html">Output</a>
+</li>
+<li><a href="class.file.html">The File class</a>
+</li>
+<li><a href="class.response.html">The Response class</a>
+</li>
+<li><a href="class.request.html">The Request class</a>
+</li>
+<li><a href="class.responsewriter.html">The ResponseWriter class</a>
+</li>
+<li><a href="class.router.html">The Router class</a>
+</li>
+<li><a href="class.socket.html">The Socket class</a>
+</li>
+<li><a href="exception-classes.html">Exception classes</a>
+</li>
+</ul>
+</nav>
+<main class="content">
+<div class="breadcrumbs"><a href="stdlib.html">Standard library</a> › <a href="ref.files.html">Files</a> › <span>file_get_contents</span></div>
+<h1 class="refname"><code>file_get_contents</code></h1>
+<p class="refpurpose"><code>file_get_contents</code> — Read an entire file into a string</p>
+<h2>Description</h2>
+<div class="synopsis"><code><span class="fn">file_get_contents</span>(<span class="type">string</span> <span class="param">path</span>): <span class="type">string</span></code></div>
+<p class="import">Import it with <code>import file_get_contents from "std/file";</code></p>
+<p>Reads the whole file at <code>path</code> as text.</p>
+<h2>Parameters</h2>
+<dl class="parameters">
+<dt><code>path</code></dt><dd>The file to read.</dd>
+</dl>
+<h2>Return values</h2><p>The file's contents.</p>
+<h2>Errors/Exceptions</h2><ul>
+<li><code>FileNotFoundException</code> if the path (or a directory in it) doesn't exist.</li>
+<li><code>PermissionDeniedException</code> if access is denied.</li>
+<li><code>IOException</code> for other failures; the two exceptions above extend it, so catching <code>IOException</code> catches all three.</li>
+<li><code>IOException</code> if <code>path</code> is a directory.</li>
+<li><code>InvalidUtf8Exception</code> if the contents aren't valid UTF-8 or contain a NUL byte; read such files with <code>file_get_bytes</code>.</li>
+</ul>
+<h2>Examples</h2>
+<div class="example"><p class="example-title"><strong>Example #1</strong> Writing and reading back</p>
+<div class="code qiq"><pre><code><span class="kw">import</span> file_get_contents, file_put_contents <span class="kw">from</span> <span class="string">&quot;std/file&quot;</span>;
+
+<span class="type">int</span> written = <span class="fn">file_put_contents</span>(<span class="string">&quot;notes.txt&quot;</span>, <span class="string">&quot;first line\nsecond line&quot;</span>);
+<span class="type">string</span> text = <span class="fn">file_get_contents</span>(<span class="string">&quot;notes.txt&quot;</span>);
+<span class="kw">print</span>(<span class="fn">len</span>(text));
+<span class="kw">print</span>(text);</code></pre></div>
+<div class="output"><div class="output-label">Output</div><pre>22
+first line
+second line</pre></div>
+</div>
+<h2>See also</h2><p><a href="function.file.html"><code>file</code></a>, <a href="function.file-put-contents.html"><code>file_put_contents</code></a>, <a href="function.file-get-bytes.html"><code>file_get_bytes</code></a></p>
+<nav class="pager"><a class="prev" href="ref.files.html">« Files</a><a class="next" href="function.file-put-contents.html">file_put_contents »</a></nav>
+</main>
+</div>
+<script src="search.js"></script>
+</body>
+</html>

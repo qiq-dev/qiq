@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Classes and objects - qiq Manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <button class="menu-toggle" aria-label="Show menu" onclick="document.body.classList.toggle('menu-open')">☰</button>
+  <a class="brand" href="introduction.html"><span class="logo">qiq</span><span class="brand-text">Manual</span></a>
+  <div class="search">
+    <input id="search" type="search" placeholder="Search the manual" autocomplete="off" aria-label="Search the manual">
+    <ul id="search-results" hidden></ul>
+  </div>
+</header>
+<div class="layout">
+<nav class="sidebar" aria-label="Manual">
+<h2>Getting started</h2><ul>
+<li><a href="introduction.html">Introduction</a>
+</li>
+<li><a href="installation.html">Installing and running</a>
+</li>
+</ul>
+<h2>Language reference</h2><ul>
+<li><a href="basic-syntax.html">Basic syntax</a>
+</li>
+<li><a href="types.html">Types</a>
+</li>
+<li><a href="variables.html">Variables</a>
+</li>
+<li><a href="operators.html">Operators</a>
+</li>
+<li><a href="control-structures.html">Control structures</a>
+</li>
+<li><a href="functions.html">Functions</a>
+</li>
+<li><a href="anonymous-functions.html">Anonymous functions</a>
+</li>
+<li><a href="strings.html">Strings and chars</a>
+</li>
+<li><a href="arrays.html">Arrays</a>
+</li>
+<li><a href="maps.html">Maps</a>
+</li>
+<li><a href="classes.html" class="active">Classes and objects</a>
+</li>
+<li><a href="static.html">Static members</a>
+</li>
+<li><a href="interfaces.html">Interfaces</a>
+</li>
+<li><a href="exceptions.html">Exceptions</a>
+</li>
+<li><a href="modules.html">Modules</a>
+</li>
+<li><a href="packages.html">Packages</a>
+</li>
+<li><a href="memory.html">Memory management</a>
+</li>
+<li><a href="printing.html">Printing</a>
+</li>
+</ul>
+<h2>Standard library</h2><ul>
+<li><a href="stdlib.html">Overview</a>
+</li>
+<li><a href="ref.general.html">General</a>
+</li>
+<li><a href="ref.strings.html">Strings</a>
+</li>
+<li><a href="ref.arrays.html">Arrays</a>
+</li>
+<li><a href="ref.maps.html">Maps</a>
+</li>
+<li><a href="ref.files.html">Files</a>
+</li>
+<li><a href="ref.datetime.html">Date and time</a>
+</li>
+<li><a href="ref.json.html">JSON</a>
+</li>
+<li><a href="ref.http.html">HTTP</a>
+</li>
+<li><a href="ref.http-server.html">HTTP server</a>
+</li>
+<li><a href="ref.program.html">Program</a>
+</li>
+<li><a href="ref.conversions.html">Conversions</a>
+</li>
+<li><a href="ref.output.html">Output</a>
+</li>
+<li><a href="class.file.html">The File class</a>
+</li>
+<li><a href="class.response.html">The Response class</a>
+</li>
+<li><a href="class.request.html">The Request class</a>
+</li>
+<li><a href="class.responsewriter.html">The ResponseWriter class</a>
+</li>
+<li><a href="class.router.html">The Router class</a>
+</li>
+<li><a href="class.socket.html">The Socket class</a>
+</li>
+<li><a href="exception-classes.html">Exception classes</a>
+</li>
+</ul>
+</nav>
+<main class="content">
+<div class="breadcrumbs"><a href="introduction.html">Manual</a> › <a href="#">Language reference</a> › <span>Classes and objects</span></div>
+<h1>Classes and objects</h1>
+
+<h2>Defining a class</h2>
+<p>A class has typed properties and methods. The constructor is named <code>__construct</code>. Create objects with <code>new</code>, use <code>-&gt;</code> for properties and methods, and <code>this</code> for the current object.</p>
+
+<div class="code qiq"><pre><code><span class="kw">class</span> <span class="cls">Person</span> {
+    <span class="kw">private</span> <span class="type">string</span> name;
+    <span class="kw">private</span> <span class="type">int</span> age;
+
+    <span class="kw">function</span> <span class="fn">__construct</span>(<span class="type">string</span> name, <span class="type">int</span> age) {
+        <span class="kw">this</span>-&gt;name = name;
+        <span class="kw">this</span>-&gt;age = age;
+    }
+
+    <span class="kw">function</span> <span class="fn">describe</span>(): <span class="type">string</span> {
+        <span class="kw">return</span> <span class="kw">this</span>-&gt;name + <span class="string">&quot; (&quot;</span> + <span class="fn">to_string</span>(<span class="kw">this</span>-&gt;age) + <span class="string">&quot;)&quot;</span>;
+    }
+}
+
+<span class="cls">Person</span> ada = <span class="kw">new</span> <span class="cls">Person</span>(<span class="string">&quot;Ada&quot;</span>, <span class="number">36</span>);
+<span class="kw">print</span>(ada-&gt;<span class="fn">describe</span>());</code></pre></div><div class="output"><div class="output-label">Output</div><pre>Ada (36)</pre></div>
+
+<ul>
+<li>Properties start at zero, <code>false</code>, or <code>null</code> until assigned; they can't have initializers in the declaration (use the constructor).</li>
+<li>A constructor has no return type. A class without a constructor is created with <code>new ClassName()</code>.</li>
+<li>Objects are references: assigning or passing one shares it.</li>
+<li>Printing an object prints its class name.</li>
+</ul>
+
+<h2>Visibility</h2>
+<p>Each property and method is <code>public</code>, <code>protected</code>, or <code>private</code>:</p>
+<table>
+<thead><tr><th>Visibility</th><th>Accessible from</th><th>Default for</th></tr></thead>
+<tbody>
+<tr><td><code>public</code></td><td>Anywhere</td><td>Methods</td></tr>
+<tr><td><code>protected</code></td><td>The class and its subclasses</td><td></td></tr>
+<tr><td><code>private</code></td><td>The declaring class only</td><td>Properties</td></tr>
+</tbody>
+</table>
+<p>Modifiers can be written in any order: <code>public final function</code> and <code>final public function</code> are the same.</p>
+
+<h2>Inheritance</h2>
+<p>A class can extend one parent class with <code>extends</code>; the parent must be declared first. A subclass inherits the parent's properties and methods, and can override methods with the same signature (and the same or wider visibility).</p>
+
+<div class="code qiq"><pre><code><span class="kw">class</span> <span class="cls">Shape</span> {
+    <span class="kw">protected</span> <span class="type">string</span> kind;
+
+    <span class="kw">function</span> <span class="fn">__construct</span>(<span class="type">string</span> kind) {
+        <span class="kw">this</span>-&gt;kind = kind;
+    }
+
+    <span class="kw">function</span> <span class="fn">describe</span>(): <span class="type">string</span> {
+        <span class="kw">return</span> <span class="string">&quot;a &quot;</span> + <span class="kw">this</span>-&gt;kind;
+    }
+}
+
+<span class="kw">class</span> <span class="cls">Square</span> <span class="kw">extends</span> <span class="cls">Shape</span> {
+    <span class="kw">private</span> <span class="type">int</span> side;
+
+    <span class="kw">function</span> <span class="fn">__construct</span>(<span class="type">int</span> side) {
+        <span class="kw">parent</span>::<span class="fn">__construct</span>(<span class="string">&quot;square&quot;</span>);
+        <span class="kw">this</span>-&gt;side = side;
+    }
+
+    <span class="kw">function</span> <span class="fn">describe</span>(): <span class="type">string</span> {
+        <span class="kw">return</span> <span class="kw">parent</span>::<span class="fn">describe</span>() + <span class="string">&quot; with side &quot;</span> + <span class="fn">to_string</span>(<span class="kw">this</span>-&gt;side);
+    }
+}
+
+<span class="cls">Square</span> square = <span class="kw">new</span> <span class="cls">Square</span>(<span class="number">3</span>);
+<span class="kw">print</span>(square-&gt;<span class="fn">describe</span>());</code></pre></div><div class="output"><div class="output-label">Output</div><pre>a square with side 3</pre></div>
+
+<ul>
+<li><code>parent::__construct(...)</code> calls the parent's constructor; it's only allowed inside a constructor. A subclass without its own constructor inherits its parent's.</li>
+<li><code>parent::method(...)</code> calls the parent's version of a method, even one the subclass overrides.</li>
+<li>A subclass object can be used wherever the parent type is expected: <code>Shape shape = new Square(3);</code>.</li>
+</ul>
+<p>A method call runs the version of the object's own class, as in PHP, even through a variable of a parent type. A call with omitted optional arguments uses the defaults of the method that runs. Private methods aren't overridden: a private method is always called in the class that declares it.</p>
+
+<div class="code qiq"><pre><code><span class="kw">class</span> <span class="cls">Animal</span> {
+    <span class="kw">function</span> <span class="fn">sound</span>(): <span class="type">string</span> { <span class="kw">return</span> <span class="string">&quot;...&quot;</span>; }
+    <span class="kw">function</span> <span class="fn">speak</span>(): <span class="type">string</span> { <span class="kw">return</span> <span class="string">&quot;It says &quot;</span> + <span class="kw">this</span>-&gt;<span class="fn">sound</span>(); }
+}
+<span class="kw">class</span> <span class="cls">Dog</span> <span class="kw">extends</span> <span class="cls">Animal</span> {
+    <span class="kw">function</span> <span class="fn">sound</span>(): <span class="type">string</span> { <span class="kw">return</span> <span class="string">&quot;woof&quot;</span>; }
+}
+
+<span class="cls">Animal</span> pet = <span class="kw">new</span> <span class="cls">Dog</span>();
+<span class="kw">print</span>(pet-&gt;<span class="fn">speak</span>());
+pet = <span class="kw">new</span> <span class="cls">Animal</span>();
+<span class="kw">print</span>(pet-&gt;<span class="fn">speak</span>());</code></pre></div><div class="output"><div class="output-label">Output</div><pre>It says woof
+It says ...</pre></div>
+
+<p>Calls to methods that no subclass overrides are compiled as direct calls; the others look up the object's class in a table, so overriding costs one extra load per call.</p>
+
+<h2>Abstract classes</h2>
+<p>An <code>abstract</code> class can't be instantiated, and may declare <code>abstract</code> methods, which have no body and must be implemented by concrete subclasses. Calls to abstract methods run the object's own implementation, which is the template-method pattern:</p>
+
+<div class="code qiq"><pre><code><span class="kw">abstract</span> <span class="kw">class</span> <span class="cls">Report</span> {
+    <span class="kw">function</span> <span class="fn">render</span>(): <span class="type">string</span> {
+        <span class="kw">return</span> <span class="string">&quot;[&quot;</span> + <span class="kw">this</span>-&gt;<span class="fn">title</span>() + <span class="string">&quot;]&quot;</span>;
+    }
+
+    <span class="kw">abstract</span> <span class="kw">protected</span> <span class="kw">function</span> <span class="fn">title</span>(): <span class="type">string</span>;
+}
+
+<span class="kw">class</span> <span class="cls">SalesReport</span> <span class="kw">extends</span> <span class="cls">Report</span> {
+    <span class="kw">protected</span> <span class="kw">function</span> <span class="fn">title</span>(): <span class="type">string</span> {
+        <span class="kw">return</span> <span class="string">&quot;sales&quot;</span>;
+    }
+}
+
+<span class="cls">Report</span> report = <span class="kw">new</span> <span class="cls">SalesReport</span>();
+<span class="kw">print</span>(report-&gt;<span class="fn">render</span>());</code></pre></div><div class="output"><div class="output-label">Output</div><pre>[sales]</pre></div>
+
+<h2>Final classes and methods</h2>
+<p>A <code>final</code> class can be instantiated but not extended, and a <code>final</code> method can't be overridden anywhere below the class that declares it. <code>final</code> can't be combined with <code>abstract</code>, used on a <code>private</code> method, or used in an interface.</p>
+
+<div class="code qiq"><pre><code><span class="kw">final</span> <span class="kw">class</span> <span class="cls">Money</span> {
+    <span class="kw">private</span> <span class="type">int</span> cents;
+
+    <span class="kw">function</span> <span class="fn">__construct</span>(<span class="type">int</span> cents) {
+        <span class="kw">this</span>-&gt;cents = cents;
+    }
+
+    <span class="kw">final</span> <span class="kw">function</span> <span class="fn">cents</span>(): <span class="type">int</span> {
+        <span class="kw">return</span> <span class="kw">this</span>-&gt;cents;
+    }
+}
+<span class="kw">print</span>(<span class="kw">new</span> <span class="cls">Money</span>(<span class="number">1250</span>)-&gt;<span class="fn">cents</span>());</code></pre></div><div class="output"><div class="output-label">Output</div><pre>1250</pre></div>
+
+<p>Declaring <code>class Euro extends Money {}</code> would be the error <code>class 'Euro' cannot extend final class 'Money'</code>.</p>
+
+<h2>Static members</h2>
+<p>Methods and properties that belong to the class rather than an object are described in <a href="static.html">Static members</a>.</p>
+
+<nav class="pager"><a class="prev" href="maps.html">« Maps</a><a class="next" href="static.html">Static members »</a></nav>
+</main>
+</div>
+<script src="search.js"></script>
+</body>
+</html>

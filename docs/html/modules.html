@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Modules - qiq Manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <button class="menu-toggle" aria-label="Show menu" onclick="document.body.classList.toggle('menu-open')">☰</button>
+  <a class="brand" href="introduction.html"><span class="logo">qiq</span><span class="brand-text">Manual</span></a>
+  <div class="search">
+    <input id="search" type="search" placeholder="Search the manual" autocomplete="off" aria-label="Search the manual">
+    <ul id="search-results" hidden></ul>
+  </div>
+</header>
+<div class="layout">
+<nav class="sidebar" aria-label="Manual">
+<h2>Getting started</h2><ul>
+<li><a href="introduction.html">Introduction</a>
+</li>
+<li><a href="installation.html">Installing and running</a>
+</li>
+</ul>
+<h2>Language reference</h2><ul>
+<li><a href="basic-syntax.html">Basic syntax</a>
+</li>
+<li><a href="types.html">Types</a>
+</li>
+<li><a href="variables.html">Variables</a>
+</li>
+<li><a href="operators.html">Operators</a>
+</li>
+<li><a href="control-structures.html">Control structures</a>
+</li>
+<li><a href="functions.html">Functions</a>
+</li>
+<li><a href="anonymous-functions.html">Anonymous functions</a>
+</li>
+<li><a href="strings.html">Strings and chars</a>
+</li>
+<li><a href="arrays.html">Arrays</a>
+</li>
+<li><a href="maps.html">Maps</a>
+</li>
+<li><a href="classes.html">Classes and objects</a>
+</li>
+<li><a href="static.html">Static members</a>
+</li>
+<li><a href="interfaces.html">Interfaces</a>
+</li>
+<li><a href="exceptions.html">Exceptions</a>
+</li>
+<li><a href="modules.html" class="active">Modules</a>
+</li>
+<li><a href="packages.html">Packages</a>
+</li>
+<li><a href="memory.html">Memory management</a>
+</li>
+<li><a href="printing.html">Printing</a>
+</li>
+</ul>
+<h2>Standard library</h2><ul>
+<li><a href="stdlib.html">Overview</a>
+</li>
+<li><a href="ref.general.html">General</a>
+</li>
+<li><a href="ref.strings.html">Strings</a>
+</li>
+<li><a href="ref.arrays.html">Arrays</a>
+</li>
+<li><a href="ref.maps.html">Maps</a>
+</li>
+<li><a href="ref.files.html">Files</a>
+</li>
+<li><a href="ref.datetime.html">Date and time</a>
+</li>
+<li><a href="ref.json.html">JSON</a>
+</li>
+<li><a href="ref.http.html">HTTP</a>
+</li>
+<li><a href="ref.http-server.html">HTTP server</a>
+</li>
+<li><a href="ref.program.html">Program</a>
+</li>
+<li><a href="ref.conversions.html">Conversions</a>
+</li>
+<li><a href="ref.output.html">Output</a>
+</li>
+<li><a href="class.file.html">The File class</a>
+</li>
+<li><a href="class.response.html">The Response class</a>
+</li>
+<li><a href="class.request.html">The Request class</a>
+</li>
+<li><a href="class.responsewriter.html">The ResponseWriter class</a>
+</li>
+<li><a href="class.router.html">The Router class</a>
+</li>
+<li><a href="class.socket.html">The Socket class</a>
+</li>
+<li><a href="exception-classes.html">Exception classes</a>
+</li>
+</ul>
+</nav>
+<main class="content">
+<div class="breadcrumbs"><a href="introduction.html">Manual</a> › <a href="#">Language reference</a> › <span>Modules</span></div>
+<h1>Modules</h1>
+<p>A program can span several files. Import functions, classes, and interfaces from another file by name with <code>import Name, Other from "path";</code>.</p>
+
+<div class="code qiq"><pre><code><span class="comment">// views/template.qiq</span>
+<span class="kw">interface</span> <span class="cls">Template</span> {
+    <span class="kw">function</span> <span class="fn">getHtml</span>(<span class="type">string</span> template): <span class="type">string</span>;
+}</code></pre></div>
+
+<div class="code qiq"><pre><code><span class="comment">// views/page.qiq</span>
+<span class="kw">import</span> <span class="cls">Template</span> <span class="kw">from</span> <span class="string">&quot;template&quot;</span>;
+
+<span class="kw">class</span> <span class="cls">Page</span> <span class="kw">implements</span> <span class="cls">Template</span> {
+    <span class="kw">private</span> <span class="type">string</span> title;
+
+    <span class="kw">function</span> <span class="fn">__construct</span>(<span class="type">string</span> title) {
+        <span class="kw">this</span>-&gt;title = title;
+    }
+
+    <span class="kw">function</span> <span class="fn">getHtml</span>(<span class="type">string</span> template): <span class="type">string</span> {
+        <span class="kw">return</span> <span class="fn">str_replace</span>(<span class="string">&quot;{title}&quot;</span>, <span class="kw">this</span>-&gt;title, template);
+    }
+}</code></pre></div>
+
+<div class="code qiq"><pre><code><span class="comment">// main.qiq</span>
+<span class="kw">import</span> <span class="cls">Page</span> <span class="kw">from</span> <span class="string">&quot;views/page&quot;</span>;
+
+<span class="cls">Page</span> page = <span class="kw">new</span> <span class="cls">Page</span>(<span class="string">&quot;Home&quot;</span>);
+<span class="kw">print</span>(page-&gt;<span class="fn">getHtml</span>(<span class="string">&quot;&lt;h1&gt;{title}&lt;/h1&gt;&quot;</span>));</code></pre></div>
+
+<p>Compile or run the entry file as usual; the compiler loads its imports, and theirs, and produces one executable:</p>
+
+<div class="code sh"><pre><code>qiq run main.qiq</code></pre></div>
+<div class="code text"><pre><code>&lt;h1&gt;Home&lt;/h1&gt;</code></pre></div>
+
+<h2>Import paths</h2>
+<ul>
+<li>Paths are relative to the importing file, so <code>"../shared/util"</code> works too. In a <a href="packages.html">module</a>, a path can also start with the module's path (<code>"example.com/app/views/page"</code>) or a required module's path (<code>"github.com/ada/web/mux"</code>).</li>
+<li><code>.qiq</code> is added when the path has no extension.</li>
+<li>Each file is loaded once, however many files import it.</li>
+<li>Import cycles are an error that lists the cycle, for example <code>import cycle: a.qiq -&gt; b.qiq -&gt; a.qiq</code>.</li>
+</ul>
+
+<h2>What can be imported</h2>
+<ul>
+<li>Every top-level function, class, and interface in a file can be imported. Imported names are used unqualified, exactly as if they were declared in the importing file.</li>
+<li>Names a file imports are not re-exported: import them from the file that declares them.</li>
+<li>A name is visible only in files that declare or import it, so two files can each declare their own <code>helper</code> function or <code>Item</code> class without clashing.</li>
+<li>Classes can extend imported classes and implement imported interfaces, and interface calls dispatch across files.</li>
+<li>The everyday parts of the <a href="stdlib.html">standard library</a> (strings, the general functions, and the <a href="exception-classes.html">exception classes</a>) are available everywhere without an import, and their names can't be redeclared. The rest is imported from <code>std/</code> paths, such as <code>import File from "std/file";</code>; see <a href="stdlib.html">Standard library</a>.</li>
+</ul>
+
+<h2>Importing under another name</h2>
+<p>Imported names are used unqualified, so two files that export the same name clash. Import one of them under another name with <code>as</code>:</p>
+
+<div class="code qiq"><pre><code><span class="kw">import</span> <span class="cls">Mux</span> <span class="kw">as</span> <span class="cls">WebMux</span> <span class="kw">from</span> <span class="string">&quot;github.com/ada/web/mux&quot;</span>;
+<span class="kw">import</span> <span class="cls">Mux</span> <span class="kw">from</span> <span class="string">&quot;views/mux&quot;</span>;
+
+<span class="cls">WebMux</span> api = <span class="kw">new</span> <span class="cls">WebMux</span>();</code></pre></div>
+
+<p>The new name works everywhere the original would: <code>new</code>, <code>extends</code>, <code>implements</code>, <code>catch</code>, and type declarations. Objects still print, and error messages still show, the class's own name. Importing a name twice without <code>as</code> is an error that suggests it.</p>
+
+<h2>Private declarations</h2>
+<p>Mark a top-level function, class, or interface <code>private</code> to keep it out of reach of other <a href="packages.html">packages</a>: it can still be imported by files in its own module (the directory tree of its <code>qiq.mod</code>), but not from another module.</p>
+
+<div class="code qiq"><pre><code><span class="comment">// github.com/ada/web/mux.qiq</span>
+<span class="kw">private</span> <span class="kw">function</span> <span class="fn">clean</span>(<span class="type">string</span> path): <span class="type">string</span> {
+    <span class="kw">return</span> <span class="fn">trim</span>(path, <span class="string">&quot;/&quot;</span>);
+}
+
+<span class="kw">class</span> <span class="cls">Mux</span> {
+    <span class="comment">// ... uses clean() ...</span>
+}</code></pre></div>
+
+<p>Another module's <code>import clean from "github.com/ada/web/mux";</code> is the error <code>'clean' is private to module github.com/ada/web</code>. A program without a <code>qiq.mod</code> is a single module, so there <code>private</code> doesn't restrict anything.</p>
+
+<h2>File structure</h2>
+<ul>
+<li>Imports must come before all other declarations.</li>
+<li>Only the entry file may contain top-level statements. Imported files contain only imports and declarations, so importing a file never runs code.</li>
+<li>Errors name the file they occur in, for example <code>views/page.qiq:12:5: ...</code>.</li>
+<li><code>import</code> and <code>from</code> are contextual keywords, so they can still be used as variable names.</li>
+</ul>
+
+<nav class="pager"><a class="prev" href="exceptions.html">« Exceptions</a><a class="next" href="packages.html">Packages »</a></nav>
+</main>
+</div>
+<script src="search.js"></script>
+</body>
+</html>

@@ -1,0 +1,93 @@
+// Reference counting: every value created inside work() is freed once it
+// returns, the cycle by the cycle collector. Run with QIQ_DEBUG_MEMORY=1 to check; the last line
+// should report 0 still referenced:
+//
+//   QIQ_DEBUG_MEMORY=1 ./target/release/qiq run tests/memory.qiq
+
+class Node {
+    public string name;
+    public Node next;
+    public int[] scores;
+
+    function __construct(string name) {
+        this->name = name;
+        this->scores = [];
+    }
+
+    function label(): string {
+        return "<" + this->name + ">";
+    }
+}
+
+class ParseException extends Exception {}
+
+function parse(string text): int {
+    if (!str_starts_with(text, "#")) {
+        throw new ParseException("not a number: " + text);
+    }
+    return len(text);
+}
+
+function work(int round): int {
+    int total = 0;
+
+    // Strings: concatenation in a loop frees each previous value.
+    string text = "";
+    int i = 0;
+    while (i < 20) {
+        text = text + to_string(i);
+        i = i + 1;
+    }
+    total = total + len(text);
+
+    // Arrays and maps, including nested ones and reassignment.
+    string[] words = explode(" ", "the quick brown fox");
+    map[string, int[]] lengths = {};
+    foreach (words as word) {
+        lengths[word] = [len(word), round];
+    }
+    lengths["fox"] = [99];
+    words = ["replaced"];
+    total = total + len(lengths) + len(words);
+
+    // Objects that point to other objects.
+    Node head = new Node("a");
+    head->next = new Node("b");
+    head->next->next = new Node("c");
+    head->next = head->next->next;
+    total = total + len(head->label() + head->next->label());
+
+    // A cycle, freed by the cycle collector once work() returns.
+    Node other = new Node("d");
+    other->next = head;
+    head->next->next = other;
+
+    // Exceptions, caught here and thrown from deeper calls.
+    string[] inputs = ["#1", "x", "#22", "y"];
+    foreach (inputs as input) {
+        try {
+            total = total + parse(input + "");
+        } catch (ParseException e) {
+            total = total + len(e->getMessage());
+        } finally {
+            string note = "checked " + input;
+        }
+    }
+
+    // Runtime errors are exceptions too.
+    try {
+        int[] numbers = [1, 2];
+        total = total + numbers[round];
+    } catch (OutOfRangeException e) {
+        total = total - 1;
+    }
+    return total;
+}
+
+int total = 0;
+int round = 0;
+while (round < 1000) {
+    total = total + work(round);
+    round = round + 1;
+}
+print(total);

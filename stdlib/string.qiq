@@ -1,0 +1,66 @@
+// String functions. Strings are UTF-8, and every position and length counts
+// characters, not bytes: len("héllo") is 5 (len is built into the compiler).
+//
+// `extern function` declares a function implemented in C (stdlib/runtime/strings.c)
+// as qiq_stdlib_<name>. Every function here is available in every file
+// without an import, and cannot be redeclared.
+
+// The characters from `start`, at most `length` of them (default: to the end).
+// A negative start counts from the end; a negative length leaves characters
+// off the end.
+extern function substr(string text, int start, int length = 9223372036854775807): string;
+
+// Character index of the first occurrence of `needle` at or after `offset`,
+// or -1 if absent. A negative offset counts from the end.
+extern function strpos(string haystack, string needle, int offset = 0): int;
+
+extern function str_contains(string haystack, string needle): bool;
+extern function str_ends_with(string haystack, string needle): bool;
+
+// Replaces every occurrence of `search` in `subject`.
+extern function str_replace(string search, string replace, string subject): string;
+
+extern function str_repeat(string text, int times): string;
+
+// Case conversion covers Latin, Greek, and Cyrillic letters.
+extern function strtoupper(string text): string;
+extern function strtolower(string text): string;
+extern function ucfirst(string text): string;
+
+// Reverses the characters.
+extern function strrev(string text): string;
+
+// Removes leading and trailing characters found in `characters` (default:
+// space, tab, newline, carriage return).
+extern function trim(string text, string characters = " \t\n\r"): string;
+
+// Splits `text` at each `separator`. A positive `limit` returns at most that
+// many pieces (the last holds the rest); a negative one drops that many from
+// the end. Throws InvalidArgumentException for an empty separator.
+extern function explode(string separator, string text, int limit = 9223372036854775807): string[];
+
+// Joins `pieces` with `separator` between them.
+extern function implode(string separator, string[] pieces): string;
+
+// The string's UTF-8 encoding: one byte per byte, so "é" is 2 bytes.
+extern function string_to_bytes(string text): byte[];
+
+// Decodes UTF-8 bytes into a string. Throws InvalidUtf8Exception when the
+// bytes aren't valid UTF-8 or contain a 0 byte.
+extern function bytes_to_string(byte[] bytes): string;
+
+function str_starts_with(string haystack, string needle): bool {
+    if (substr(haystack, 0, len(needle)) == needle) {
+        return true;
+    }
+    return false;
+}
+
+// Escapes &, <, >, ", and ' as HTML entities, so text can be put in HTML.
+function htmlspecialchars(string text): string {
+    string escaped = str_replace("&", "&amp;", text);
+    escaped = str_replace("<", "&lt;", escaped);
+    escaped = str_replace(">", "&gt;", escaped);
+    escaped = str_replace("\"", "&quot;", escaped);
+    return str_replace("'", "&#039;", escaped);
+}

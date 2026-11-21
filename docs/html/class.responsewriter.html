@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The ResponseWriter class - qiq Manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <button class="menu-toggle" aria-label="Show menu" onclick="document.body.classList.toggle('menu-open')">☰</button>
+  <a class="brand" href="introduction.html"><span class="logo">qiq</span><span class="brand-text">Manual</span></a>
+  <div class="search">
+    <input id="search" type="search" placeholder="Search the manual" autocomplete="off" aria-label="Search the manual">
+    <ul id="search-results" hidden></ul>
+  </div>
+</header>
+<div class="layout">
+<nav class="sidebar" aria-label="Manual">
+<h2>Getting started</h2><ul>
+<li><a href="introduction.html">Introduction</a>
+</li>
+<li><a href="installation.html">Installing and running</a>
+</li>
+</ul>
+<h2>Language reference</h2><ul>
+<li><a href="basic-syntax.html">Basic syntax</a>
+</li>
+<li><a href="types.html">Types</a>
+</li>
+<li><a href="variables.html">Variables</a>
+</li>
+<li><a href="operators.html">Operators</a>
+</li>
+<li><a href="control-structures.html">Control structures</a>
+</li>
+<li><a href="functions.html">Functions</a>
+</li>
+<li><a href="anonymous-functions.html">Anonymous functions</a>
+</li>
+<li><a href="strings.html">Strings and chars</a>
+</li>
+<li><a href="arrays.html">Arrays</a>
+</li>
+<li><a href="maps.html">Maps</a>
+</li>
+<li><a href="classes.html">Classes and objects</a>
+</li>
+<li><a href="static.html">Static members</a>
+</li>
+<li><a href="interfaces.html">Interfaces</a>
+</li>
+<li><a href="exceptions.html">Exceptions</a>
+</li>
+<li><a href="modules.html">Modules</a>
+</li>
+<li><a href="packages.html">Packages</a>
+</li>
+<li><a href="memory.html">Memory management</a>
+</li>
+<li><a href="printing.html">Printing</a>
+</li>
+</ul>
+<h2>Standard library</h2><ul>
+<li><a href="stdlib.html">Overview</a>
+</li>
+<li><a href="ref.general.html">General</a>
+</li>
+<li><a href="ref.strings.html">Strings</a>
+</li>
+<li><a href="ref.arrays.html">Arrays</a>
+</li>
+<li><a href="ref.maps.html">Maps</a>
+</li>
+<li><a href="ref.files.html">Files</a>
+</li>
+<li><a href="ref.datetime.html">Date and time</a>
+</li>
+<li><a href="ref.json.html">JSON</a>
+</li>
+<li><a href="ref.http.html">HTTP</a>
+</li>
+<li><a href="ref.http-server.html">HTTP server</a>
+</li>
+<li><a href="ref.program.html">Program</a>
+</li>
+<li><a href="ref.conversions.html">Conversions</a>
+</li>
+<li><a href="ref.output.html">Output</a>
+</li>
+<li><a href="class.file.html">The File class</a>
+</li>
+<li><a href="class.response.html">The Response class</a>
+</li>
+<li><a href="class.request.html">The Request class</a>
+</li>
+<li><a href="class.responsewriter.html" class="active">The ResponseWriter class</a>
+</li>
+<li><a href="class.router.html">The Router class</a>
+</li>
+<li><a href="class.socket.html">The Socket class</a>
+</li>
+<li><a href="exception-classes.html">Exception classes</a>
+</li>
+</ul>
+</nav>
+<main class="content">
+<div class="breadcrumbs"><a href="stdlib.html">Standard library</a> › <span>The ResponseWriter class</span></div>
+<h1>The ResponseWriter class</h1>
+<p>Builds the response to a request, like Go's <code>http.ResponseWriter</code>. The server creates one for each request and sends the response when the handler returns, so the status and headers can be changed at any point until then.</p><p class="import">Import it with <code>import ResponseWriter from "std/http/server";</code></p>
+<h2>Class synopsis</h2>
+<div class="synopsis"><code><span class="kw">final class</span> <span class="cls">ResponseWriter</span> {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">status</span>(<span class="type">int</span> code): <span class="type">void</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">statusCode</span>(): <span class="type">int</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">header</span>(<span class="type">string</span> name, <span class="type">string</span> value): <span class="type">void</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">getHeader</span>(<span class="type">string</span> name): <span class="type">string</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">write</span>(<span class="type">string</span> text): <span class="type">void</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">writeBytes</span>(<span class="type">byte[]</span> data): <span class="type">void</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">redirect</span>(<span class="type">string</span> url, <span class="type">int</span> code = <span class="default">302</span>): <span class="type">void</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">error</span>(<span class="type">int</span> code, <span class="type">string</span> message = <span class="default">null</span>): <span class="type">void</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">bytes</span>(): <span class="type">byte[]</span><br>
+}</code></div>
+<table>
+<thead><tr><th>Method</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>status(code)</code></td><td>Sets the status code; 200 by default. Throws <code>InvalidArgumentException</code> for a code outside 100–999.</td></tr>
+<tr><td><code>statusCode()</code></td><td>The status code set so far</td></tr>
+<tr><td><code>header(name, value)</code></td><td>Sets a header, replacing one with the same name in any case. <code>Content-Length</code>, <code>Connection</code>, and <code>Transfer-Encoding</code> are set by the server. Throws <code>InvalidArgumentException</code> if the name or value contains a line break.</td></tr>
+<tr><td><code>getHeader(name)</code></td><td>A header set so far, or <code>null</code></td></tr>
+<tr><td><code>write(text)</code>, <code>writeBytes(data)</code></td><td>Appends to the body</td></tr>
+<tr><td><code>redirect(url, code)</code></td><td>Replies with a redirect: sets the status (302 Found by default; 301, 303, 307, and 308 are the others), the <code>Location</code> header, and a short HTML body</td></tr>
+<tr><td><code>error(code, message)</code></td><td>Replaces the body with a plain-text error, by default the status and its reason (<code>404 Not Found</code>), like Go's <code>http.Error</code></td></tr>
+<tr><td><code>bytes()</code></td><td>The body written so far, for middleware and tests</td></tr>
+</tbody>
+</table>
+<p>Unless the handler sets a <code>Content-Type</code>, the response is sent as <code>text/plain; charset=utf-8</code>.</p>
+<h2>Example</h2>
+<pre class="code"><span class="kw">import</span> <span class="cls">Request</span>, <span class="cls">ResponseWriter</span> <span class="kw">from</span> <span class="string">&quot;std/http/server&quot;</span>;
+
+router-&gt;handle("GET /items/{id}", function(Request r, ResponseWriter w): void {
+    Item item = find_item(r-&gt;pathValue("id"));
+    if (item == null) {
+        w-&gt;error(404);
+        return;
+    }
+    w-&gt;header("Content-Type", "application/json");
+    w-&gt;write(json_encode(item));
+});</pre>
+
+<nav class="pager"><a class="prev" href="class.request.html">« The Request class</a><a class="next" href="class.router.html">The Router class »</a></nav>
+</main>
+</div>
+<script src="search.js"></script>
+</body>
+</html>

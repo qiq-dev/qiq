@@ -1,0 +1,84 @@
+// Counting
+int i = 0;
+while (i < 3) {
+    print(i);
+    i = i + 1;
+}
+
+// break and continue
+int n = 0;
+while (true) {
+    n = n + 1;
+    if (n % 2 == 0) {
+        continue;
+    }
+    if (n > 7) {
+        break;
+    }
+    print(n);
+}
+
+// ! negates a bool
+bool done = false;
+int steps = 0;
+while (!done) {
+    steps = steps + 1;
+    done = steps >= 4;
+}
+print(steps);
+print(!true);
+print(!(1 > 2) && !false);
+
+// A function can end with `while (true)` that only leaves by returning.
+function firstPowerOfTwoAbove(int limit): int {
+    int value = 1;
+    while (true) {
+        if (value > limit) {
+            return value;
+        }
+        value = value * 2;
+    }
+}
+print(firstPowerOfTwoAbove(100));
+
+// finally runs on continue and break inside while.
+int round = 0;
+while (round < 5) {
+    round = round + 1;
+    try {
+        if (round == 2) {
+            continue;
+        }
+        if (round == 3) {
+            break;
+        }
+        print("round " + substr("123", round - 1, 1));
+    } finally {
+        print("finally");
+    }
+}
+
+// A foreach nested in a while runs many times without growing the stack.
+int total = 0;
+int pass = 0;
+int[] digits = [1, 2, 3];
+while (pass < 200000) {
+    foreach (digits as digit) {
+        total = total + digit;
+    }
+    pass = pass + 1;
+}
+print(total);
+
+// Splitting text into lines with while, strpos, and substr.
+string text = "alpha\nbeta\ngamma";
+while (len(text) > 0) {
+    int end = strpos(text, "\n");
+    if (end == -1) {
+        print(text);
+        text = "";
+    } else {
+        print(substr(text, 0, end));
+        text = substr(text, end + 1);
+    }
+}

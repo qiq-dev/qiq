@@ -1,0 +1,33 @@
+// HTTP requests. Needs internet access:
+//   ./target/release/qiq run tests/stdlib/http.qiq
+import http_build_query, http_get, rawurlencode, Response, urlencode from "std/http";
+
+class Repository {
+    public string full_name;
+    public string language;
+}
+
+Response r = http_get("https://api.github.com/repos/torvalds/linux",
+                      headers: {"Accept" => "application/vnd.github+json"}, timeout: 20);
+r->raiseForStatus();
+Repository repo = json_decode(r->text());
+print(r->status, r->reason, repo->full_name, repo->language, r->header("Content-Type"));
+
+Response page = http_get("http://example.com/");
+print(page->status, page->ok(), len(page->bytes) > 0);
+
+try {
+    Response missing = http_get("https://api.github.com/repos/qiq-lang/does-not-exist-xyz", timeout: 20);
+    print(missing->status, missing->ok());
+    missing->raiseForStatus();
+} catch (HttpException e) {
+    print("HttpException:", e->getCode());
+}
+
+try {
+    http_get("https://expired.badssl.com/", timeout: 20);
+} catch (NetworkException e) {
+    print("NetworkException:", e->getMessage());
+}
+
+print(http_build_query({"q" => "qiq lang", "page" => "2"}), urlencode("a&b"), rawurlencode("a b"));

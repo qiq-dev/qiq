@@ -1,0 +1,14 @@
+import Template from "views/template";
+import Page from "views/page";
+import label, render from "helpers";
+
+Page page = new Page("Home");
+print(page->getTitle());
+render(page);
+print(label());
+
+function show(Template view): void {
+    print(view->getHtml("<p>shown</p>"));
+}
+
+show(page);

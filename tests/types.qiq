@@ -1,0 +1,10 @@
+// qiq supports these built-in types and ignores spacing around tokens.
+double total=1.5+2.25;
+bool ready=true;
+string greeting="hello, qiq";
+int answer=40+2;
+answer=123;
+print(total);
+print(ready);
+print(greeting);
+print(answer); // trailing comments are ignored

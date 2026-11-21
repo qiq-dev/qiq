@@ -1,0 +1,111 @@
+// Cases don't fall through: each runs its statements and leaves the switch.
+function describe(int status): string {
+    switch (status) {
+        case 200, 204:
+            return "ok";
+        case 301, 302:
+            return "redirect";
+        case 404:
+            return "not found";
+        default:
+            return "error";
+    }
+}
+foreach ([200, 204, 302, 404, 500] as status) {
+    print(status, describe(status));
+}
+
+// Strings and chars compare by content.
+string command = "stop";
+switch (command) {
+    case "start":
+        print("starting");
+    case "stop", "halt":
+        print("stopping");
+}
+switch ('é') {
+    case 'a':
+        print("a");
+    default:
+        print("not a");
+}
+
+// Bytes: int literals become bytes.
+byte[] data = [137, 80];
+switch (data[0]) {
+    case 137:
+        print("PNG");
+    case 255:
+        print("JPEG");
+}
+
+// No match and no default: nothing runs.
+switch (7) {
+    case 1:
+        print("unreachable");
+}
+
+// default can appear anywhere; it runs only when no case matches.
+switch (3) {
+    default:
+        print("default");
+    case 3:
+        print("three");
+}
+
+// break leaves the switch early; continue goes to the enclosing loop.
+foreach ([1, 2, 3, 4] as n) {
+    switch (n % 2) {
+        case 0:
+            if (n == 4) {
+                break;
+            }
+            print(n, "is even");
+        case 1:
+            continue;
+    }
+    print("after switch for", n);
+}
+
+// break inside a switch leaves only the switch, so a loop needs its own exit.
+int i = 0;
+while (true) {
+    i = i + 1;
+    switch (i) {
+        case 2:
+            break;
+        default:
+            print("i is", i);
+    }
+    if (i >= 3) {
+        break;
+    }
+}
+
+// finally runs when break leaves a try inside the switch.
+switch (1) {
+    case 1:
+        try {
+            break;
+        } finally {
+            print("finally ran");
+        }
+}
+
+// Case values can be expressions; the subject is evaluated once.
+int limit = 10;
+switch (limit) {
+    case limit - 1:
+        print("one less");
+    case limit:
+        print("matches limit");
+}
+
+// Nested switches.
+switch ("a") {
+    case "a":
+        switch (2) {
+            case 2:
+                print("nested");
+        }
+}

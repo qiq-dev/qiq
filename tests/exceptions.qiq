@@ -1,0 +1,167 @@
+// Your own exceptions extend Exception (or a subclass) and inherit its
+// constructor: new ConfigException("message", code).
+class ConfigException extends Exception {}
+
+function loadPort(string text): int {
+    if (len(text) == 0) {
+        throw new ConfigException("port is empty", 7);
+    }
+    return 8080;
+}
+
+// catch matches the class and its subclasses; the first match wins.
+try {
+    print(loadPort("x"));
+    print(loadPort(""));
+    print("not reached");
+} catch (InvalidArgumentException e) {
+    print("wrong catch");
+} catch (Exception e) {
+    print("caught " + e->getMessage());
+    print(e->getCode());
+} finally {
+    print("finally after catch");
+}
+
+// finally runs when the try block returns, and the return value is kept.
+function withReturn(): int {
+    try {
+        return 1;
+    } finally {
+        print("finally before return");
+    }
+}
+print(withReturn());
+
+// A throwing function never has to return a value on that path.
+function check(int n): int {
+    if (n > 0) {
+        return n;
+    }
+    throw new InvalidArgumentException("n must be positive");
+}
+print(check(5));
+
+// finally runs on break and continue inside a loop.
+int[] numbers = [1, 2, 3, 4];
+foreach (numbers as n) {
+    try {
+        if (n == 2) {
+            continue;
+        }
+        if (n == 4) {
+            break;
+        }
+        print(n);
+    } finally {
+        print("finally");
+    }
+}
+
+// Nested try: the inner one doesn't match, so the outer one catches, and
+// both finally blocks run, innermost first.
+try {
+    try {
+        throw new ConfigException("inner");
+    } catch (ArithmeticException e) {
+        print("wrong catch");
+    } finally {
+        print("inner finally");
+    }
+} catch (ConfigException e) {
+    print("outer caught " + e->getMessage());
+} finally {
+    print("outer finally");
+}
+
+// An exception thrown inside a catch block propagates (after finally).
+try {
+    try {
+        throw new ConfigException("first");
+    } catch (ConfigException e) {
+        throw new RuntimeException("second, from catch");
+    } finally {
+        print("finally still runs");
+    }
+} catch (RuntimeException e) {
+    print("caught " + e->getMessage());
+}
+
+// Rethrowing the caught exception.
+try {
+    try {
+        throw new ConfigException("rethrown");
+    } catch (Exception e) {
+        print("logging " + e->getMessage());
+        throw e;
+    }
+} catch (ConfigException e) {
+    print("caught " + e->getMessage() + " again");
+}
+
+// Exceptions cross interface calls and constructors.
+interface Loader {
+    function load(string name): string;
+}
+
+class StrictLoader implements Loader {
+    function load(string name): string {
+        throw new IOException("cannot load " + name);
+    }
+}
+
+class Service {
+    function __construct(int retries) {
+        if (retries < 0) {
+            throw new InvalidArgumentException("retries must not be negative");
+        }
+    }
+}
+
+function useLoader(Loader loader): void {
+    print(loader->load("settings"));
+}
+
+try {
+    useLoader(new StrictLoader());
+} catch (IOException e) {
+    print("caught " + e->getMessage());
+}
+try {
+    Service service = new Service(-1);
+} catch (InvalidArgumentException e) {
+    print("caught " + e->getMessage());
+}
+
+// Runtime errors are exceptions too.
+int zero = 0;
+try {
+    print(1 % zero);
+} catch (DivisionByZeroException e) {
+    print("DivisionByZeroException: " + e->getMessage());
+}
+try {
+    print(2 ** -1);
+} catch (ArithmeticException e) {
+    print("ArithmeticException: " + e->getMessage());
+}
+map[string, int] ages = {"ada" => 36};
+try {
+    print(ages["bob"]);
+} catch (KeyNotFoundException e) {
+    print("KeyNotFoundException: " + e->getMessage());
+}
+try {
+    print(str_repeat("ab", -1));
+} catch (InvalidArgumentException e) {
+    print("InvalidArgumentException: " + e->getMessage());
+}
+try {
+    print(strpos("abc", "a", 10));
+} catch (Exception e) {
+    print("Exception: " + e->getMessage());
+}
+
+// Uncaught exceptions stop the program with the class and message.
+print("about to fail");
+throw new ConfigException("nobody catches this");

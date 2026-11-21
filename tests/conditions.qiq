@@ -1,0 +1,23 @@
+function max(int left, int right): int {
+    if (left > right) {
+        return left;
+    } else {
+        return right;
+    }
+}
+
+int biggest = max(7, 4);
+string first = "cafe";
+string second = "cafe latte";
+
+if (biggest == 7) {
+    print("numeric comparison passed");
+} else {
+    print("numeric comparison failed");
+}
+
+if (first < second) {
+    print("string ordering passed");
+} else {
+    print("string ordering failed");
+}

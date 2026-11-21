@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Operators - qiq Manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <button class="menu-toggle" aria-label="Show menu" onclick="document.body.classList.toggle('menu-open')">☰</button>
+  <a class="brand" href="introduction.html"><span class="logo">qiq</span><span class="brand-text">Manual</span></a>
+  <div class="search">
+    <input id="search" type="search" placeholder="Search the manual" autocomplete="off" aria-label="Search the manual">
+    <ul id="search-results" hidden></ul>
+  </div>
+</header>
+<div class="layout">
+<nav class="sidebar" aria-label="Manual">
+<h2>Getting started</h2><ul>
+<li><a href="introduction.html">Introduction</a>
+</li>
+<li><a href="installation.html">Installing and running</a>
+</li>
+</ul>
+<h2>Language reference</h2><ul>
+<li><a href="basic-syntax.html">Basic syntax</a>
+</li>
+<li><a href="types.html">Types</a>
+</li>
+<li><a href="variables.html">Variables</a>
+</li>
+<li><a href="operators.html" class="active">Operators</a>
+</li>
+<li><a href="control-structures.html">Control structures</a>
+</li>
+<li><a href="functions.html">Functions</a>
+</li>
+<li><a href="anonymous-functions.html">Anonymous functions</a>
+</li>
+<li><a href="strings.html">Strings and chars</a>
+</li>
+<li><a href="arrays.html">Arrays</a>
+</li>
+<li><a href="maps.html">Maps</a>
+</li>
+<li><a href="classes.html">Classes and objects</a>
+</li>
+<li><a href="static.html">Static members</a>
+</li>
+<li><a href="interfaces.html">Interfaces</a>
+</li>
+<li><a href="exceptions.html">Exceptions</a>
+</li>
+<li><a href="modules.html">Modules</a>
+</li>
+<li><a href="packages.html">Packages</a>
+</li>
+<li><a href="memory.html">Memory management</a>
+</li>
+<li><a href="printing.html">Printing</a>
+</li>
+</ul>
+<h2>Standard library</h2><ul>
+<li><a href="stdlib.html">Overview</a>
+</li>
+<li><a href="ref.general.html">General</a>
+</li>
+<li><a href="ref.strings.html">Strings</a>
+</li>
+<li><a href="ref.arrays.html">Arrays</a>
+</li>
+<li><a href="ref.maps.html">Maps</a>
+</li>
+<li><a href="ref.files.html">Files</a>
+</li>
+<li><a href="ref.datetime.html">Date and time</a>
+</li>
+<li><a href="ref.json.html">JSON</a>
+</li>
+<li><a href="ref.http.html">HTTP</a>
+</li>
+<li><a href="ref.http-server.html">HTTP server</a>
+</li>
+<li><a href="ref.program.html">Program</a>
+</li>
+<li><a href="ref.conversions.html">Conversions</a>
+</li>
+<li><a href="ref.output.html">Output</a>
+</li>
+<li><a href="class.file.html">The File class</a>
+</li>
+<li><a href="class.response.html">The Response class</a>
+</li>
+<li><a href="class.request.html">The Request class</a>
+</li>
+<li><a href="class.responsewriter.html">The ResponseWriter class</a>
+</li>
+<li><a href="class.router.html">The Router class</a>
+</li>
+<li><a href="class.socket.html">The Socket class</a>
+</li>
+<li><a href="exception-classes.html">Exception classes</a>
+</li>
+</ul>
+</nav>
+<main class="content">
+<div class="breadcrumbs"><a href="introduction.html">Manual</a> › <a href="#">Language reference</a> › <span>Operators</span></div>
+<h1>Operators</h1>
+<p>Both operands of an arithmetic, comparison, or bitwise operator must have the same type; qiq never converts between types implicitly, so <code>1 + 1.5</code> is an error. Use <code>to_double(1) + 1.5</code> instead.</p>
+
+<h2>Arithmetic operators</h2>
+<table>
+<thead><tr><th>Operator</th><th>Name</th><th>Example</th></tr></thead>
+<tbody>
+<tr><td><code>a + b</code></td><td>Addition (or <a href="strings.html">concatenation</a> of strings and chars)</td><td><code>7 + 3</code> is <code>10</code></td></tr>
+<tr><td><code>a - b</code></td><td>Subtraction</td><td><code>7 - 10</code> is <code>-3</code></td></tr>
+<tr><td><code>a * b</code></td><td>Multiplication</td><td><code>6 * 7</code> is <code>42</code></td></tr>
+<tr><td><code>a / b</code></td><td>Division</td><td><code>7 / 2</code> is <code>3</code>; <code>7.0 / 2.0</code> is <code>3.5</code></td></tr>
+<tr><td><code>a % b</code></td><td>Remainder</td><td><code>7 % 3</code> is <code>1</code>; <code>7.5 % 2.0</code> is <code>1.5</code></td></tr>
+<tr><td><code>a ** b</code></td><td>Power</td><td><code>2 ** 10</code> is <code>1024</code></td></tr>
+<tr><td><code>-a</code></td><td>Negation</td><td><code>-(3 + 4)</code> is <code>-7</code></td></tr>
+</tbody>
+</table>
+<ul>
+<li>Int arithmetic is 64-bit and wraps on overflow.</li>
+<li>Int <code>/</code> truncates toward zero, and <code>%</code> takes the sign of the left operand: <code>-7 / 2</code> is <code>-3</code> and <code>-7 % 3</code> is <code>-1</code>.</li>
+<li>Int <code>/</code> or <code>%</code> by zero throws <code>DivisionByZeroException</code>, and an int raised to a negative power throws <code>ArithmeticException</code>. Double arithmetic follows IEEE 754, so <code>1.0 / 0.0</code> is <code>inf</code>.</li>
+</ul>
+
+<div class="code qiq"><pre><code><span class="kw">print</span>(<span class="number">7</span> / <span class="number">2</span>, -<span class="number">7</span> % <span class="number">3</span>, <span class="number">2</span> ** <span class="number">10</span>, <span class="number">7.0</span> / <span class="number">2.0</span>);
+<span class="kw">print</span>(<span class="number">2</span> + <span class="number">3</span> * <span class="number">4</span>, (<span class="number">2</span> + <span class="number">3</span>) * <span class="number">4</span>, -<span class="number">2</span> ** <span class="number">2</span>);
+<span class="type">int</span> zero = <span class="number">0</span>;
+<span class="kw">try</span> {
+    <span class="kw">print</span>(<span class="number">1</span> / zero);
+} <span class="kw">catch</span> (<span class="cls">DivisionByZeroException</span> e) {
+    <span class="kw">print</span>(<span class="string">&quot;caught:&quot;</span>, e-&gt;<span class="fn">getMessage</span>());
+}</code></pre></div><div class="output"><div class="output-label">Output</div><pre>3 -1 1024 3.5
+14 20 -4
+caught: division by zero</pre></div>
+
+<h2>Comparison operators</h2>
+<table>
+<thead><tr><th>Operator</th><th>True when</th><th>Works on</th></tr></thead>
+<tbody>
+<tr><td><code>a == b</code>, <code>a != b</code></td><td>Equal, not equal</td><td><code>int</code>, <code>double</code>, <code>bool</code>, <code>byte</code>, <code>string</code>, <code>char</code>, <code>null</code></td></tr>
+<tr><td><code>a &lt; b</code>, <code>a &gt; b</code>, <code>a &lt;= b</code>, <code>a &gt;= b</code></td><td>Ordering</td><td><code>int</code>, <code>double</code>, <code>byte</code> (unsigned), <code>string</code>, <code>char</code></td></tr>
+</tbody>
+</table>
+<p>Comparisons produce a <code>bool</code> and can be used anywhere, not only in <code>if</code>. Strings and chars compare by content; ordering uses UTF-8 byte order, which is Unicode code-point order, not locale-aware alphabetical order. Arrays, maps, and objects can't be compared with each other. Comparisons can't be chained: write <code>0 &lt; n &amp;&amp; n &lt; 5</code>, not <code>0 &lt; n &lt; 5</code>.</p>
+
+<h3>Comparing with null</h3>
+<p>Strings, chars, arrays, maps, and objects can be compared with <code>null</code> using <code>==</code> and <code>!=</code>, to test whether they have a value. A null string is equal only to <code>null</code>, so comparing one with a string is <code>false</code> rather than an error; ordering a null string with <code>&lt;</code> or <code>&gt;</code> throws <code>RuntimeException</code>.</p>
+
+<div class="code qiq"><pre><code><span class="type">string</span>[] names = <span class="kw">new</span> <span class="type">string</span>[<span class="number">2</span>];
+names[<span class="number">1</span>] = <span class="string">&quot;Ada&quot;</span>;
+<span class="kw">print</span>(names[<span class="number">0</span>] == <span class="lit">null</span>, names[<span class="number">1</span>] != <span class="lit">null</span>, names[<span class="number">0</span>] == <span class="string">&quot;Ada&quot;</span>);
+<span class="type">int</span>[] scores = <span class="lit">null</span>;
+<span class="kw">if</span> (scores == <span class="lit">null</span>) {
+    scores = [<span class="number">90</span>, <span class="number">85</span>];
+}
+<span class="kw">print</span>(scores);</code></pre></div><div class="output"><div class="output-label">Output</div><pre>1 1 0
+[90, 85]</pre></div>
+
+<h2>The null coalescing operator</h2>
+<p><code>left ?? right</code> gives <code>left</code>, or <code>right</code> when <code>left</code> is missing: a map key that isn't there, an array index out of range (or a null array), or a <code>null</code> value. <code>right</code> is only evaluated when it's needed. It's PHP's <code>??</code>, and Python's <code>dict.get(key, default)</code>.</p>
+
+<div class="code qiq"><pre><code><span class="type">map</span>[<span class="type">string</span>, <span class="type">string</span>] settings = {<span class="string">&quot;theme&quot;</span> =&gt; <span class="string">&quot;dark&quot;</span>};
+<span class="type">string</span>[] args = [<span class="string">&quot;run&quot;</span>];
+<span class="type">string</span> name = <span class="lit">null</span>;
+
+<span class="kw">print</span>(settings[<span class="string">&quot;theme&quot;</span>] ?? <span class="string">&quot;light&quot;</span>, settings[<span class="string">&quot;font&quot;</span>] ?? <span class="string">&quot;mono&quot;</span>);
+<span class="kw">print</span>(args[<span class="number">0</span>] ?? <span class="string">&quot;help&quot;</span>, args[<span class="number">3</span>] ?? <span class="string">&quot;none&quot;</span>);
+<span class="kw">print</span>(name ?? <span class="string">&quot;anonymous&quot;</span>);
+<span class="kw">print</span>(settings[<span class="string">&quot;lang&quot;</span>] ?? settings[<span class="string">&quot;locale&quot;</span>] ?? <span class="string">&quot;en&quot;</span>);</code></pre></div><div class="output"><div class="output-label">Output</div><pre>dark mono
+run none
+anonymous
+en</pre></div>
+
+<ul>
+<li>The left side must be a map or array element, or a string, char, array, map, or object that can be <code>null</code>. The right side must have the same type, and can be <code>null</code> for those types.</li>
+<li><code>??</code> has the lowest precedence of all operators and groups to the right, so <code>a ?? b ?? c</code> tries <code>a</code>, then <code>b</code>, then <code>c</code>.</li>
+<li>Unlike PHP, a missing property or a <code>null</code> object earlier in a chain, as in <code>user-&gt;address-&gt;city ?? ""</code>, isn't covered: only the last step is checked.</li>
+</ul>
+
+<h2>Logical operators</h2>
+<table>
+<thead><tr><th>Operator</th><th>Result</th></tr></thead>
+<tbody>
+<tr><td><code>a &amp;&amp; b</code></td><td><code>true</code> if both are true; <code>b</code> is evaluated only if <code>a</code> is true</td></tr>
+<tr><td><code>a || b</code></td><td><code>true</code> if either is true; <code>b</code> is evaluated only if <code>a</code> is false</td></tr>
+<tr><td><code>!a</code></td><td><code>true</code> if <code>a</code> is false</td></tr>
+</tbody>
+</table>
+<p>The operands must be <code>bool</code>.</p>
+
+<div class="code qiq"><pre><code><span class="type">int</span> age = <span class="number">30</span>;
+<span class="type">bool</span> adult = age &gt;= <span class="number">18</span>;
+<span class="kw">print</span>(adult, age &gt; <span class="number">65</span> || age &lt; <span class="number">18</span>, !adult);
+<span class="kw">print</span>(adult &amp;&amp; age != <span class="number">31</span>);</code></pre></div><div class="output"><div class="output-label">Output</div><pre>1 0 0
+1</pre></div>
+
+<h2>Bitwise operators</h2>
+<table>
+<thead><tr><th>Operator</th><th>Name</th><th>Example</th></tr></thead>
+<tbody>
+<tr><td><code>a &amp; b</code></td><td>And</td><td><code>12 &amp; 10</code> is <code>8</code></td></tr>
+<tr><td><code>a | b</code></td><td>Or</td><td><code>12 | 3</code> is <code>15</code></td></tr>
+<tr><td><code>a ^ b</code></td><td>Exclusive or</td><td><code>12 ^ 10</code> is <code>6</code></td></tr>
+<tr><td><code>~a</code></td><td>Complement</td><td><code>~12</code> is <code>-13</code></td></tr>
+<tr><td><code>a &lt;&lt; b</code></td><td>Shift left</td><td><code>1 &lt;&lt; 4</code> is <code>16</code></td></tr>
+<tr><td><code>a &gt;&gt; b</code></td><td>Shift right, keeping the sign</td><td><code>-16 &gt;&gt; 2</code> is <code>-4</code></td></tr>
+</tbody>
+</table>
+<p>Bitwise operators take <code>int</code> operands. Shifting by a negative amount throws <code>ArithmeticException</code>; shifting by 64 or more gives <code>0</code>, or <code>-1</code> when shifting a negative number right.</p>
+
+<h2>String concatenation</h2>
+<p><code>+</code> joins strings and chars in any mix, producing a <code>string</code>: <code>"a" + 'b'</code> is <code>"ab"</code>. To include a number, convert it first: <code>"count: " + to_string(n)</code>.</p>
+
+<h2>Precedence</h2>
+<p>From lowest to highest; operators on the same row have the same precedence and, except for <code>**</code>, group left to right. Parentheses override precedence.</p>
+<table>
+<thead><tr><th>Operators</th><th>Notes</th></tr></thead>
+<tbody>
+<tr><td><code>||</code></td><td></td></tr>
+<tr><td><code>&amp;&amp;</code></td><td></td></tr>
+<tr><td><code>==</code> <code>!=</code></td><td></td></tr>
+<tr><td><code>&lt;</code> <code>&gt;</code> <code>&lt;=</code> <code>&gt;=</code></td><td>Can't be chained</td></tr>
+<tr><td><code>|</code></td><td></td></tr>
+<tr><td><code>^</code></td><td></td></tr>
+<tr><td><code>&amp;</code></td><td></td></tr>
+<tr><td><code>&lt;&lt;</code> <code>&gt;&gt;</code></td><td></td></tr>
+<tr><td><code>+</code> <code>-</code></td><td></td></tr>
+<tr><td><code>*</code> <code>/</code> <code>%</code></td><td></td></tr>
+<tr><td>unary <code>-</code> <code>~</code> <code>!</code></td><td></td></tr>
+<tr><td><code>**</code></td><td>Groups right to left: <code>2 ** 3 ** 2</code> is <code>2 ** 9</code></td></tr>
+</tbody>
+</table>
+<div class="note"><strong>Note:</strong> Unlike PHP and C, bitwise operators bind tighter than comparisons, so <code>x &amp; 1 == 0</code> means <code>(x &amp; 1) == 0</code>. And as in PHP, <code>**</code> binds tighter than unary minus, so <code>-2 ** 2</code> is <code>-4</code>.</div>
+
+<nav class="pager"><a class="prev" href="variables.html">« Variables</a><a class="next" href="control-structures.html">Control structures »</a></nav>
+</main>
+</div>
+<script src="search.js"></script>
+</body>
+</html>

@@ -1,0 +1,97 @@
+<!-- title: Variables -->
+<h1>Variables</h1>
+
+<h2>Declaring variables</h2>
+<p>Declare a variable with its type and an initial value. Arrays and maps may be declared without one, and start empty.</p>
+
+```qiq
+int count = 0;
+string name = "Ada";
+int[] later;
+map[string, int] counts;
+counts["a"] = 1;
+print(count, name, counts);
+```
+```output
+0 Ada {"a" => 1}
+```
+
+<h2>Type inference</h2>
+<p>Assigning to a name that hasn't been declared declares it, with the type of the value:</p>
+
+```qiq
+num = 123;              // int
+greeting = "hi";        // string
+words = ["a", "b"];     // string[]
+print(num + 1, greeting, words);
+```
+```output
+124 hi ["a", "b"]
+```
+
+<p>The type is fixed at that point, so a later <code>num = "text";</code> is an error. Because there is no declaration keyword, a misspelled name in an assignment silently declares a new variable, so watch for typos. An empty literal such as <code>[]</code> or <code>{}</code> has no type of its own, so <code>x = [];</code> is an error; declare the type instead: <code>int[] x = [];</code>.</p>
+
+<h2>Reassignment</h2>
+<p>Variables and function parameters can be reassigned with <code>name = value;</code>. The new value must have the variable's declared type; an object variable can hold any object of its class or a subclass, and an interface variable any class that implements it.</p>
+
+```qiq
+int total = 0;
+foreach ([5, 10, 15] as value) {
+    total = total + value;
+}
+string[] names = ["a"];
+names = explode(",", "x,y");
+print(total, names);
+```
+```output
+30 ["x", "y"]
+```
+
+<p>Walking a linked structure reassigns an object variable:</p>
+
+```qiq
+class Node {
+    public int value;
+    public Node next;
+    function __construct(int value, Node next = null) {
+        this->value = value;
+        this->next = next;
+    }
+}
+
+Node list = new Node(1, new Node(2, new Node(3)));
+int total = 0;
+Node current = list;
+while (current != null) {
+    total = total + current->value;
+    current = current->next;
+}
+print(total);
+```
+```output
+6
+```
+
+<p><code>foreach</code> loop variables, caught exceptions, and <code>this</code> can't be reassigned.</p>
+
+<h2>null</h2>
+<p>A string, char, array, map, or object variable can hold <code>null</code>, meaning no value: assign it with <code>name = null;</code> or declare <code>Node head = null;</code>. Properties, array elements, map values, arguments, and return values of those types can be <code>null</code> too. Test for it with <code>== null</code>; using a null value, such as calling a method on it, throws <code>RuntimeException</code>. Numbers and bools can't be <code>null</code>.</p>
+
+<h2>Scope</h2>
+<p>A variable is visible from its declaration to the end of the block that contains it. An assignment inside an <code>if</code>, loop, or <code>switch</code> updates a variable declared outside it, while a variable declared inside a block is visible only within that block. Each function has its own variables; top-level variables aren't visible inside functions.</p>
+
+```qiq
+int outer = 1;
+if (outer > 0) {
+    outer = 2;          // updates the outer variable
+    int inner = 3;      // visible only in this block
+    print(inner);
+}
+print(outer);
+```
+```output
+3
+2
+```
+
+<p>Each declaration must use a new name within its scope; declaring the same name twice is an error.</p>

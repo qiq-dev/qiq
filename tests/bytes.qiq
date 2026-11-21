@@ -1,0 +1,59 @@
+// Run from the repository root: paths are relative to the current directory.
+import file_get_bytes, file_get_contents, file_put_bytes from "std/file";
+
+// byte: an unsigned 8-bit value. Int literals become bytes where a byte is expected.
+byte b = 255;
+byte[] header = [137, 80, 78, 71, 13, 10, 26, 10];   // the PNG signature
+print(b, header[1]);
+print(header);
+
+// Binary files: write raw bytes, read them back, copy them.
+string path = "tests/bytes_output.bin";
+int written = file_put_bytes(path, header);
+byte[] data = file_get_bytes(path);
+print(written);
+if (data[0] == 137 && data[1] == 80) {
+    print("looks like a PNG");
+}
+int copied = file_put_bytes(path, [0, 255], append: true);
+byte[] all = file_get_bytes(path);
+int count = 0;
+foreach (all as value) { count = count + 1; }
+print(count, all[9]);
+
+// Text that isn't UTF-8 can be read as bytes, but not as a string.
+try {
+    print(file_get_contents(path));
+} catch (InvalidUtf8Exception e) {
+    print("InvalidUtf8Exception: " + e->getMessage());
+}
+
+// Strings and bytes: UTF-8 encoding and decoding.
+byte[] encoded = string_to_bytes("héllo");
+print(encoded);
+print(bytes_to_string(encoded));
+try {
+    print(bytes_to_string([104, 255]));
+} catch (InvalidUtf8Exception e) {
+    print("InvalidUtf8Exception: " + e->getMessage());
+}
+
+// Conversions: to_int, to_double, to_byte, to_string.
+print(to_int(b) + 1);
+print(to_int(3.99), to_int(-3.99), to_int(true));
+print(to_double(7) / 2.0, to_double(b));
+print(to_byte(65), to_byte(to_int(b) - 55));
+print("count: " + to_string(42) + ", ratio: " + to_string(0.5) + ", " + to_string(false));
+print(to_int("42") + to_int("-8"), to_double("2.5") * 2.0);
+
+// Bytes are not numbers: convert to do arithmetic.
+int total = 0;
+foreach (header as value) { total = total + to_int(value); }
+print(total);
+
+// Conversions that can't succeed throw.
+try { print(to_byte(256)); } catch (InvalidArgumentException e) { print(e->getMessage()); }
+try { print(to_int("12a")); } catch (InvalidArgumentException e) { print(e->getMessage()); }
+try { print(to_double("")); } catch (InvalidArgumentException e) { print(e->getMessage()); }
+try { print(to_int(1.0e19)); } catch (ArithmeticException e) { print(e->getMessage()); }
+try { print(to_int("99999999999999999999")); } catch (InvalidArgumentException e) { print(e->getMessage()); }

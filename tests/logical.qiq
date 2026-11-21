@@ -1,0 +1,48 @@
+// Prints its name when called, to show which operands are evaluated.
+function check(string name, bool result): bool {
+    print("checking " + name);
+    return result;
+}
+
+int age = 30;
+double score = 7.5;
+string name = "Ada";
+
+// <= and >=
+if (age >= 18 && age <= 65) {
+    print("working age");
+}
+if (score <= 7.5) {
+    print("score at most 7.5");
+}
+if (name >= "Ada" && name <= "Bob") {
+    print("name between Ada and Bob");
+}
+
+// && and ||, with != and grouping
+if (age < 18 || age > 65) {
+    print("not working age");
+} else {
+    print("still working age");
+}
+if (name != "Bob" && (score > 9.0 || age == 30)) {
+    print("grouped condition");
+}
+
+// Short-circuit: the right side runs only when it decides the result.
+if (check("left", false) && check("right", true)) {
+    print("unreachable");
+}
+if (check("left", true) || check("right", true)) {
+    print("or matched");
+}
+
+// Comparisons are bool expressions, so they can be stored and printed.
+bool adult = age >= 18;
+print(adult);
+print(age == 31);
+if (adult) {
+    print("adult");
+}
+bool both = adult && str_contains(name, "d");
+print(both);

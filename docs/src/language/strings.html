@@ -1,0 +1,64 @@
+<!-- title: Strings and chars -->
+<h1>Strings and chars</h1>
+
+<h2>Strings</h2>
+<p>A <code>string</code> is UTF-8 text in double quotes. Strings are immutable: functions that change text return a new string.</p>
+<p>These escapes are recognized in string and char literals:</p>
+<table>
+<thead><tr><th>Escape</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>\n</code></td><td>Newline</td></tr>
+<tr><td><code>\r</code></td><td>Carriage return</td></tr>
+<tr><td><code>\t</code></td><td>Tab</td></tr>
+<tr><td><code>\"</code>, <code>\'</code></td><td>Double and single quote</td></tr>
+<tr><td><code>\\</code></td><td>Backslash</td></tr>
+</tbody>
+</table>
+<p>There is no variable interpolation; build strings with <code>+</code>.</p>
+
+<h2>Chars</h2>
+<p>A <code>char</code> is exactly one Unicode character in single quotes, such as <code>'a'</code>, <code>'é'</code>, or <code>'界'</code>. Iterating over a string with <code>foreach</code> gives its chars.</p>
+
+<h2>Concatenation</h2>
+<p><code>+</code> joins strings and chars in any mix and produces a <code>string</code>. Numbers must be converted first with <code>to_string</code>.</p>
+
+```qiq
+string name = "wörld";
+char mark = '!';
+print("hello, " + name + mark);
+print('é' + 'ü');
+print("count: " + to_string(42));
+```
+```output
+hello, wörld!
+éü
+count: 42
+```
+
+<h2>Characters, not bytes</h2>
+<p>Every standard library position and length counts characters (Unicode scalar values), not bytes:</p>
+
+```qiq
+string text = "héllo wörld";
+print(len(text));
+print(substr(text, 6));
+print(strrev("añb界"));
+foreach ("aé" as position => character) {
+    print(position, character);
+}
+```
+```output
+11
+wörld
+界bña
+0 a
+1 é
+```
+
+<p>To work with the underlying bytes, convert with <code>string_to_bytes</code> and <code>bytes_to_string</code>.</p>
+
+<h2>Comparing strings</h2>
+<p><code>==</code> and <code>!=</code> compare contents. <code>&lt;</code>, <code>&gt;</code>, <code>&lt;=</code>, and <code>&gt;=</code> compare in UTF-8 byte order, which is Unicode code-point order, not locale-aware alphabetical order. Canonically equivalent spellings (such as a precomposed <code>é</code> and <code>e</code> followed by a combining accent) are not treated as equal.</p>
+
+<h2>String functions</h2>
+<p><a href="function.len.html"><code>len(text)</code></a> counts characters, and works on arrays and maps too. See <a href="ref.strings.html">Strings</a> in the standard library for <code>substr</code>, <code>sprintf</code>, <code>strpos</code>, <code>str_replace</code>, <code>explode</code>, <code>implode</code>, <code>trim</code>, case conversion, and more.</p>

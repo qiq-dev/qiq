@@ -1,0 +1,97 @@
+// Static methods belong to the class: call them with ClassName::method().
+class MathUtil {
+    static function clamp(int value, int low = 0, int high = 100): int {
+        if (value < low) {
+            return low;
+        }
+        if (value > high) {
+            return high;
+        }
+        return value;
+    }
+
+    // Inside the class, self:: names the class.
+    static function percent(int part, int whole): int {
+        return self::clamp(part * 100 / whole);
+    }
+
+    private static function secret(): string {
+        return "private";
+    }
+
+    static function reveal(): string {
+        return self::secret();
+    }
+}
+
+print(MathUtil::clamp(150), MathUtil::clamp(-5, high: 10), MathUtil::percent(3, 4));
+print(MathUtil::reveal());
+
+// Static factory methods: a common use, here with a private constructor.
+class Temperature {
+    private double celsius;
+
+    private function __construct(double celsius) {
+        this->celsius = celsius;
+    }
+
+    static function fromCelsius(double value): Temperature {
+        return new Temperature(value);
+    }
+
+    static function fromFahrenheit(double value): Temperature {
+        return new Temperature((value - 32.0) * 5.0 / 9.0);
+    }
+
+    function celsius(): double {
+        return this->celsius;
+    }
+
+    // Instance methods can call static ones.
+    function describe(): string {
+        return to_string(this->celsius) + "C, " + self::label(this->celsius);
+    }
+
+    static function label(double celsius): string {
+        if (celsius < 15.0) {
+            return "cold";
+        }
+        return "warm";
+    }
+}
+
+Temperature boiling = Temperature::fromFahrenheit(212.0);
+print(boiling->celsius(), Temperature::fromCelsius(10.0)->describe());
+
+// Static methods are inherited.
+class Base {
+    static function greet(string name): string {
+        return "hello " + name;
+    }
+}
+class Child extends Base {}
+print(Child::greet("ada"));
+
+// A static call can be a statement on its own.
+class Log {
+    static function write(string message): void {
+        print("log: " + message);
+    }
+}
+Log::write("started");
+
+// Static methods can throw like any other.
+class Parse {
+    static function port(string text): int {
+        int value = to_int(text);
+        if (value < 1 || value > 65535) {
+            throw new InvalidArgumentException("port out of range: " + text);
+        }
+        return value;
+    }
+}
+try {
+    print(Parse::port("8080"), Parse::port("70000"));
+} catch (InvalidArgumentException e) {
+    print(e->getMessage());
+}

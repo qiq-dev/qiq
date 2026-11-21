@@ -1,0 +1,161 @@
+<!-- title: Classes and objects -->
+<h1>Classes and objects</h1>
+
+<h2>Defining a class</h2>
+<p>A class has typed properties and methods. The constructor is named <code>__construct</code>. Create objects with <code>new</code>, use <code>-&gt;</code> for properties and methods, and <code>this</code> for the current object.</p>
+
+```qiq
+class Person {
+    private string name;
+    private int age;
+
+    function __construct(string name, int age) {
+        this->name = name;
+        this->age = age;
+    }
+
+    function describe(): string {
+        return this->name + " (" + to_string(this->age) + ")";
+    }
+}
+
+Person ada = new Person("Ada", 36);
+print(ada->describe());
+```
+```output
+Ada (36)
+```
+
+<ul>
+<li>Properties start at zero, <code>false</code>, or <code>null</code> until assigned; they can't have initializers in the declaration (use the constructor).</li>
+<li>A constructor has no return type. A class without a constructor is created with <code>new ClassName()</code>.</li>
+<li>Objects are references: assigning or passing one shares it.</li>
+<li>Printing an object prints its class name.</li>
+</ul>
+
+<h2>Visibility</h2>
+<p>Each property and method is <code>public</code>, <code>protected</code>, or <code>private</code>:</p>
+<table>
+<thead><tr><th>Visibility</th><th>Accessible from</th><th>Default for</th></tr></thead>
+<tbody>
+<tr><td><code>public</code></td><td>Anywhere</td><td>Methods</td></tr>
+<tr><td><code>protected</code></td><td>The class and its subclasses</td><td></td></tr>
+<tr><td><code>private</code></td><td>The declaring class only</td><td>Properties</td></tr>
+</tbody>
+</table>
+<p>Modifiers can be written in any order: <code>public final function</code> and <code>final public function</code> are the same.</p>
+
+<h2>Inheritance</h2>
+<p>A class can extend one parent class with <code>extends</code>; the parent must be declared first. A subclass inherits the parent's properties and methods, and can override methods with the same signature (and the same or wider visibility).</p>
+
+```qiq
+class Shape {
+    protected string kind;
+
+    function __construct(string kind) {
+        this->kind = kind;
+    }
+
+    function describe(): string {
+        return "a " + this->kind;
+    }
+}
+
+class Square extends Shape {
+    private int side;
+
+    function __construct(int side) {
+        parent::__construct("square");
+        this->side = side;
+    }
+
+    function describe(): string {
+        return parent::describe() + " with side " + to_string(this->side);
+    }
+}
+
+Square square = new Square(3);
+print(square->describe());
+```
+```output
+a square with side 3
+```
+
+<ul>
+<li><code>parent::__construct(...)</code> calls the parent's constructor; it's only allowed inside a constructor. A subclass without its own constructor inherits its parent's.</li>
+<li><code>parent::method(...)</code> calls the parent's version of a method, even one the subclass overrides.</li>
+<li>A subclass object can be used wherever the parent type is expected: <code>Shape shape = new Square(3);</code>.</li>
+</ul>
+<p>A method call runs the version of the object's own class, as in PHP, even through a variable of a parent type. A call with omitted optional arguments uses the defaults of the method that runs. Private methods aren't overridden: a private method is always called in the class that declares it.</p>
+
+```qiq
+class Animal {
+    function sound(): string { return "..."; }
+    function speak(): string { return "It says " + this->sound(); }
+}
+class Dog extends Animal {
+    function sound(): string { return "woof"; }
+}
+
+Animal pet = new Dog();
+print(pet->speak());
+pet = new Animal();
+print(pet->speak());
+```
+```output
+It says woof
+It says ...
+```
+
+<p>Calls to methods that no subclass overrides are compiled as direct calls; the others look up the object's class in a table, so overriding costs one extra load per call.</p>
+
+<h2>Abstract classes</h2>
+<p>An <code>abstract</code> class can't be instantiated, and may declare <code>abstract</code> methods, which have no body and must be implemented by concrete subclasses. Calls to abstract methods run the object's own implementation, which is the template-method pattern:</p>
+
+```qiq
+abstract class Report {
+    function render(): string {
+        return "[" + this->title() + "]";
+    }
+
+    abstract protected function title(): string;
+}
+
+class SalesReport extends Report {
+    protected function title(): string {
+        return "sales";
+    }
+}
+
+Report report = new SalesReport();
+print(report->render());
+```
+```output
+[sales]
+```
+
+<h2>Final classes and methods</h2>
+<p>A <code>final</code> class can be instantiated but not extended, and a <code>final</code> method can't be overridden anywhere below the class that declares it. <code>final</code> can't be combined with <code>abstract</code>, used on a <code>private</code> method, or used in an interface.</p>
+
+```qiq
+final class Money {
+    private int cents;
+
+    function __construct(int cents) {
+        this->cents = cents;
+    }
+
+    final function cents(): int {
+        return this->cents;
+    }
+}
+print(new Money(1250)->cents());
+```
+```output
+1250
+```
+
+<p>Declaring <code>class Euro extends Money {}</code> would be the error <code>class 'Euro' cannot extend final class 'Money'</code>.</p>
+
+<h2>Static members</h2>
+<p>Methods and properties that belong to the class rather than an object are described in <a href="static.html">Static members</a>.</p>

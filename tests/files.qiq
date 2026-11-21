@@ -1,0 +1,57 @@
+// Run from the repository root: paths are relative to the current directory.
+import file, file_exists, file_get_contents, file_put_contents, is_dir, is_file, scandir from "std/file";
+
+string path = "tests/files_output.txt";
+
+// Write, append, and read back.
+print(file_put_contents(path, "héllo\n"));
+print(file_put_contents(path, "wörld\n", append: true));
+string contents = file_get_contents(path);
+print(len(contents));
+print(trim(contents));
+
+// Checks that never throw.
+print(file_exists(path));
+print(is_file(path));
+print(is_dir("tests"));
+print(file_exists("tests/no-such-file.txt"));
+
+// A missing file throws FileNotFoundException.
+try {
+    print(file_get_contents("tests/no-such-file.txt"));
+} catch (FileNotFoundException e) {
+    print("FileNotFoundException: " + e->getMessage());
+}
+
+// Reading a directory throws IOException.
+try {
+    print(file_get_contents("tests"));
+} catch (IOException e) {
+    print("IOException: " + e->getMessage());
+}
+
+// Writing into a missing directory fails too.
+try {
+    int written = file_put_contents("tests/no-such-dir/out.txt", "x");
+} catch (IOException e) {
+    print("IOException: " + e->getMessage());
+}
+
+// file() returns the lines, without line endings.
+int lines_written = file_put_contents(path, "name,age\nada,36\nlin,29\n");
+foreach (file(path) as number => line) {
+    string[] fields = explode(",", line);
+    print(implode(" is ", fields));
+}
+
+// scandir() returns a directory's names, sorted, without "." and "..".
+foreach (scandir("stdlib") as name) {
+    print(name);
+}
+
+// Guard with file_exists, or let the exception propagate.
+if (file_exists("config.txt")) {
+    print(file_get_contents("config.txt"));
+} else {
+    print("no config.txt, using defaults");
+}

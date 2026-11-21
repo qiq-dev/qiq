@@ -1,0 +1,35 @@
+class Person {
+    protected string name;
+
+    function __construct(string name) {
+        this->name = name;
+    }
+
+    function getName(): string {
+        return this->name;
+    }
+}
+
+class Employee extends Person {
+    private int employeeId;
+
+    function __construct(string name, int employeeId) {
+        parent::__construct(name);
+        this->employeeId = employeeId;
+    }
+
+    function getEmployeeId(): int {
+        return this->employeeId;
+    }
+
+    function describe(): string {
+        return this->name;
+    }
+}
+
+Employee employee = new Employee("Ada", 42);
+Person person = employee;
+print(employee->getName());
+print(employee->getEmployeeId());
+print(employee->describe());
+print(person->getName());

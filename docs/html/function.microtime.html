@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>microtime - qiq Manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <button class="menu-toggle" aria-label="Show menu" onclick="document.body.classList.toggle('menu-open')">☰</button>
+  <a class="brand" href="introduction.html"><span class="logo">qiq</span><span class="brand-text">Manual</span></a>
+  <div class="search">
+    <input id="search" type="search" placeholder="Search the manual" autocomplete="off" aria-label="Search the manual">
+    <ul id="search-results" hidden></ul>
+  </div>
+</header>
+<div class="layout">
+<nav class="sidebar" aria-label="Manual">
+<h2>Getting started</h2><ul>
+<li><a href="introduction.html">Introduction</a>
+</li>
+<li><a href="installation.html">Installing and running</a>
+</li>
+</ul>
+<h2>Language reference</h2><ul>
+<li><a href="basic-syntax.html">Basic syntax</a>
+</li>
+<li><a href="types.html">Types</a>
+</li>
+<li><a href="variables.html">Variables</a>
+</li>
+<li><a href="operators.html">Operators</a>
+</li>
+<li><a href="control-structures.html">Control structures</a>
+</li>
+<li><a href="functions.html">Functions</a>
+</li>
+<li><a href="anonymous-functions.html">Anonymous functions</a>
+</li>
+<li><a href="strings.html">Strings and chars</a>
+</li>
+<li><a href="arrays.html">Arrays</a>
+</li>
+<li><a href="maps.html">Maps</a>
+</li>
+<li><a href="classes.html">Classes and objects</a>
+</li>
+<li><a href="static.html">Static members</a>
+</li>
+<li><a href="interfaces.html">Interfaces</a>
+</li>
+<li><a href="exceptions.html">Exceptions</a>
+</li>
+<li><a href="modules.html">Modules</a>
+</li>
+<li><a href="packages.html">Packages</a>
+</li>
+<li><a href="memory.html">Memory management</a>
+</li>
+<li><a href="printing.html">Printing</a>
+</li>
+</ul>
+<h2>Standard library</h2><ul>
+<li><a href="stdlib.html">Overview</a>
+</li>
+<li><a href="ref.general.html">General</a>
+</li>
+<li><a href="ref.strings.html">Strings</a>
+</li>
+<li><a href="ref.arrays.html">Arrays</a>
+</li>
+<li><a href="ref.maps.html">Maps</a>
+</li>
+<li><a href="ref.files.html">Files</a>
+</li>
+<li><a href="ref.datetime.html">Date and time</a>
+<ul class="children">
+<li><a href="function.time.html"><code>time</code></a></li>
+<li><a href="function.microtime.html" class="active"><code>microtime</code></a></li>
+<li><a href="function.hrtime.html"><code>hrtime</code></a></li>
+<li><a href="function.date.html"><code>date</code></a></li>
+<li><a href="function.gmdate.html"><code>gmdate</code></a></li>
+<li><a href="function.mktime.html"><code>mktime</code></a></li>
+<li><a href="function.gmmktime.html"><code>gmmktime</code></a></li>
+<li><a href="function.checkdate.html"><code>checkdate</code></a></li>
+<li><a href="function.strtotime.html"><code>strtotime</code></a></li>
+<li><a href="function.date-default-timezone-set.html"><code>date_default_timezone_set</code></a></li>
+<li><a href="function.date-default-timezone-get.html"><code>date_default_timezone_get</code></a></li>
+<li><a href="function.sleep.html"><code>sleep</code></a></li>
+<li><a href="function.usleep.html"><code>usleep</code></a></li>
+</ul>
+</li>
+<li><a href="ref.json.html">JSON</a>
+</li>
+<li><a href="ref.http.html">HTTP</a>
+</li>
+<li><a href="ref.http-server.html">HTTP server</a>
+</li>
+<li><a href="ref.program.html">Program</a>
+</li>
+<li><a href="ref.conversions.html">Conversions</a>
+</li>
+<li><a href="ref.output.html">Output</a>
+</li>
+<li><a href="class.file.html">The File class</a>
+</li>
+<li><a href="class.response.html">The Response class</a>
+</li>
+<li><a href="class.request.html">The Request class</a>
+</li>
+<li><a href="class.responsewriter.html">The ResponseWriter class</a>
+</li>
+<li><a href="class.router.html">The Router class</a>
+</li>
+<li><a href="class.socket.html">The Socket class</a>
+</li>
+<li><a href="exception-classes.html">Exception classes</a>
+</li>
+</ul>
+</nav>
+<main class="content">
+<div class="breadcrumbs"><a href="stdlib.html">Standard library</a> › <a href="ref.datetime.html">Date and time</a> › <span>microtime</span></div>
+<h1 class="refname"><code>microtime</code></h1>
+<p class="refpurpose"><code>microtime</code> — The current time with microseconds</p>
+<h2>Description</h2>
+<div class="synopsis"><code><span class="fn">microtime</span>(): <span class="type">double</span></code></div>
+<p class="import">Import it with <code>import microtime from "std/time";</code></p>
+<p>Returns the current time in seconds since the Unix epoch, with microseconds, like PHP's <code>microtime(true)</code>.</p>
+<h2>Parameters</h2>
+<p>This function has no parameters.</p>
+<h2>Return values</h2><p>Seconds as a <code>double</code>.</p>
+<h2>Examples</h2>
+<div class="example"><p class="example-title"><strong>Example #1</strong> Comparing with time</p>
+<div class="code qiq"><pre><code><span class="kw">import</span> microtime, time <span class="kw">from</span> <span class="string">&quot;std/time&quot;</span>;
+
+<span class="type">double</span> now = <span class="fn">microtime</span>();
+<span class="kw">print</span>(<span class="fn">to_int</span>(now) &gt;= <span class="fn">time</span>() - <span class="number">1</span>);</code></pre></div>
+<div class="output"><div class="output-label">Output</div><pre>1</pre></div>
+</div>
+<h2>Notes</h2>
+<div class="note"><strong>Note:</strong> To measure how long something takes, use <code>hrtime</code>, which isn't affected by changes to the system clock.</div>
+<h2>See also</h2><p><a href="function.time.html"><code>time</code></a>, <a href="function.hrtime.html"><code>hrtime</code></a></p>
+<nav class="pager"><a class="prev" href="function.time.html">« time</a><a class="next" href="function.hrtime.html">hrtime »</a></nav>
+</main>
+</div>
+<script src="search.js"></script>
+</body>
+</html>

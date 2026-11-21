@@ -1,0 +1,80 @@
+<!-- title: Types -->
+<h1>Types</h1>
+<p>Every value in qiq has a type known at compile time. There are no implicit conversions between types: mixing them is a compile error, and the <a href="ref.conversions.html">conversion functions</a> convert explicitly.</p>
+
+<table>
+<thead><tr><th>Type</th><th>Values</th><th>Literals</th></tr></thead>
+<tbody>
+<tr><td><code>int</code></td><td>Signed 64-bit integers, from -9223372036854775808 to 9223372036854775807</td><td><code>42</code>, <code>-7</code></td></tr>
+<tr><td><code>double</code></td><td>Double-precision (64-bit IEEE 754) floating-point numbers</td><td><code>2.5</code>, <code>1e5</code>, <code>6.02e23</code>, <code>2.5E-3</code></td></tr>
+<tr><td><code>bool</code></td><td><code>true</code> or <code>false</code></td><td><code>true</code>, <code>false</code></td></tr>
+<tr><td><code>byte</code></td><td>Unsigned 8-bit values from 0 to 255, for binary data</td><td>An int literal where a byte is expected</td></tr>
+<tr><td><code>string</code></td><td>UTF-8 text</td><td><code>"héllo"</code></td></tr>
+<tr><td><code>char</code></td><td>A single Unicode character</td><td><code>'é'</code></td></tr>
+<tr><td><code>type[]</code></td><td>An <a href="arrays.html">array</a> of elements of one type</td><td><code>[1, 2, 3]</code></td></tr>
+<tr><td><code>map[key, value]</code></td><td>A <a href="maps.html">map</a> from keys to values</td><td><code>{"a" =&gt; 1}</code></td></tr>
+<tr><td><code>ClassName</code></td><td>An object of a <a href="classes.html">class</a>, or of any class implementing an <a href="interfaces.html">interface</a></td><td><code>new ClassName()</code></td></tr>
+<tr><td><code>function(int): bool</code></td><td>A <a href="anonymous-functions.html">function value</a> with those parameter and return types</td><td><code>fn(int x) =&gt; x &gt; 0</code></td></tr>
+</tbody>
+</table>
+
+```qiq
+int count = 3;
+double ratio = 0.75;
+bool ready = true;
+byte flags = 255;
+string name = "Ada";
+char initial = 'A';
+int[] scores = [90, 85];
+map[string, int] ages = {"ada" => 36};
+print(count, ratio, ready, flags, name, initial, scores, ages);
+```
+```output
+3 0.75 1 255 Ada A [90, 85] {"ada" => 36}
+```
+
+<h2>int</h2>
+<p>An <code>int</code> is a signed 64-bit integer. Arithmetic wraps on overflow, so <code>9223372036854775807 + 1</code> is <code>-9223372036854775808</code>. A negative literal is written with unary minus; <code>-9223372036854775808</code>, the smallest int, can be written directly.</p>
+
+<h2>double</h2>
+<p>A <code>double</code> literal has a decimal point, an exponent, or both: <code>2.5</code>, <code>1e5</code>, <code>2.5E-3</code>. A literal with an exponent is always a double, so <code>int n = 1e5;</code> is an error. Double arithmetic follows IEEE 754: <code>1.0 / 0.0</code> is <code>inf</code>.</p>
+
+<h2>bool</h2>
+<p>Conditions in <code>if</code>, <code>while</code>, <code>&amp;&amp;</code>, <code>||</code>, and <code>!</code> must be <code>bool</code>; qiq has no "truthy" values, so <code>if (count)</code> is an error. <code>print(true)</code> prints <code>1</code>.</p>
+
+<h2>byte</h2>
+<p>A <code>byte</code> holds 0 to 255 and is meant for binary data, such as the contents of <code>file_get_bytes</code>. An int literal becomes a byte wherever a byte is expected, and out-of-range literals are compile errors. Bytes can be compared (as unsigned values) and printed, but not used in arithmetic: convert with <code>to_int</code> first.</p>
+
+```qiq
+byte[] header = [137, 80, 78, 71];
+if (header[0] == 137) {
+    print("PNG signature");
+}
+print(to_int(header[1]) + 1);
+```
+```output
+PNG signature
+81
+```
+
+<h2>string and char</h2>
+<p>A <code>string</code> is UTF-8 text and a <code>char</code> is one Unicode character. See <a href="strings.html">Strings and chars</a>.</p>
+
+<h2>null</h2>
+<p><code>null</code> is what a <code>void</code> function call evaluates to (see <a href="functions.html">Functions</a>). It can be stored wherever a string, char, array, map, or object is expected, meaning "no value", but not in an <code>int</code>, <code>double</code>, <code>bool</code>, or <code>byte</code>. Strings, arrays, maps, and objects that haven't been given a value, such as the elements of <code>new string[3]</code>, are null too. Using a null value throws <code>RuntimeException</code>; test for it with <code>== null</code> (see <a href="operators.html">Operators</a> and <a href="variables.html">Variables</a>).</p>
+
+<h2>Arrays, maps, objects, and functions</h2>
+<p>Arrays, maps, objects, and function values are references: assigning one to another variable, or passing it to a function, shares the same underlying value rather than copying it.</p>
+
+```qiq
+int[] first = [1, 2];
+int[] second = first;
+second[0] = 99;
+print(first);
+```
+```output
+[99, 2]
+```
+
+<h2>Type names in errors</h2>
+<p>Error messages write types as they appear in source: <code>cannot assign map[string, bool] to map[string, int] variable 'm'</code>.</p>

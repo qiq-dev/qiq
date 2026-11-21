@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>http_log - qiq Manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <button class="menu-toggle" aria-label="Show menu" onclick="document.body.classList.toggle('menu-open')">☰</button>
+  <a class="brand" href="introduction.html"><span class="logo">qiq</span><span class="brand-text">Manual</span></a>
+  <div class="search">
+    <input id="search" type="search" placeholder="Search the manual" autocomplete="off" aria-label="Search the manual">
+    <ul id="search-results" hidden></ul>
+  </div>
+</header>
+<div class="layout">
+<nav class="sidebar" aria-label="Manual">
+<h2>Getting started</h2><ul>
+<li><a href="introduction.html">Introduction</a>
+</li>
+<li><a href="installation.html">Installing and running</a>
+</li>
+</ul>
+<h2>Language reference</h2><ul>
+<li><a href="basic-syntax.html">Basic syntax</a>
+</li>
+<li><a href="types.html">Types</a>
+</li>
+<li><a href="variables.html">Variables</a>
+</li>
+<li><a href="operators.html">Operators</a>
+</li>
+<li><a href="control-structures.html">Control structures</a>
+</li>
+<li><a href="functions.html">Functions</a>
+</li>
+<li><a href="anonymous-functions.html">Anonymous functions</a>
+</li>
+<li><a href="strings.html">Strings and chars</a>
+</li>
+<li><a href="arrays.html">Arrays</a>
+</li>
+<li><a href="maps.html">Maps</a>
+</li>
+<li><a href="classes.html">Classes and objects</a>
+</li>
+<li><a href="static.html">Static members</a>
+</li>
+<li><a href="interfaces.html">Interfaces</a>
+</li>
+<li><a href="exceptions.html">Exceptions</a>
+</li>
+<li><a href="modules.html">Modules</a>
+</li>
+<li><a href="packages.html">Packages</a>
+</li>
+<li><a href="memory.html">Memory management</a>
+</li>
+<li><a href="printing.html">Printing</a>
+</li>
+</ul>
+<h2>Standard library</h2><ul>
+<li><a href="stdlib.html">Overview</a>
+</li>
+<li><a href="ref.general.html">General</a>
+</li>
+<li><a href="ref.strings.html">Strings</a>
+</li>
+<li><a href="ref.arrays.html">Arrays</a>
+</li>
+<li><a href="ref.maps.html">Maps</a>
+</li>
+<li><a href="ref.files.html">Files</a>
+</li>
+<li><a href="ref.datetime.html">Date and time</a>
+</li>
+<li><a href="ref.json.html">JSON</a>
+</li>
+<li><a href="ref.http.html">HTTP</a>
+</li>
+<li><a href="ref.http-server.html">HTTP server</a>
+<ul class="children">
+<li><a href="function.http-serve.html"><code>http_serve</code></a></li>
+<li><a href="function.http-file-server.html"><code>http_file_server</code></a></li>
+<li><a href="function.http-strip-prefix.html"><code>http_strip_prefix</code></a></li>
+<li><a href="function.http-log.html" class="active"><code>http_log</code></a></li>
+<li><a href="function.http-content-type.html"><code>http_content_type</code></a></li>
+</ul>
+</li>
+<li><a href="ref.program.html">Program</a>
+</li>
+<li><a href="ref.conversions.html">Conversions</a>
+</li>
+<li><a href="ref.output.html">Output</a>
+</li>
+<li><a href="class.file.html">The File class</a>
+</li>
+<li><a href="class.response.html">The Response class</a>
+</li>
+<li><a href="class.request.html">The Request class</a>
+</li>
+<li><a href="class.responsewriter.html">The ResponseWriter class</a>
+</li>
+<li><a href="class.router.html">The Router class</a>
+</li>
+<li><a href="class.socket.html">The Socket class</a>
+</li>
+<li><a href="exception-classes.html">Exception classes</a>
+</li>
+</ul>
+</nav>
+<main class="content">
+<div class="breadcrumbs"><a href="stdlib.html">Standard library</a> › <a href="ref.http-server.html">HTTP server</a> › <span>http_log</span></div>
+<h1 class="refname"><code>http_log</code></h1>
+<p class="refpurpose"><code>http_log</code> — Log each request to stderr</p>
+<h2>Description</h2>
+<div class="synopsis"><code><span class="fn">http_log</span>(<span class="type">function(Request, ResponseWriter): void</span> <span class="param">handler</span>): <span class="type">function(Request, ResponseWriter): void</span></code></div>
+<p class="import">Import it with <code>import http_log from "std/http/server";</code></p>
+<p>Returns a handler that calls <code>handler</code> and then writes a line to stderr in the style of <code>php -S</code>: the time, the client's address, the status, the method, the path, and how long the handler took. A handler of this shape that wraps another is often called <em>middleware</em>; write your own the same way.</p>
+<h2>Parameters</h2>
+<dl class="parameters">
+<dt><code>handler</code></dt><dd>The handler to wrap.</dd>
+</dl>
+<h2>Return values</h2><p>The handler.</p>
+<h2>Examples</h2>
+<div class="example"><p class="example-title"><strong>Example #1</strong> Logging</p>
+<div class="code qiq"><pre><code><span class="kw">import</span> http_log, http_serve <span class="kw">from</span> <span class="string">&quot;std/http/server&quot;</span>;
+
+<span class="fn">http_serve</span>(<span class="string">&quot;:8080&quot;</span>, <span class="fn">http_log</span>(router-&gt;<span class="fn">handler</span>()));
+<span class="comment">// [Fri Nov 20 10:15:02 2026] 127.0.0.1:51234 [200]: GET /hello/Ada (0.1 ms)</span></code></pre></div>
+</div>
+<div class="example"><p class="example-title"><strong>Example #2</strong> Your own middleware</p>
+<div class="code qiq"><pre><code><span class="kw">import</span> getenv <span class="kw">from</span> <span class="string">&quot;std/os&quot;</span>;
+<span class="kw">import</span> http_log, http_serve, <span class="cls">Request</span>, <span class="cls">ResponseWriter</span> <span class="kw">from</span> <span class="string">&quot;std/http/server&quot;</span>;
+
+<span class="kw">function</span> <span class="fn">require_token</span>(<span class="type">string</span> token, <span class="kw">function</span>(<span class="cls">Request</span>, <span class="cls">ResponseWriter</span>): <span class="type">void</span> next): <span class="kw">function</span>(<span class="cls">Request</span>, <span class="cls">ResponseWriter</span>): <span class="type">void</span> {
+    <span class="kw">return</span> <span class="kw">function</span>(<span class="cls">Request</span> r, <span class="cls">ResponseWriter</span> w): <span class="type">void</span> {
+        <span class="kw">if</span> (r-&gt;<span class="fn">header</span>(<span class="string">&quot;Authorization&quot;</span>) != <span class="string">&quot;Bearer &quot;</span> + token) {
+            w-&gt;<span class="fn">error</span>(<span class="number">401</span>);
+            <span class="kw">return</span>;
+        }
+        <span class="fn">next</span>(r, w);
+    };
+}
+<span class="fn">http_serve</span>(<span class="string">&quot;:8080&quot;</span>, <span class="fn">http_log</span>(<span class="fn">require_token</span>(<span class="fn">getenv</span>(<span class="string">&quot;API_TOKEN&quot;</span>), router-&gt;<span class="fn">handler</span>())));</code></pre></div>
+</div>
+<h2>See also</h2><p><a href="function.http-serve.html"><code>http_serve</code></a></p>
+<nav class="pager"><a class="prev" href="function.http-strip-prefix.html">« http_strip_prefix</a><a class="next" href="function.http-content-type.html">http_content_type »</a></nav>
+</main>
+</div>
+<script src="search.js"></script>
+</body>
+</html>

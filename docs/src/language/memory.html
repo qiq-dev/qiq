@@ -1,0 +1,87 @@
+<!-- title: Memory management -->
+<h1>Memory management</h1>
+<p>qiq frees memory automatically with reference counting, as PHP does. You never allocate or free memory yourself.</p>
+
+<h2>How it works</h2>
+<p>Strings, arrays, maps, and objects each keep a count of the references to them. A reference is held by a variable, a parameter the function reassigns, a property, an array element, a map key or value, or a static property. When the last reference goes away, the value is freed immediately, along with anything it was the last holder of.</p>
+<ul>
+<li>Assigning a new value to a variable, property, element, or map entry releases the old one.</li>
+<li>A function's local variables are released when it returns, including when an exception leaves it.</li>
+<li>Values that are only used within a statement, such as the result of <code>a + b</code> passed straight to a function, are freed at the end of that statement.</li>
+<li>Ints, doubles, bools, and bytes are plain values and are never counted.</li>
+<li>String literals are part of the program and are never freed.</li>
+</ul>
+
+```qiq
+function longest(string[] words): string {
+    string best = "";
+    foreach (words as word) {
+        if (len(word) > len(best)) {
+            best = word;
+        }
+    }
+    return best;
+}
+
+int total = 0;
+int i = 0;
+while (i < 100000) {
+    // Each round's array and strings are freed before the next round.
+    string[] words = explode(" ", "round " + to_string(i) + " of the loop");
+    total = total + len(longest(words));
+    i = i + 1;
+}
+print(total);
+```
+```output
+500000
+```
+
+<p>Because memory is released as soon as it's unused, a program's memory use follows what it's holding, not how long it has run. A loop that reads a large file a line at a time with the <a href="class.file.html">File class</a> uses the same small amount of memory however big the file is.</p>
+
+<h2>Reference cycles</h2>
+<p>Objects that refer to each other in a cycle, directly or through arrays, maps, and other objects, keep each other's counts above zero even when nothing else can reach them. A cycle collector finds and frees them, as in PHP:</p>
+
+```qiq
+class Person {
+    public string name;
+    public Person friend;
+    function __construct(string name) { this->name = name; }
+}
+
+function meet(): void {
+    Person ada = new Person("Ada");
+    Person lin = new Person("Lin");
+    ada->friend = lin;
+    lin->friend = ada;      // a cycle: each keeps the other's count at 1
+}
+
+meet();
+meet();
+print(gc_collect_cycles());  // two pairs of Person objects
+```
+```output
+4
+```
+
+<ul>
+<li>When a count drops but not to zero, the value might have just become part of an unreachable cycle, so it's noted as a possible root. After 10,000 possible roots, the collector runs: it subtracts the references that come from inside the graph below them, and frees whatever is left with none.</li>
+<li>Only values that can be part of a cycle are tracked: objects of classes with a field that can hold an object, and arrays and maps that can hold objects. Strings, and arrays and maps of numbers or strings, are never examined.</li>
+<li>If collections keep finding little garbage, the collector runs less often, so programs that keep many objects alive don't pay for re-examining them.</li>
+<li><a href="function.gc-collect-cycles.html"><code>gc_collect_cycles()</code></a> runs the collector immediately and returns how many values it freed.</li>
+</ul>
+
+<h2>Files aren't closed automatically</h2>
+<p>qiq has no destructors, so freeing a <code>File</code> object doesn't close the file. Call <code>close()</code>, ideally in a <code>finally</code> block. Files still open when the program ends are flushed and closed by the operating system.</p>
+
+<h2>Checking memory use</h2>
+<p>Set the environment variable <code>QIQ_DEBUG_MEMORY=1</code> to check a program's memory while it runs. Freed values are kept and marked, so a bug that uses one stops the program with an error instead of misbehaving, and when the program ends it prints how many values were allocated and freed:</p>
+
+```sh
+QIQ_DEBUG_MEMORY=1 qiq run app.qiq
+```
+```text
+qiq memory: 84996 allocated, 84996 freed, 0 still referenced
+```
+
+<p>The collector runs once more before the counts are printed. Values still referenced at the end are normal for variables declared at the top level of the program, which live until it ends.</p>

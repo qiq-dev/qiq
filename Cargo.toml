@@ -1,0 +1,20 @@
+[package]
+name = "qiq"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+# libwild (the embedded linker) needs a recent Rust.
+rust-version = "1.99"
+
+[[bin]]
+name = "qiq"
+path = "src/qiq.rs"
+
+[dependencies]
+# Code generation: LLVM 18, linked statically by build.rs.
+inkwell = { version = "0.11.0", features = ["llvm18-1"] }
+llvm-sys = { version = "181", features = ["no-llvm-linking"] }
+# Linking: a linker written in Rust, so qiq needs no external linker.
+libwild = "0.11.0"
+# qiq.sum checksums of downloaded modules (already a dependency of libwild).
+sha2 = "0.11"

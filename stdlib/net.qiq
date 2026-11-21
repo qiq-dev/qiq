@@ -1,0 +1,76 @@
+// Network connections: TCP sockets, optionally encrypted with TLS. The C
+// helpers (stdlib/runtime/net.c) are hidden; programs use the Socket class.
+
+extern function __socket_connect(string host, int port, bool tls, int timeout): int;
+extern function __socket_write(int handle, string text): void;
+extern function __socket_write_bytes(int handle, byte[] data): void;
+extern function __socket_read_line(int handle): string;
+extern function __socket_read(int handle, int length): byte[];
+extern function __socket_read_exactly(int handle, int length): byte[];
+extern function __socket_read_all(int handle): byte[];
+extern function __socket_close(int handle): void;
+extern function __socket_peer(int handle): string;
+extern function __socket_set_timeout(int handle, int timeout): void;
+
+// Servers (used by stdlib/server.qiq).
+extern function __server_listen(string host, int port): int;
+extern function __server_listen_unix(string path): int;
+extern function __server_close(int handle): void;
+extern function __server_accept(int handle, int timeout): int;
+extern function __server_wait_request(int handle, int listener, int timeout): bool;
+extern function __server_stopping(): bool;
+extern function __server_cpu_count(): int;
+extern function __server_start(int workers): int;
+
+// A connection to a server. Every connect, read, and write waits at most
+// `timeout` seconds. With `tls`, the connection is encrypted and the
+// server's certificate is checked against the system's CA certificates (or
+// SSL_CERT_FILE). Failures throw NetworkException. Freeing a Socket doesn't
+// close it; call close().
+final class Socket {
+    private int handle;
+
+    private function __construct(int handle) {
+        this->handle = handle;
+    }
+
+    static function connect(string host, int port, bool tls = false, int timeout = 30): Socket {
+        return new Socket(__socket_connect(host, port, tls, timeout));
+    }
+
+    function write(string text): void {
+        __socket_write(this->handle, text);
+    }
+
+    function writeBytes(byte[] data): void {
+        __socket_write_bytes(this->handle, data);
+    }
+
+    // The next line without "\n" or "\r\n", or null when the server has
+    // closed the connection. Bytes that aren't valid UTF-8 become U+FFFD.
+    function readLine(): string {
+        return __socket_read_line(this->handle);
+    }
+
+    // Up to `length` bytes, as soon as any arrive; an empty array once the
+    // server has closed the connection.
+    function read(int length): byte[] {
+        return __socket_read(this->handle, length);
+    }
+
+    // Exactly `length` bytes; throws NetworkException if the connection
+    // closes first.
+    function readExactly(int length): byte[] {
+        return __socket_read_exactly(this->handle, length);
+    }
+
+    // Everything until the server closes the connection.
+    function readAll(): byte[] {
+        return __socket_read_all(this->handle);
+    }
+
+    // Closes the connection. Closing twice does nothing.
+    function close(): void {
+        __socket_close(this->handle);
+    }
+}

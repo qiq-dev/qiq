@@ -1,0 +1,56 @@
+// Array literals use [...]; map literals use {key => value}.
+int[] numbers = [1, 2, 3];
+map[string, int] ages = {"ada" => 36, "lin" => 29};
+
+// Literals are expressions: assign, pass, and return them anywhere.
+numbers = [4, 5];
+function total(int[] values): int {
+    int sum = 0;
+    foreach (values as value) { sum = sum + value; }
+    return sum;
+}
+print(total([10, 20, 30]));
+print(total(numbers));
+
+function defaults(): map[string, string] {
+    return {"theme" => "dark", "lang" => "en"};
+}
+map[string, string] settings = defaults();
+print(settings["theme"]);
+
+// Without a declared type, the type comes from the contents.
+words = ["x", "y"];
+print(implode("+", words));
+scores = {"ada" => 1.5};
+print(scores["ada"]);
+foreach ([3, 1, 2] as value) { print(value); }
+
+// Empty literals take their type from where they're used.
+numbers = [];
+print(total(numbers));
+print(total([]));
+ages = {};
+function empty(): string[] {
+    return [];
+}
+print(implode(",", empty()) == "");
+
+// Nested: map values can be arrays or maps.
+map[string, int[]] groups = {"small" => [1, 2], "none" => []};
+int[] small = groups["small"];
+print(small[1]);
+groups["big"] = [7, 8, 9];
+int[] big = groups["big"];
+print(big[2]);
+map[string, map[string, int]] nested = {"a" => {"b" => 42}};
+map[string, int] inner = nested["a"];
+print(inner["b"]);
+
+// Properties
+class Bag {
+    public string[] items;
+}
+Bag bag = new Bag();
+bag->items = ["pen", "cup"];
+string[] items = bag->items;
+print(items[1]);

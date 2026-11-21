@@ -1,0 +1,57 @@
+map[string, string] words = {
+    "hello" => "World",
+    "blah" => "blah",
+    "key0" => "value0",
+    "key1" => "value1",
+    "key2" => "value2",
+    "key3" => "value3",
+    "key4" => "value4",
+    "key5" => "value5",
+    "key6" => "value6",
+    "key7" => "value7",
+    "key8" => "value8",
+    "key9" => "value9",
+    "key10" => "value10",
+    "key11" => "value11",
+    "key12" => "value12",
+    "key13" => "value13",
+    "key14" => "value14",
+    "key15" => "value15",
+    "key16" => "value16",
+    "key17" => "value17"
+};
+words["new"] = "entry";
+words["hello"] = "updated";
+print(words["hello"]);
+print(words["new"]);
+print(words["key17"]);
+
+map[int, string] empty;
+empty[5] = "inserted into an empty map";
+print(empty[5]);
+
+map[int, double] decimals = {1 => 2.5};
+print(decimals[1]);
+
+map[double, bool] flags = {1.5 => true};
+print(flags[1.5]);
+
+map[bool, char] symbols = {false => 'Ω'};
+print(symbols[false]);
+
+map[char, int] counts = {'é' => 7};
+print(counts['é']);
+
+int[] numbers = [3, 4];
+map[string, int[]] arrays = {"numbers" => numbers};
+print(arrays["numbers"][1]);
+
+map[string, int] inner = {"answer" => 42};
+map[string, map[string, int]] nested = {"inner" => inner};
+print(nested["inner"]["answer"]);
+
+function find(map[string, string] values): string {
+    return values["new"];
+}
+string fromFunction = find(words);
+print(fromFunction);

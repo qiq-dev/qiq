@@ -1,0 +1,118 @@
+// Static properties: one value per class, shared by all its code.
+class Counter {
+    private static int count = 0;
+    public static string label = "hits";
+    public static double ratio = 0.5;
+    public static bool enabled = true;
+    public static string[] names;            // no initializer: null
+
+    static function increment(): int {
+        self::count = self::count + 1;
+        return self::count;
+    }
+}
+int first = Counter::increment();
+int second = Counter::increment();
+print(Counter::increment(), Counter::label, Counter::ratio, Counter::enabled);
+Counter::names = ["a", "b"];
+Counter::names[1] = "z";
+print(Counter::names);
+
+// Subclasses share a parent's static property unless they redeclare it.
+class Base {
+    public static int shared = 1;
+    public static int own = 10;
+}
+class Child extends Base {
+    public static int own = 20;
+}
+Child::shared = 5;
+print(Base::shared, Child::shared, Base::own, Child::own);
+
+// Late static binding: static:: is the class the call was made on.
+class Model {
+    protected static string table = "models";
+
+    static function tableName(): string {
+        return static::table;
+    }
+
+    // `static` as a return type: User::create() returns a User.
+    static function create(): static {
+        return new static();
+    }
+
+    function describe(): string {
+        return "a row in " + static::table;
+    }
+}
+class User extends Model {
+    protected static string table = "users";
+
+    function greet(): string {
+        return "hello from a user";
+    }
+}
+print(Model::tableName(), User::tableName());
+User user = User::create();
+print(user->greet(), user->describe());
+Model plain = Model::create();
+print(plain->describe());
+
+// self:: and parent:: pass the called class along (forwarding).
+class Base2 {
+    static function name(): string {
+        return static::label();
+    }
+    static function label(): string {
+        return "base";
+    }
+    static function viaSelf(): string {
+        return self::name();
+    }
+}
+class Derived2 extends Base2 {
+    static function label(): string {
+        return "derived";
+    }
+    static function viaParent(): string {
+        return parent::name();
+    }
+}
+print(Base2::name(), Derived2::name(), Derived2::viaSelf(), Derived2::viaParent());
+
+// parent::method() calls the parent's version of an overridden method.
+class Shape {
+    protected string kind;
+    function __construct(string kind) {
+        this->kind = kind;
+    }
+    function describe(): string {
+        return "a " + this->kind;
+    }
+}
+class Square extends Shape {
+    private int side;
+    function __construct(int side) {
+        parent::__construct("square");
+        this->side = side;
+    }
+    function describe(): string {
+        return parent::describe() + " with side " + to_string(this->side);
+    }
+}
+print(new Square(3)->describe());
+
+// new static on an abstract called class throws.
+abstract class Template {
+    static function make(): static {
+        return new static();
+    }
+}
+class Concrete extends Template {}
+print(Concrete::make());
+try {
+    Template t = Template::make();
+} catch (RuntimeException e) {
+    print("RuntimeException: " + e->getMessage());
+}

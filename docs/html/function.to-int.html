@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>to_int - qiq Manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <button class="menu-toggle" aria-label="Show menu" onclick="document.body.classList.toggle('menu-open')">☰</button>
+  <a class="brand" href="introduction.html"><span class="logo">qiq</span><span class="brand-text">Manual</span></a>
+  <div class="search">
+    <input id="search" type="search" placeholder="Search the manual" autocomplete="off" aria-label="Search the manual">
+    <ul id="search-results" hidden></ul>
+  </div>
+</header>
+<div class="layout">
+<nav class="sidebar" aria-label="Manual">
+<h2>Getting started</h2><ul>
+<li><a href="introduction.html">Introduction</a>
+</li>
+<li><a href="installation.html">Installing and running</a>
+</li>
+</ul>
+<h2>Language reference</h2><ul>
+<li><a href="basic-syntax.html">Basic syntax</a>
+</li>
+<li><a href="types.html">Types</a>
+</li>
+<li><a href="variables.html">Variables</a>
+</li>
+<li><a href="operators.html">Operators</a>
+</li>
+<li><a href="control-structures.html">Control structures</a>
+</li>
+<li><a href="functions.html">Functions</a>
+</li>
+<li><a href="anonymous-functions.html">Anonymous functions</a>
+</li>
+<li><a href="strings.html">Strings and chars</a>
+</li>
+<li><a href="arrays.html">Arrays</a>
+</li>
+<li><a href="maps.html">Maps</a>
+</li>
+<li><a href="classes.html">Classes and objects</a>
+</li>
+<li><a href="static.html">Static members</a>
+</li>
+<li><a href="interfaces.html">Interfaces</a>
+</li>
+<li><a href="exceptions.html">Exceptions</a>
+</li>
+<li><a href="modules.html">Modules</a>
+</li>
+<li><a href="packages.html">Packages</a>
+</li>
+<li><a href="memory.html">Memory management</a>
+</li>
+<li><a href="printing.html">Printing</a>
+</li>
+</ul>
+<h2>Standard library</h2><ul>
+<li><a href="stdlib.html">Overview</a>
+</li>
+<li><a href="ref.general.html">General</a>
+</li>
+<li><a href="ref.strings.html">Strings</a>
+</li>
+<li><a href="ref.arrays.html">Arrays</a>
+</li>
+<li><a href="ref.maps.html">Maps</a>
+</li>
+<li><a href="ref.files.html">Files</a>
+</li>
+<li><a href="ref.datetime.html">Date and time</a>
+</li>
+<li><a href="ref.json.html">JSON</a>
+</li>
+<li><a href="ref.http.html">HTTP</a>
+</li>
+<li><a href="ref.http-server.html">HTTP server</a>
+</li>
+<li><a href="ref.program.html">Program</a>
+</li>
+<li><a href="ref.conversions.html">Conversions</a>
+<ul class="children">
+<li><a href="function.to-int.html" class="active"><code>to_int</code></a></li>
+<li><a href="function.to-double.html"><code>to_double</code></a></li>
+<li><a href="function.to-byte.html"><code>to_byte</code></a></li>
+<li><a href="function.to-string.html"><code>to_string</code></a></li>
+</ul>
+</li>
+<li><a href="ref.output.html">Output</a>
+</li>
+<li><a href="class.file.html">The File class</a>
+</li>
+<li><a href="class.response.html">The Response class</a>
+</li>
+<li><a href="class.request.html">The Request class</a>
+</li>
+<li><a href="class.responsewriter.html">The ResponseWriter class</a>
+</li>
+<li><a href="class.router.html">The Router class</a>
+</li>
+<li><a href="class.socket.html">The Socket class</a>
+</li>
+<li><a href="exception-classes.html">Exception classes</a>
+</li>
+</ul>
+</nav>
+<main class="content">
+<div class="breadcrumbs"><a href="stdlib.html">Standard library</a> › <a href="ref.conversions.html">Conversions</a> › <span>to_int</span></div>
+<h1 class="refname"><code>to_int</code></h1>
+<p class="refpurpose"><code>to_int</code> — Convert a value to an int</p>
+<h2>Description</h2>
+<div class="synopsis"><code><span class="fn">to_int</span>(<span class="type">byte|bool|double|string</span> <span class="param">value</span>): <span class="type">int</span></code></div>
+
+<p>Converts <code>value</code> to an <code>int</code>: a <code>byte</code> widens; <code>true</code> is <code>1</code> and <code>false</code> is <code>0</code>; a <code>double</code> is truncated toward zero; a <code>string</code> must be a whole int such as <code>"-42"</code> (an optional sign, then digits, with no spaces).</p>
+<h2>Parameters</h2>
+<dl class="parameters">
+<dt><code>value</code></dt><dd>The value to convert.</dd>
+</dl>
+<h2>Return values</h2><p>The converted value.</p>
+<h2>Errors/Exceptions</h2><ul>
+<li><code>InvalidArgumentException</code> if a string isn't an int, or is outside the int range.</li>
+<li><code>ArithmeticException</code> if a double is NaN, infinite, or outside the int range.</li>
+</ul>
+<h2>Examples</h2>
+<div class="example"><p class="example-title"><strong>Example #1</strong> Each source type</p>
+<div class="code qiq"><pre><code><span class="type">byte</span> b = <span class="number">200</span>;
+<span class="kw">print</span>(<span class="fn">to_int</span>(b) + <span class="number">1</span>, <span class="fn">to_int</span>(<span class="lit">true</span>), <span class="fn">to_int</span>(-<span class="number">2.9</span>), <span class="fn">to_int</span>(<span class="string">&quot;8080&quot;</span>));
+<span class="kw">try</span> {
+    <span class="kw">print</span>(<span class="fn">to_int</span>(<span class="string">&quot;12a&quot;</span>));
+} <span class="kw">catch</span> (<span class="cls">InvalidArgumentException</span> e) {
+    <span class="kw">print</span>(e-&gt;<span class="fn">getMessage</span>());
+}</code></pre></div>
+<div class="output"><div class="output-label">Output</div><pre>201 1 -2 8080
+&quot;12a&quot; is not an int</pre></div>
+</div>
+<h2>See also</h2><p><a href="function.to-double.html"><code>to_double</code></a>, <a href="function.to-byte.html"><code>to_byte</code></a>, <a href="function.to-string.html"><code>to_string</code></a></p>
+<nav class="pager"><a class="prev" href="ref.conversions.html">« Conversions</a><a class="next" href="function.to-double.html">to_double »</a></nav>
+</main>
+</div>
+<script src="search.js"></script>
+</body>
+</html>

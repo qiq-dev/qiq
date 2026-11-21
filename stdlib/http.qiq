@@ -1,0 +1,486 @@
+// HTTP requests, in the style of Python's requests module, written in qiq on
+// top of Socket (stdlib/net.qiq). Functions whose names start with "__"
+// are internal to the standard library.
+//
+//   import Response, http_get from "std/http";
+//
+//   Response r = http_get("https://api.example.com/items", headers: {"Accept" => "application/json"});
+//   if (r->ok()) { Item[] items = json_decode(r->text()); }
+//
+// HTTP/1.1, one connection per request, following redirects. Network
+// failures throw NetworkException; HTTP error statuses don't (see
+// Response::raiseForStatus).
+
+import InvalidArgumentException, HttpException, NetworkException from "exceptions";
+import Socket from "net";
+import strtolower, strtoupper, substr, strpos, str_contains, str_starts_with, explode, implode, trim, string_to_bytes, bytes_to_string from "string";
+
+// The response to an HTTP request.
+class Response {
+    // The status code, such as 200, and its reason phrase, such as "OK".
+    public int status;
+    public string reason;
+    // Header names in lowercase; a header sent more than once has its
+    // values joined with ", ".
+    public map[string, string] headers;
+    // The body, as bytes.
+    public byte[] bytes;
+    // The URL that answered, after any redirects.
+    public string url;
+
+    function __construct(int status, string reason, map[string, string] headers, byte[] bytes, string url) {
+        this->status = status;
+        this->reason = reason;
+        this->headers = headers;
+        this->bytes = bytes;
+        this->url = url;
+    }
+
+    // The body as text. Throws InvalidUtf8Exception if it isn't UTF-8.
+    function text(): string {
+        return bytes_to_string(this->bytes);
+    }
+
+    // A header's value, by name in any case, or null if it wasn't sent.
+    function header(string name): string {
+        return this->headers[strtolower(name)] ?? null;
+    }
+
+    // Whether the status is below 400, as in requests.
+    function ok(): bool {
+        return this->status < 400;
+    }
+
+    // Throws HttpException, with the status as its code, for a 4xx or 5xx status.
+    function raiseForStatus(): void {
+        if (this->status >= 400) {
+            string kind = "Server Error";
+            if (this->status < 500) {
+                kind = "Client Error";
+            }
+            throw new HttpException(
+                to_string(this->status) + " " + kind + ": " + this->reason + " for " + this->url,
+                this->status
+            );
+        }
+    }
+}
+
+// Sends a request and returns the response, following up to 10 redirects.
+// `body` is sent as is; set a Content-Type header to describe it. `headers`
+// are added to qiq's defaults (User-Agent, Accept, Accept-Encoding: identity,
+// Connection: close), replacing any with the same name. `timeout` limits
+// each connect, read, and write, in seconds.
+function http_request(string method, string url, string body = null, map[string, string] headers = null, int timeout = 30): Response {
+    string verb = strtoupper(method);
+    string current = url;
+    string payload = body;
+    map[string, string] sent = headers;
+    int redirects = 0;
+    while (true) {
+        Response response = __http_send(verb, current, payload, sent, timeout);
+        int status = response->status;
+        string location = response->header("location");
+        bool redirected = status == 301 || status == 302 || status == 303 || status == 307 || status == 308;
+        if (!redirected || location == null) {
+            return response;
+        }
+        redirects = redirects + 1;
+        if (redirects > 10) {
+            throw new HttpException("too many redirects (more than 10), starting at " + url);
+        }
+        string next = __http_resolve(current, location);
+        // 303 means "get this instead"; browsers and requests treat 301 and
+        // 302 after a POST the same way.
+        if ((status == 303 && verb != "HEAD") || ((status == 301 || status == 302) && verb == "POST")) {
+            verb = "GET";
+            payload = null;
+        }
+        // Credentials don't follow a redirect to another host.
+        if (sent != null && __http_parse(next)[1] != __http_parse(current)[1]) {
+            map[string, string] kept = {};
+            foreach (sent as name => value) {
+                if (strtolower(name) != "authorization") {
+                    kept[name] = value;
+                }
+            }
+            sent = kept;
+        }
+        current = next;
+    }
+}
+
+function http_get(string url, map[string, string] headers = null, int timeout = 30): Response {
+    return http_request("GET", url, null, headers, timeout);
+}
+
+function http_post(string url, string body = "", map[string, string] headers = null, int timeout = 30): Response {
+    return http_request("POST", url, body, headers, timeout);
+}
+
+// ---------------------------------------------------------------------------
+// URL encoding, as in PHP
+
+// Percent-encodes everything but letters, digits, and "-_.", with spaces as
+// "+": for query strings and form bodies.
+function urlencode(string text): string {
+    return __http_encode(text, "-_.", true);
+}
+
+// Percent-encodes everything but letters, digits, and "-_.~" (RFC 3986):
+// for path segments.
+function rawurlencode(string text): string {
+    return __http_encode(text, "-_.~", false);
+}
+
+// Decodes %XX sequences and "+" (as a space). Throws InvalidUtf8Exception if
+// the result isn't UTF-8.
+function urldecode(string text): string {
+    return __http_decode(text, true);
+}
+
+// Decodes %XX sequences, leaving "+" as is: for URL paths.
+function rawurldecode(string text): string {
+    return __http_decode(text, false);
+}
+
+function __http_decode(string text, bool plus_is_space): string {
+    byte[] input = string_to_bytes(text);
+    byte[] output;
+    int i = 0;
+    while (i < len(input)) {
+        int value = to_int(input[i]);
+        if (value == 43 && plus_is_space) {
+            array_push(output, 32);
+        } else if (value == 37 && i + 2 < len(input) && __http_hex_digit(input[i + 1]) >= 0 && __http_hex_digit(input[i + 2]) >= 0) {
+            array_push(output, to_byte(__http_hex_digit(input[i + 1]) * 16 + __http_hex_digit(input[i + 2])));
+            i = i + 2;
+        } else {
+            array_push(output, input[i]);
+        }
+        i = i + 1;
+    }
+    return bytes_to_string(output);
+}
+
+// "key=value&other=value", with keys and values urlencoded, in the map's order.
+function http_build_query(map[string, string] fields): string {
+    string[] pairs;
+    foreach (fields as name => value) {
+        array_push(pairs, urlencode(name) + "=" + urlencode(value));
+    }
+    return implode("&", pairs);
+}
+
+function __http_encode(string text, string safe, bool plus_for_space): string {
+    byte[] input = string_to_bytes(text);
+    byte[] output;
+    byte[] digits = string_to_bytes("0123456789ABCDEF");
+    byte[] kept = string_to_bytes(safe);
+    foreach (input as b) {
+        int value = to_int(b);
+        bool letter = (value >= 48 && value <= 57) || (value >= 65 && value <= 90) || (value >= 97 && value <= 122);
+        bool keep = letter;
+        foreach (kept as k) {
+            if (k == b) {
+                keep = true;
+            }
+        }
+        if (keep) {
+            array_push(output, b);
+        } else if (value == 32 && plus_for_space) {
+            array_push(output, 43);
+        } else {
+            array_push(output, 37, digits[value / 16], digits[value % 16]);
+        }
+    }
+    return bytes_to_string(output);
+}
+
+function __http_hex_digit(byte b): int {
+    int value = to_int(b);
+    if (value >= 48 && value <= 57) {
+        return value - 48;
+    }
+    if (value >= 97 && value <= 102) {
+        return value - 87;
+    }
+    if (value >= 65 && value <= 70) {
+        return value - 55;
+    }
+    return -1;
+}
+
+// ---------------------------------------------------------------------------
+// The protocol
+
+// [scheme, host, port, target, host header] for an http or https URL.
+function __http_parse(string url): string[] {
+    int separator = strpos(url, "://");
+    if (separator < 0) {
+        throw new InvalidArgumentException("not an absolute URL: " + url);
+    }
+    string scheme = strtolower(substr(url, 0, separator));
+    if (scheme != "http" && scheme != "https") {
+        throw new InvalidArgumentException("unsupported URL scheme \"" + scheme + "\" (use http or https): " + url);
+    }
+    string rest = substr(url, separator + 3);
+    int end = len(rest);
+    foreach (rest as i => c) {
+        if (c == '/' || c == '?' || c == '#') {
+            end = i;
+            break;
+        }
+    }
+    string authority = substr(rest, 0, end);
+    string target = substr(rest, end);
+    int fragment = strpos(target, "#");
+    if (fragment >= 0) {
+        target = substr(target, 0, fragment);
+    }
+    if (target == "" || str_starts_with(target, "?")) {
+        target = "/" + target;
+    }
+    if (str_contains(authority, "@")) {
+        throw new InvalidArgumentException("credentials in URLs aren't supported; send an Authorization header instead");
+    }
+    string host = authority;
+    string port = "80";
+    if (scheme == "https") {
+        port = "443";
+    }
+    if (str_starts_with(authority, "[")) {
+        // An IPv6 address: [::1]:8080
+        int close = strpos(authority, "]");
+        if (close < 0) {
+            throw new InvalidArgumentException("invalid host in URL: " + url);
+        }
+        host = substr(authority, 1, close - 1);
+        if (substr(authority, close + 1, 1) == ":") {
+            port = substr(authority, close + 2);
+        }
+    } else {
+        int colon = strpos(authority, ":");
+        if (colon >= 0) {
+            host = substr(authority, 0, colon);
+            port = substr(authority, colon + 1);
+        }
+    }
+    if (host == "") {
+        throw new InvalidArgumentException("no host in URL: " + url);
+    }
+    return [scheme, host, port, target, authority];
+}
+
+// Resolves a Location header against the URL it came from.
+function __http_resolve(string base, string location): string {
+    if (str_contains(location, "://")) {
+        return location;
+    }
+    string[] parts = __http_parse(base);
+    string origin = parts[0] + "://" + parts[4];
+    if (str_starts_with(location, "//")) {
+        return parts[0] + ":" + location;
+    }
+    if (str_starts_with(location, "/")) {
+        return origin + location;
+    }
+    string path = parts[3];
+    int query = strpos(path, "?");
+    if (query >= 0) {
+        path = substr(path, 0, query);
+    }
+    if (str_starts_with(location, "?")) {
+        return origin + path + location;
+    }
+    // Relative to the directory of the current path, with "." and ".."
+    // segments removed (RFC 3986, section 5.2).
+    int lastSlash = 0;
+    foreach (path as i => c) {
+        if (c == '/') {
+            lastSlash = i;
+        }
+    }
+    string merged = substr(path, 0, lastSlash + 1) + location;
+    string suffix = "";
+    int queryStart = strpos(merged, "?");
+    if (queryStart >= 0) {
+        suffix = substr(merged, queryStart);
+        merged = substr(merged, 0, queryStart);
+    }
+    string[] output;
+    string[] segments = explode("/", merged);
+    foreach (segments as i => segment) {
+        bool last = i == len(segments) - 1;
+        if (segment == "..") {
+            if (len(output) > 1) {
+                array_pop(output);
+            }
+            if (last) {
+                array_push(output, "");
+            }
+        } else if (segment == ".") {
+            if (last) {
+                array_push(output, "");
+            }
+        } else {
+            array_push(output, segment);
+        }
+    }
+    string resolved = implode("/", output);
+    if (!str_starts_with(resolved, "/")) {
+        resolved = "/" + resolved;
+    }
+    return origin + resolved + suffix;
+}
+
+function __http_header_value(string text, string what): string {
+    if (str_contains(text, "\r") || str_contains(text, "\n")) {
+        throw new InvalidArgumentException("HTTP " + what + " can't contain line breaks: " + text);
+    }
+    return text;
+}
+
+function __http_send(string method, string url, string body, map[string, string] headers, int timeout): Response {
+    string[] parts = __http_parse(url);
+    int port = 0;
+    try {
+        port = to_int(parts[2]);
+    } catch (InvalidArgumentException e) {
+        throw new InvalidArgumentException("invalid port in URL: " + url);
+    }
+
+    // The request: defaults, then the caller's headers (replacing defaults
+    // with the same name, in any case).
+    map[string, string] fields = {
+        "Host" => parts[4],
+        "User-Agent" => "qiq-http/1.0",
+        "Accept" => "*/*",
+        "Accept-Encoding" => "identity",
+        "Connection" => "close"
+    };
+    byte[] payload;
+    if (body != null) {
+        payload = string_to_bytes(body);
+    }
+    if (body != null || method == "POST" || method == "PUT" || method == "PATCH") {
+        fields["Content-Length"] = to_string(len(payload));
+    }
+    if (headers != null) {
+        foreach (headers as name => value) {
+            foreach (map_keys(fields) as existing) {
+                if (strtolower(existing) == strtolower(name)) {
+                    unset(fields[existing]);
+                }
+            }
+            fields[__http_header_value(name, "header names")] = __http_header_value(value, "header values");
+        }
+    }
+    string request = method + " " + __http_header_value(parts[3], "paths") + " HTTP/1.1\r\n";
+    foreach (fields as name => value) {
+        request = request + name + ": " + value + "\r\n";
+    }
+    request = request + "\r\n";
+
+    Socket socket = Socket::connect(parts[1], port, parts[0] == "https", timeout);
+    try {
+        socket->write(request);
+        if (len(payload) > 0) {
+            socket->writeBytes(payload);
+        }
+
+        // The status line and headers, skipping informational (1xx) responses.
+        int status = 100;
+        string reason = "";
+        map[string, string] received = {};
+        while (status >= 100 && status < 200 && status != 101) {
+            string line = socket->readLine();
+            if (line == null) {
+                throw new NetworkException(parts[1] + " closed the connection without responding");
+            }
+            string[] words = explode(" ", line, 3);
+            if (len(words) < 2 || !str_starts_with(words[0], "HTTP/")) {
+                throw new NetworkException("invalid response from " + parts[1] + ": " + line);
+            }
+            try {
+                status = to_int(words[1]);
+            } catch (InvalidArgumentException e) {
+                throw new NetworkException("invalid status line from " + parts[1] + ": " + line);
+            }
+            reason = words[2] ?? "";
+            received = {};
+            string header = socket->readLine();
+            while (header != null && header != "") {
+                int colon = strpos(header, ":");
+                if (colon > 0) {
+                    string name = strtolower(trim(substr(header, 0, colon)));
+                    string value = trim(substr(header, colon + 1));
+                    string earlier = received[name] ?? null;
+                    if (earlier != null) {
+                        value = earlier + ", " + value;
+                    }
+                    received[name] = value;
+                }
+                header = socket->readLine();
+            }
+        }
+
+        // The body: none, chunked, a known length, or until the connection closes.
+        byte[] content;
+        string encoding = strtolower(received["transfer-encoding"] ?? "");
+        string length = received["content-length"] ?? null;
+        if (method == "HEAD" || status == 204 || status == 304) {
+            content = [];
+        } else if (str_contains(encoding, "chunked")) {
+            while (true) {
+                string sizeLine = socket->readLine();
+                if (sizeLine == null) {
+                    throw new NetworkException(parts[1] + " closed the connection in the middle of the response");
+                }
+                int extension = strpos(sizeLine, ";");
+                if (extension >= 0) {
+                    sizeLine = substr(sizeLine, 0, extension);
+                }
+                int size = __http_hex(trim(sizeLine), parts[1]);
+                if (size == 0) {
+                    break;
+                }
+                array_splice(content, len(content), 0, socket->readExactly(size));
+                socket->readLine();
+            }
+            // Trailer headers, up to the blank line.
+            string trailer = socket->readLine();
+            while (trailer != null && trailer != "") {
+                trailer = socket->readLine();
+            }
+        } else if (length != null) {
+            int size = 0;
+            try {
+                size = to_int(trim(length));
+            } catch (InvalidArgumentException e) {
+                throw new NetworkException("invalid Content-Length from " + parts[1] + ": " + length);
+            }
+            content = socket->readExactly(size);
+        } else {
+            content = socket->readAll();
+        }
+        return new Response(status, reason, received, content, url);
+    } finally {
+        socket->close();
+    }
+}
+
+function __http_hex(string text, string host): int {
+    if (text == "") {
+        throw new NetworkException("invalid chunk size from " + host);
+    }
+    int value = 0;
+    foreach (string_to_bytes(text) as b) {
+        int digit = __http_hex_digit(b);
+        if (digit < 0 || value > 576460752303423487) {
+            throw new NetworkException("invalid chunk size from " + host + ": " + text);
+        }
+        value = value * 16 + digit;
+    }
+    return value;
+}

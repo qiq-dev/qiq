@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Request class - qiq Manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <button class="menu-toggle" aria-label="Show menu" onclick="document.body.classList.toggle('menu-open')">☰</button>
+  <a class="brand" href="introduction.html"><span class="logo">qiq</span><span class="brand-text">Manual</span></a>
+  <div class="search">
+    <input id="search" type="search" placeholder="Search the manual" autocomplete="off" aria-label="Search the manual">
+    <ul id="search-results" hidden></ul>
+  </div>
+</header>
+<div class="layout">
+<nav class="sidebar" aria-label="Manual">
+<h2>Getting started</h2><ul>
+<li><a href="introduction.html">Introduction</a>
+</li>
+<li><a href="installation.html">Installing and running</a>
+</li>
+</ul>
+<h2>Language reference</h2><ul>
+<li><a href="basic-syntax.html">Basic syntax</a>
+</li>
+<li><a href="types.html">Types</a>
+</li>
+<li><a href="variables.html">Variables</a>
+</li>
+<li><a href="operators.html">Operators</a>
+</li>
+<li><a href="control-structures.html">Control structures</a>
+</li>
+<li><a href="functions.html">Functions</a>
+</li>
+<li><a href="anonymous-functions.html">Anonymous functions</a>
+</li>
+<li><a href="strings.html">Strings and chars</a>
+</li>
+<li><a href="arrays.html">Arrays</a>
+</li>
+<li><a href="maps.html">Maps</a>
+</li>
+<li><a href="classes.html">Classes and objects</a>
+</li>
+<li><a href="static.html">Static members</a>
+</li>
+<li><a href="interfaces.html">Interfaces</a>
+</li>
+<li><a href="exceptions.html">Exceptions</a>
+</li>
+<li><a href="modules.html">Modules</a>
+</li>
+<li><a href="packages.html">Packages</a>
+</li>
+<li><a href="memory.html">Memory management</a>
+</li>
+<li><a href="printing.html">Printing</a>
+</li>
+</ul>
+<h2>Standard library</h2><ul>
+<li><a href="stdlib.html">Overview</a>
+</li>
+<li><a href="ref.general.html">General</a>
+</li>
+<li><a href="ref.strings.html">Strings</a>
+</li>
+<li><a href="ref.arrays.html">Arrays</a>
+</li>
+<li><a href="ref.maps.html">Maps</a>
+</li>
+<li><a href="ref.files.html">Files</a>
+</li>
+<li><a href="ref.datetime.html">Date and time</a>
+</li>
+<li><a href="ref.json.html">JSON</a>
+</li>
+<li><a href="ref.http.html">HTTP</a>
+</li>
+<li><a href="ref.http-server.html">HTTP server</a>
+</li>
+<li><a href="ref.program.html">Program</a>
+</li>
+<li><a href="ref.conversions.html">Conversions</a>
+</li>
+<li><a href="ref.output.html">Output</a>
+</li>
+<li><a href="class.file.html">The File class</a>
+</li>
+<li><a href="class.response.html">The Response class</a>
+</li>
+<li><a href="class.request.html" class="active">The Request class</a>
+</li>
+<li><a href="class.responsewriter.html">The ResponseWriter class</a>
+</li>
+<li><a href="class.router.html">The Router class</a>
+</li>
+<li><a href="class.socket.html">The Socket class</a>
+</li>
+<li><a href="exception-classes.html">Exception classes</a>
+</li>
+</ul>
+</nav>
+<main class="content">
+<div class="breadcrumbs"><a href="stdlib.html">Standard library</a> › <span>The Request class</span></div>
+<h1>The Request class</h1>
+<p>A request received by the <a href="ref.http-server.html">HTTP server</a>, passed to every handler, like Go's <code>*http.Request</code>.</p><p class="import">Import it with <code>import Request from "std/http/server";</code></p>
+<h2>Class synopsis</h2>
+<div class="synopsis"><code><span class="kw">class</span> <span class="cls">Request</span> {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">public</span> <span class="type">string</span> method;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">public</span> <span class="type">string</span> path;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">public</span> <span class="type">string</span> rawPath;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">public</span> <span class="type">string</span> rawQuery;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">public</span> <span class="type">string</span> protocol;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">public</span> <span class="type">string</span> scheme;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">public</span> <span class="type">map[string, string]</span> headers;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">public</span> <span class="type">byte[]</span> bytes;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">public</span> <span class="type">string</span> remoteAddress;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">public</span> <span class="type">map[string, string]</span> params;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">text</span>(): <span class="type">string</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">header</span>(<span class="type">string</span> name): <span class="type">string</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">query</span>(<span class="type">string</span> name): <span class="type">string</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">form</span>(<span class="type">string</span> name): <span class="type">string</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">pathValue</span>(<span class="type">string</span> name): <span class="type">string</span><br>
+}</code></div>
+<table>
+<thead><tr><th>Member</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>method</code></td><td>The method in upper case: <code>GET</code>, <code>POST</code>, ...</td></tr>
+<tr><td><code>path</code></td><td>The URL path, percent-decoded: <code>/files/a b.txt</code></td></tr>
+<tr><td><code>rawPath</code></td><td>The path as the client sent it: <code>/files/a%20b.txt</code></td></tr>
+<tr><td><code>rawQuery</code></td><td>What follows <code>?</code> in the URL, or an empty string</td></tr>
+<tr><td><code>protocol</code></td><td><code>HTTP/1.1</code> or <code>HTTP/1.0</code></td></tr>
+<tr><td><code>scheme</code></td><td><code>http</code>, or <code>https</code> when a trusted proxy reports that the client used HTTPS (see <code>trustProxy</code> in <a href="function.http-serve.html">http_serve</a>)</td></tr>
+<tr><td><code>headers</code></td><td>The request headers, with lowercase names; a header sent more than once has its values joined with <code>, </code></td></tr>
+<tr><td><code>bytes</code></td><td>The body, empty when there is none</td></tr>
+<tr><td><code>remoteAddress</code></td><td>The client's address and port, such as <code>127.0.0.1:51234</code> or <code>[::1]:51234</code>; <code>unix</code> on a Unix socket. With <code>trustProxy</code>, the client address the proxy forwarded, such as <code>203.0.113.9</code></td></tr>
+<tr><td><code>params</code></td><td>The values of the wildcards in the <a href="class.router.html">Router</a> pattern that matched</td></tr>
+<tr><td><code>text()</code></td><td>The body as a string; throws <code>InvalidUtf8Exception</code> if it isn't UTF-8</td></tr>
+<tr><td><code>header(name)</code></td><td>One header, by name in any case, or <code>null</code></td></tr>
+<tr><td><code>query(name)</code></td><td>A field of the query string (<code>?page=2</code>), decoded, or <code>null</code>; the first one if it's repeated</td></tr>
+<tr><td><code>form(name)</code></td><td>A field of a form posted as <code>application/x-www-form-urlencoded</code>, or else of the query string, or <code>null</code></td></tr>
+<tr><td><code>pathValue(name)</code></td><td>A wildcard's value, such as <code>id</code> in <code>/items/{id}</code>, or <code>null</code></td></tr>
+</tbody>
+</table>
+<p>For a JSON body, decode the text into the type you expect: <code>Item item = json_decode(r-&gt;text());</code>.</p>
+<h2>Example</h2>
+<pre class="code"><span class="kw">import</span> <span class="cls">Request</span>, <span class="cls">ResponseWriter</span> <span class="kw">from</span> <span class="string">&quot;std/http/server&quot;</span>;
+
+router-&gt;handle("POST /login", function(Request r, ResponseWriter w): void {
+    string user = r-&gt;form("user");
+    if (user == null) {
+        w-&gt;error(400, "missing user");
+        return;
+    }
+    w-&gt;write("Welcome, " + user + " (from " + r-&gt;remoteAddress + ")\n");
+});</pre>
+
+<nav class="pager"><a class="prev" href="class.response.html">« The Response class</a><a class="next" href="class.responsewriter.html">The ResponseWriter class »</a></nav>
+</main>
+</div>
+<script src="search.js"></script>
+</body>
+</html>

@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Installing and running - qiq Manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <button class="menu-toggle" aria-label="Show menu" onclick="document.body.classList.toggle('menu-open')">☰</button>
+  <a class="brand" href="introduction.html"><span class="logo">qiq</span><span class="brand-text">Manual</span></a>
+  <div class="search">
+    <input id="search" type="search" placeholder="Search the manual" autocomplete="off" aria-label="Search the manual">
+    <ul id="search-results" hidden></ul>
+  </div>
+</header>
+<div class="layout">
+<nav class="sidebar" aria-label="Manual">
+<h2>Getting started</h2><ul>
+<li><a href="introduction.html">Introduction</a>
+</li>
+<li><a href="installation.html" class="active">Installing and running</a>
+</li>
+</ul>
+<h2>Language reference</h2><ul>
+<li><a href="basic-syntax.html">Basic syntax</a>
+</li>
+<li><a href="types.html">Types</a>
+</li>
+<li><a href="variables.html">Variables</a>
+</li>
+<li><a href="operators.html">Operators</a>
+</li>
+<li><a href="control-structures.html">Control structures</a>
+</li>
+<li><a href="functions.html">Functions</a>
+</li>
+<li><a href="anonymous-functions.html">Anonymous functions</a>
+</li>
+<li><a href="strings.html">Strings and chars</a>
+</li>
+<li><a href="arrays.html">Arrays</a>
+</li>
+<li><a href="maps.html">Maps</a>
+</li>
+<li><a href="classes.html">Classes and objects</a>
+</li>
+<li><a href="static.html">Static members</a>
+</li>
+<li><a href="interfaces.html">Interfaces</a>
+</li>
+<li><a href="exceptions.html">Exceptions</a>
+</li>
+<li><a href="modules.html">Modules</a>
+</li>
+<li><a href="packages.html">Packages</a>
+</li>
+<li><a href="memory.html">Memory management</a>
+</li>
+<li><a href="printing.html">Printing</a>
+</li>
+</ul>
+<h2>Standard library</h2><ul>
+<li><a href="stdlib.html">Overview</a>
+</li>
+<li><a href="ref.general.html">General</a>
+</li>
+<li><a href="ref.strings.html">Strings</a>
+</li>
+<li><a href="ref.arrays.html">Arrays</a>
+</li>
+<li><a href="ref.maps.html">Maps</a>
+</li>
+<li><a href="ref.files.html">Files</a>
+</li>
+<li><a href="ref.datetime.html">Date and time</a>
+</li>
+<li><a href="ref.json.html">JSON</a>
+</li>
+<li><a href="ref.http.html">HTTP</a>
+</li>
+<li><a href="ref.http-server.html">HTTP server</a>
+</li>
+<li><a href="ref.program.html">Program</a>
+</li>
+<li><a href="ref.conversions.html">Conversions</a>
+</li>
+<li><a href="ref.output.html">Output</a>
+</li>
+<li><a href="class.file.html">The File class</a>
+</li>
+<li><a href="class.response.html">The Response class</a>
+</li>
+<li><a href="class.request.html">The Request class</a>
+</li>
+<li><a href="class.responsewriter.html">The ResponseWriter class</a>
+</li>
+<li><a href="class.router.html">The Router class</a>
+</li>
+<li><a href="class.socket.html">The Socket class</a>
+</li>
+<li><a href="exception-classes.html">Exception classes</a>
+</li>
+</ul>
+</nav>
+<main class="content">
+<div class="breadcrumbs"><a href="introduction.html">Manual</a> › <a href="#">Getting started</a> › <span>Installing and running</span></div>
+<h1>Installing and running</h1>
+
+<h2>Requirements</h2>
+<table>
+<thead><tr><th>To…</th><th>You need</th></tr></thead>
+<tbody>
+<tr><td>Compile and run qiq programs</td><td>Only the <code>qiq</code> binary. It contains everything it needs: LLVM for code generation, the qiq runtime, musl libc, and a linker. It runs on x86-64 Linux.</td></tr>
+<tr><td>Download <a href="packages.html">packages</a></td><td><code>git</code>, used by <code>qiq get</code>, and by builds that need a module that isn't downloaded yet.</td></tr>
+<tr><td>Run a compiled program</td><td>Nothing. Executables are statically linked, so they run on any x86-64 Linux machine.</td></tr>
+<tr><td>Build qiq itself</td><td>See the <a href="https://github.com/qiq-dev/qiq#building-from-source">README</a> in the qiq repository.</td></tr>
+</tbody>
+</table>
+
+<h2>Your first program</h2>
+<p>Save this as <code>hello.qiq</code>:</p>
+
+<div class="code qiq"><pre><code><span class="type">string</span> name = <span class="string">&quot;world&quot;</span>;
+<span class="kw">print</span>(<span class="string">&quot;Hello, &quot;</span> + name + <span class="string">&quot;!&quot;</span>);</code></pre></div><div class="output"><div class="output-label">Output</div><pre>Hello, world!</pre></div>
+
+<p>Then run it:</p>
+
+<div class="code sh"><pre><code>qiq run hello.qiq          <span class="comment"># compile and run, like `php hello.php` or `go run`</span></code></pre></div>
+
+<h2>Commands</h2>
+
+<div class="code sh"><pre><code>qiq run hello.qiq [arguments...]    <span class="comment"># compile to a temporary executable and run it</span>
+qiq build hello.qiq                 <span class="comment"># write the executable ./hello</span>
+qiq build hello.qiq -o app          <span class="comment"># choose the output name</span>
+qiq build hello.qiq --emit-llvm     <span class="comment"># also write hello.ll, the generated LLVM IR</span>
+qiq serve public --port 8080        <span class="comment"># serve a directory over HTTP, like `php -S`</span>
+qiq mod init github.com/you/app     <span class="comment"># make this directory a module (see Packages)</span>
+qiq get github.com/ada/web          <span class="comment"># add a module (needs git)</span>
+qiq mod tidy                        <span class="comment"># require exactly the modules that are imported</span>
+qiq help                            <span class="comment"># show a summary</span>
+qiq version                         <span class="comment"># show the version</span></code></pre></div>
+
+<ul>
+<li><code>qiq run</code> exits with the program's exit status: <code>0</code> normally, and <code>1</code> when an exception is never caught.</li>
+<li>Both commands optimize the program (like <code>-O2</code>). A small program compiles in about a fifth of a second.</li>
+<li>Compile errors name the file and, for syntax errors, the line and column: <code>hello.qiq:3:12: expected ';' after declaration</code>.</li>
+<li><code>qiq serve [directory] [--host host] [--port port] [--workers n]</code> serves a directory's files (the current one by default) at <code>http://127.0.0.1:8000/</code>; see <a href="ref.http-server.html">HTTP server</a>.</li>
+<li>The older form <code>qiq hello.qiq -o hello</code> still works and means <code>qiq build</code>.</li>
+</ul>
+
+<h2>How a program is built</h2>
+<p>Everything happens inside the <code>qiq</code> process: the compiler turns qiq source into LLVM IR; LLVM optimizes it together with the qiq runtime and emits machine code; and a built-in linker links it statically against musl libc. Building never runs another program, which is why it needs nothing else installed; only downloading packages uses <code>git</code>.</p>
+
+<nav class="pager"><a class="prev" href="introduction.html">« Introduction</a><a class="next" href="basic-syntax.html">Basic syntax »</a></nav>
+</main>
+</div>
+<script src="search.js"></script>
+</body>
+</html>

@@ -1,0 +1,97 @@
+<!-- title: Modules -->
+<h1>Modules</h1>
+<p>A program can span several files. Import functions, classes, and interfaces from another file by name with <code>import Name, Other from "path";</code>.</p>
+
+```qiq
+// views/template.qiq
+interface Template {
+    function getHtml(string template): string;
+}
+```
+
+```qiq
+// views/page.qiq
+import Template from "template";
+
+class Page implements Template {
+    private string title;
+
+    function __construct(string title) {
+        this->title = title;
+    }
+
+    function getHtml(string template): string {
+        return str_replace("{title}", this->title, template);
+    }
+}
+```
+
+```qiq
+// main.qiq
+import Page from "views/page";
+
+Page page = new Page("Home");
+print(page->getHtml("<h1>{title}</h1>"));
+```
+
+<p>Compile or run the entry file as usual; the compiler loads its imports, and theirs, and produces one executable:</p>
+
+```sh
+qiq run main.qiq
+```
+```text
+<h1>Home</h1>
+```
+
+<h2>Import paths</h2>
+<ul>
+<li>Paths are relative to the importing file, so <code>"../shared/util"</code> works too. In a <a href="packages.html">module</a>, a path can also start with the module's path (<code>"example.com/app/views/page"</code>) or a required module's path (<code>"github.com/ada/web/mux"</code>).</li>
+<li><code>.qiq</code> is added when the path has no extension.</li>
+<li>Each file is loaded once, however many files import it.</li>
+<li>Import cycles are an error that lists the cycle, for example <code>import cycle: a.qiq -&gt; b.qiq -&gt; a.qiq</code>.</li>
+</ul>
+
+<h2>What can be imported</h2>
+<ul>
+<li>Every top-level function, class, and interface in a file can be imported. Imported names are used unqualified, exactly as if they were declared in the importing file.</li>
+<li>Names a file imports are not re-exported: import them from the file that declares them.</li>
+<li>A name is visible only in files that declare or import it, so two files can each declare their own <code>helper</code> function or <code>Item</code> class without clashing.</li>
+<li>Classes can extend imported classes and implement imported interfaces, and interface calls dispatch across files.</li>
+<li>The everyday parts of the <a href="stdlib.html">standard library</a> (strings, the general functions, and the <a href="exception-classes.html">exception classes</a>) are available everywhere without an import, and their names can't be redeclared. The rest is imported from <code>std/</code> paths, such as <code>import File from "std/file";</code>; see <a href="stdlib.html">Standard library</a>.</li>
+</ul>
+
+<h2>Importing under another name</h2>
+<p>Imported names are used unqualified, so two files that export the same name clash. Import one of them under another name with <code>as</code>:</p>
+
+```qiq
+import Mux as WebMux from "github.com/ada/web/mux";
+import Mux from "views/mux";
+
+WebMux api = new WebMux();
+```
+
+<p>The new name works everywhere the original would: <code>new</code>, <code>extends</code>, <code>implements</code>, <code>catch</code>, and type declarations. Objects still print, and error messages still show, the class's own name. Importing a name twice without <code>as</code> is an error that suggests it.</p>
+
+<h2>Private declarations</h2>
+<p>Mark a top-level function, class, or interface <code>private</code> to keep it out of reach of other <a href="packages.html">packages</a>: it can still be imported by files in its own module (the directory tree of its <code>qiq.mod</code>), but not from another module.</p>
+
+```qiq
+// github.com/ada/web/mux.qiq
+private function clean(string path): string {
+    return trim(path, "/");
+}
+
+class Mux {
+    // ... uses clean() ...
+}
+```
+
+<p>Another module's <code>import clean from "github.com/ada/web/mux";</code> is the error <code>'clean' is private to module github.com/ada/web</code>. A program without a <code>qiq.mod</code> is a single module, so there <code>private</code> doesn't restrict anything.</p>
+
+<h2>File structure</h2>
+<ul>
+<li>Imports must come before all other declarations.</li>
+<li>Only the entry file may contain top-level statements. Imported files contain only imports and declarations, so importing a file never runs code.</li>
+<li>Errors name the file they occur in, for example <code>views/page.qiq:12:5: ...</code>.</li>
+<li><code>import</code> and <code>from</code> are contextual keywords, so they can still be used as variable names.</li>
+</ul>

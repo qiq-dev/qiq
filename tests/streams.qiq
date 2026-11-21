@@ -1,0 +1,79 @@
+// Reading and writing files a piece at a time with the File class.
+// Run from the repository root: writes tests/streams_output.txt and .bin.
+import file, File from "std/file";
+
+string path = "tests/streams_output.txt";
+
+File out = File::open(path, "w");
+out->write("INFO started\n");
+out->write("ERROR disk full\r\n");
+out->write("INFO héllo wörld\n");
+out->write("ERROR no newline at the end");
+out->close();
+out->close();                                // closing twice is harmless
+
+// Line by line: readLine returns null at the end of the file.
+File log = File::open(path);
+try {
+    int number = 0;
+    string line = log->readLine();
+    while (line != null) {
+        number = number + 1;
+        if (str_starts_with(line, "ERROR")) {
+            print(number, line);
+        }
+        line = log->readLine();
+    }
+} finally {
+    log->close();
+}
+
+// Or test eof() before each read.
+File again = File::open(path, "r");
+int count = 0;
+while (!again->eof()) {
+    string line = again->readLine();
+    count = count + 1;
+}
+again->close();
+print("lines:", count);
+
+File appended = File::open(path, "a");
+appended->write("\nINFO appended");
+appended->close();
+print("after append:", len(file(path)));
+
+// Bytes in fixed-size chunks; read returns an empty array at the end.
+string binary = "tests/streams_output.bin";
+File writer = File::open(binary, "w");
+byte[] data = [0, 255, 10, 13, 128];
+writer->writeBytes(data);
+writer->writeBytes(data);
+writer->close();
+File reader = File::open(binary);
+byte[] chunk = reader->read(4);
+while (len(chunk) > 0) {
+    print(chunk);
+    chunk = reader->read(4);
+}
+print("at end:", reader->eof());
+reader->close();
+
+// Errors.
+try {
+    appended->write("too late");
+} catch (IOException e) {
+    print(e->getMessage());
+}
+try {
+    File missing = File::open("tests/no-such-file.txt");
+} catch (FileNotFoundException e) {
+    print(e->getMessage());
+}
+try {
+    File bad = File::open(path, "rw");
+} catch (InvalidArgumentException e) {
+    print(e->getMessage());
+}
+
+File::stdout()->write("written with File::stdout()\n");

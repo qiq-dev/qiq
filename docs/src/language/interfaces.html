@@ -1,0 +1,84 @@
+<!-- title: Interfaces -->
+<h1>Interfaces</h1>
+<p>An interface declares methods that implementing classes must provide. Interface methods have no body and are always public; a missing return type means <code>void</code>.</p>
+
+```qiq
+interface Shape {
+    function area(): int;
+    function name(): string;
+}
+
+class Square implements Shape {
+    private int side;
+    function __construct(int side) { this->side = side; }
+    function area(): int { return this->side * this->side; }
+    function name(): string { return "square"; }
+}
+
+class Rect implements Shape {
+    private int w;
+    private int h;
+    function __construct(int w, int h) { this->w = w; this->h = h; }
+    function area(): int { return this->w * this->h; }
+    function name(): string { return "rectangle"; }
+}
+
+function describe(Shape shape): void {
+    print(shape->name(), shape->area());
+}
+
+Shape[] shapes = [new Square(3), new Rect(2, 5)];
+foreach (shapes as shape) {
+    describe(shape);
+}
+```
+```output
+square 9
+rectangle 10
+```
+
+<h2>Rules</h2>
+<ul>
+<li>A class can implement several interfaces, <code>class A implements B, C</code>, and combine them with inheritance: <code>class Child extends Base implements Named</code>.</li>
+<li>An interface can extend other interfaces: <code>interface Scalable extends Shape</code>.</li>
+<li>A concrete class must implement every interface method as a <code>public</code> method with the same parameter and return types. The implementation may be inherited from a parent class. An abstract class may leave interface methods to its subclasses.</li>
+<li>Interfaces can't declare properties, constructors, static methods, or <code>final</code> methods, and can't be instantiated. They must be declared before use.</li>
+</ul>
+
+<h2>Interface types and dispatch</h2>
+<p>An interface name can be used as the type of a variable, parameter, return value, or array element, and holds an object of any implementing class. Calls through it run the object's own implementation, chosen at run time from a table indexed by the object's class.</p>
+
+<h2>Defaults in interface methods</h2>
+<p>Interface methods can have <a href="functions.html">optional parameters</a>. An implementation may declare different defaults, and a call always uses the defaults of the method that actually runs:</p>
+
+```qiq
+interface Template {
+    function render(string text, bool escape = true): string;
+}
+class Page implements Template {
+    function render(string text, bool escape = true): string {
+        if (escape) {
+            return "escaped " + text;
+        }
+        return text;
+    }
+}
+class RawPage implements Template {
+    function render(string text, bool escape = false): string {
+        if (escape) {
+            return "escaped " + text;
+        }
+        return text;
+    }
+}
+Template[] views = [new Page(), new RawPage()];
+foreach (views as view) {
+    print(view->render("<p>"));
+}
+```
+```output
+escaped <p>
+<p>
+```
+
+<p>An implementation may make a required parameter optional, but not the other way round.</p>

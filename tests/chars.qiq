@@ -1,0 +1,15 @@
+function echo(char value): char {
+    return value;
+}
+
+char greeting = echo('é');
+char symbol = '界';
+char quote = '\'';
+
+print(greeting);
+print(symbol);
+print(quote);
+
+if (greeting < symbol) {
+    print("greeting sorts first");
+}

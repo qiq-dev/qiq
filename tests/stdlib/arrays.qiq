@@ -1,0 +1,47 @@
+// Arrays grow and shrink in place; indexes always run from 0 to len - 1.
+string[] queue;                          // starts empty
+array_push(queue, "b", "c", "d");
+array_unshift(queue, "a");
+print(queue, len(queue));
+
+string first = array_shift(queue);       // the rest move down: "b" is now at 0
+print(first, queue, queue[0]);
+print(array_pop(queue), queue);
+array_pop(queue);                        // a result can be discarded
+print(queue);
+
+int[] numbers = [1, 2, 3, 4, 5];
+print(array_splice(numbers, 1, 2), numbers);           // remove 2 elements at index 1
+print(array_splice(numbers, -1, 1, [8, 9]), numbers);  // replace the last one
+int[] nothing = array_splice(numbers, 0, 0, [0]);      // insert at the front
+print(numbers);
+
+// Many appends are fast: the array doubles its spare room when needed.
+int[] squares;
+int i = 0;
+while (i < 10000) {
+    array_push(squares, i * i);
+    i = i + 1;
+}
+print(len(squares), squares[9999]);
+
+// Arrays are shared: a function can add to an array it's given.
+function addTwice(string[] list, string value): void {
+    array_push(list, value, value);
+}
+string[] shared = ["x"];
+addTwice(shared, "y");
+print(shared);
+
+// Writing past the end doesn't grow an array.
+try {
+    shared[10] = "z";
+} catch (OutOfRangeException e) {
+    print(e->getMessage());
+}
+try {
+    int[] empty;
+    int value = array_pop(empty);
+} catch (OutOfRangeException e) {
+    print(e->getMessage());
+}

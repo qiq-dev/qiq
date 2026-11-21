@@ -1,0 +1,47 @@
+// int arithmetic
+print(7 + 3);
+print(7 - 10);
+print(6 * 7);
+print(7 / 2);        // 3: int division truncates toward zero
+print(-7 / 2);       // -3
+print(7 % 3);        // 1
+print(-7 % 3);       // -1: remainder takes the sign of the left operand
+print(2 ** 10);      // 1024
+
+// precedence and grouping
+print(2 + 3 * 4);    // 14
+print((2 + 3) * 4);  // 20
+print(10 - 4 - 3);   // 3: left-associative
+print(2 ** 3 ** 2);  // 512: right-associative, 2 ** 9
+print(-2 ** 2);      // -4: ** binds tighter than unary minus
+print((-2) ** 2);    // 4
+print(-(3 + 4));     // -7
+
+// negative literals, including the smallest int
+int smallest = -9223372036854775808;
+print(smallest);
+print(9223372036854775807 + 1);   // wraps to -9223372036854775808
+
+// double arithmetic
+print(7.0 / 2.0);    // 3.5
+print(7.5 % 2.0);    // 1.5
+print(2.0 ** 0.5);   // 1.41421
+print(-1.5 * 2.0);   // -3
+print(1.0 / 0.0);    // inf
+
+// with variables, in conditions, and with the standard library
+int a = 17;
+int b = 5;
+int quotient = a / b;
+int remainder = a % b;
+if (quotient * b + remainder == a) {
+    print("division identity holds");
+}
+if (a - b * 3 > 0) {
+    print("positive");
+}
+if (strpos("hello", "z") == -1) {
+    print("not found");
+}
+print(substr("héllo wörld", -5, 5));
+print(substr("héllo wörld", 0, -6));

@@ -1,0 +1,1021 @@
+// An HTTP server in the style of Go's net/http, written in qiq on top of the
+// listening sockets in stdlib/runtime/net.c. A handler is any
+// function(Request, ResponseWriter): void; a Router picks one by method and
+// path.
+//
+//   import Request, ResponseWriter, Router, http_serve from "std/http/server";
+//
+//   Router router = new Router();
+//   router->handle("GET /hello/{name}", function(Request r, ResponseWriter w): void {
+//       w->write("Hello, " + r->pathValue("name"));
+//   });
+//   http_serve(":8080", router->handler());
+//
+// http_serve forks worker processes that each accept and serve one
+// connection at a time, and restarts any that die. SIGINT (Ctrl-C) and
+// SIGTERM stop the server once the requests in progress finish. Functions
+// whose names start with "__" are internal to the standard library.
+
+import Exception, InvalidArgumentException, NetworkException, InvalidUtf8Exception from "exceptions";
+import File, is_dir, is_file, file_get_bytes, scandir from "file";
+import gmdate, date, time, microtime from "date";
+import exit from "program";
+import strtolower, strtoupper, substr, strpos, str_contains, str_starts_with, str_ends_with, explode, implode, trim, string_to_bytes, bytes_to_string, htmlspecialchars from "string";
+import urldecode, rawurldecode, rawurlencode, __http_hex from "http";
+import __socket_write, __socket_write_bytes, __socket_read_line, __socket_read_exactly, __socket_close, __socket_peer, __socket_set_timeout, __server_listen, __server_listen_unix, __server_close, __server_accept, __server_wait_request, __server_stopping, __server_cpu_count, __server_start from "net";
+
+// An HTTP request received by the server.
+class Request {
+    // "GET", "POST", ... in upper case.
+    public string method;
+    // The path, percent-decoded: "/files/a b.txt".
+    public string path;
+    // The path as the client sent it: "/files/a%20b.txt".
+    public string rawPath;
+    // What follows "?" in the URL, or "".
+    public string rawQuery;
+    // "HTTP/1.1" or "HTTP/1.0".
+    public string protocol;
+    // "http", or "https" when a trusted proxy says the client used HTTPS
+    // (see http_serve's trustProxy).
+    public string scheme;
+    // Header names in lower case. Repeated headers are joined with ", ".
+    public map[string, string] headers;
+    public byte[] bytes;
+    // "address:port" of the client; "unix" for a client of a Unix socket.
+    // With http_serve's trustProxy, the address a proxy such as nginx
+    // forwarded, without a port.
+    public string remoteAddress;
+    // The path's wildcards, set by Router.
+    public map[string, string] params;
+    private map[string, string] queryFields;
+    private map[string, string] formFields;
+    private bool queryParsed;
+    private bool formParsed;
+
+    function __construct(string method, string rawPath, string rawQuery, string protocol, map[string, string] headers, byte[] bytes, string remoteAddress) {
+        this->method = method;
+        this->path = rawurldecode(rawPath);
+        this->rawPath = rawPath;
+        this->rawQuery = rawQuery;
+        this->protocol = protocol;
+        this->scheme = "http";
+        this->headers = headers;
+        this->bytes = bytes;
+        this->remoteAddress = remoteAddress;
+        this->params = {};
+    }
+
+    // The body as text; throws InvalidUtf8Exception if it isn't UTF-8.
+    function text(): string {
+        return bytes_to_string(this->bytes);
+    }
+
+    // A header's value (the name in any case), or null.
+    function header(string name): string {
+        return this->headers[strtolower(name)] ?? null;
+    }
+
+    // A query string field ("?page=2"), or null.
+    function query(string name): string {
+        if (!this->queryParsed) {
+            this->queryParsed = true;
+            this->queryFields = __http_parse_query(this->rawQuery);
+        }
+        return this->queryFields[name] ?? null;
+    }
+
+    // A field of a form posted as application/x-www-form-urlencoded, then
+    // of the query string, or null.
+    function form(string name): string {
+        if (!this->formParsed) {
+            this->formParsed = true;
+            this->formFields = {};
+            string type = strtolower(this->header("Content-Type") ?? "");
+            if (str_starts_with(type, "application/x-www-form-urlencoded")) {
+                try {
+                    this->formFields = __http_parse_query(this->text());
+                } catch (InvalidUtf8Exception e) {
+                    // Not text: no fields.
+                }
+            }
+        }
+        return this->formFields[name] ?? this->query(name);
+    }
+
+    // The value of a wildcard in the Router pattern that matched, such as
+    // "id" in "/items/{id}", or null.
+    function pathValue(string name): string {
+        return this->params[name] ?? null;
+    }
+}
+
+// Builds the response to a request. The status and headers can be changed
+// until the handler returns; the body is sent with a Content-Length.
+final class ResponseWriter {
+    private int code;
+    private map[string, string] fields;
+    private byte[] body;
+
+    function __construct() {
+        this->code = 200;
+        this->fields = {};
+        this->body = [];
+    }
+
+    // Sets the status code (200 by default).
+    function status(int code): void {
+        if (code < 100 || code > 999) {
+            throw new InvalidArgumentException("invalid HTTP status code " + to_string(code));
+        }
+        this->code = code;
+    }
+
+    function statusCode(): int {
+        return this->code;
+    }
+
+    // Sets a header, replacing any with the same name in any case.
+    function header(string name, string value): void {
+        foreach (map_keys(this->fields) as existing) {
+            if (strtolower(existing) == strtolower(name)) {
+                unset(this->fields[existing]);
+            }
+        }
+        this->fields[__server_header_text(name)] = __server_header_text(value);
+    }
+
+    // A header set so far (the name in any case), or null.
+    function getHeader(string name): string {
+        foreach (this->fields as existing => value) {
+            if (strtolower(existing) == strtolower(name)) {
+                return value;
+            }
+        }
+        return null;
+    }
+
+    // Appends text to the body.
+    function write(string text): void {
+        array_splice(this->body, len(this->body), 0, string_to_bytes(text));
+    }
+
+    function writeBytes(byte[] data): void {
+        array_splice(this->body, len(this->body), 0, data);
+    }
+
+    // Replies with a redirect to `url` (302 Found unless `code` says otherwise).
+    function redirect(string url, int code = 302): void {
+        this->status(code);
+        this->header("Location", url);
+        this->body = string_to_bytes("<a href=\"" + htmlspecialchars(url) + "\">" + __server_reason(code) + "</a>.\n");
+        this->header("Content-Type", "text/html; charset=utf-8");
+    }
+
+    // Replies with `code` and its reason as plain text, like Go's http.Error:
+    // w->error(404) sends "404 Not Found".
+    function error(int code, string message = null): void {
+        this->status(code);
+        this->body = string_to_bytes((message ?? to_string(code) + " " + __server_reason(code)) + "\n");
+        this->header("Content-Type", "text/plain; charset=utf-8");
+    }
+
+    // The body written so far.
+    function bytes(): byte[] {
+        return this->body;
+    }
+
+    function __fields(): map[string, string] {
+        return this->fields;
+    }
+
+    function __reset(): void {
+        this->code = 200;
+        this->fields = {};
+        this->body = [];
+    }
+}
+
+class __Route {
+    public string pattern;
+    public string method;
+    public string[] segments;
+    public function(Request, ResponseWriter): void handler;
+
+    function __construct(string pattern, string method, string[] segments, function(Request, ResponseWriter): void handler) {
+        this->pattern = pattern;
+        this->method = method;
+        this->segments = segments;
+        this->handler = handler;
+    }
+}
+
+// Sends each request to the handler whose pattern matches it best, like
+// Go's ServeMux. A pattern is "[METHOD ]/path":
+//
+//   "/about"            only /about
+//   "/static/"          /static/ and everything below it
+//   "/"                 everything (what nothing else matches)
+//   "/items/{id}"       /items/7, with r->pathValue("id") == "7"
+//   "/files/{path...}"  /files/a/b.txt, with path "a/b.txt"
+//   "/{$}"              only / itself
+//   "POST /items"       only POST requests; GET patterns also match HEAD
+//
+// When several patterns match, the most specific wins: at the first
+// segment where they differ, a fixed name beats {name}, which beats
+// {name...} or a trailing "/"; then a longer pattern, then one with a
+// method. A path that matches only with another method gets 405 Method Not
+// Allowed; one that matches nothing, 404 Not Found. A path that matches
+// only a "/dir/" pattern without its final slash is redirected to it.
+final class Router {
+    private __Route[] routes;
+    private function(Request, ResponseWriter): void fallback;
+
+    function __construct() {
+        this->routes = [];
+    }
+
+    function handle(string pattern, function(Request, ResponseWriter): void handler): void {
+        string method = "";
+        string path = trim(pattern);
+        int space = strpos(path, " ");
+        if (space >= 0) {
+            method = strtoupper(substr(path, 0, space));
+            path = trim(substr(path, space + 1));
+        }
+        if (!str_starts_with(path, "/")) {
+            throw new InvalidArgumentException("route pattern '" + pattern + "' must have a path starting with /");
+        }
+        string[] segments = explode("/", substr(path, 1));
+        foreach (segments as index => segment) {
+            bool last = index == len(segments) - 1;
+            if (str_starts_with(segment, "{") || str_ends_with(segment, "}")) {
+                bool wellFormed = len(segment) > 2 && str_starts_with(segment, "{") && str_ends_with(segment, "}") && !str_contains(substr(segment, 1, len(segment) - 2), "{");
+                if (!wellFormed || ((segment == "{$}" || str_ends_with(segment, "...}")) && !last)) {
+                    throw new InvalidArgumentException("invalid wildcard '" + segment + "' in route pattern '" + pattern + "'");
+                }
+            } else if (segment == "" && !last) {
+                throw new InvalidArgumentException("route pattern '" + pattern + "' has an empty segment");
+            }
+        }
+        foreach (this->routes as route) {
+            if (route->method == method && __router_shape(route->segments) == __router_shape(segments)) {
+                throw new InvalidArgumentException("route pattern '" + pattern + "' conflicts with '" + route->pattern + "'");
+            }
+        }
+        array_push(this->routes, new __Route(pattern, method, segments, handler));
+    }
+
+    // Sets the handler for paths that match no pattern (by default, a plain
+    // 404 Not Found).
+    function notFound(function(Request, ResponseWriter): void handler): void {
+        this->fallback = handler;
+    }
+
+    // Handles a request: finds the best route and calls its handler.
+    function serve(Request r, ResponseWriter w): void {
+        string[] path = explode("/", substr(r->rawPath, 1));
+        __Route best = null;
+        map[string, string] bestParams = null;
+        string[] allowed;
+        foreach (this->routes as route) {
+            map[string, string] params = __router_match(route->segments, path);
+            if (params == null) {
+                continue;
+            }
+            if (route->method != "" && route->method != r->method && !(route->method == "GET" && r->method == "HEAD")) {
+                if (!__server_contains(allowed, route->method)) {
+                    array_push(allowed, route->method);
+                    if (route->method == "GET" && !__server_contains(allowed, "HEAD")) {
+                        array_push(allowed, "HEAD");
+                    }
+                }
+                continue;
+            }
+            if (best == null || __router_more_specific(route, best)) {
+                best = route;
+                bestParams = params;
+            }
+        }
+        // "/dir" when "/dir/" is routed: redirect to the directory, unless
+        // a pattern more specific than a shorter "/.../" subtree matched.
+        if (!str_ends_with(r->rawPath, "/") && (best == null || __router_rank(best->segments[len(best->segments) - 1]) == 0)) {
+            string[] withSlash = explode("/", substr(r->rawPath, 1) + "/");
+            foreach (this->routes as route) {
+                int count = len(route->segments);
+                bool methodMatches = route->method == "" || route->method == r->method || (route->method == "GET" && r->method == "HEAD");
+                if (methodMatches && count == len(withSlash) && route->segments[count - 1] == "" && __router_match(route->segments, withSlash) != null) {
+                    string target = r->rawPath + "/";
+                    if (r->rawQuery != "") {
+                        target = target + "?" + r->rawQuery;
+                    }
+                    w->redirect(target, 301);
+                    return;
+                }
+            }
+        }
+        if (best != null) {
+            r->params = bestParams;
+            function(Request, ResponseWriter): void handler = best->handler;
+            handler(r, w);
+            return;
+        }
+        if (len(allowed) > 0) {
+            w->header("Allow", implode(", ", allowed));
+            w->error(405);
+            return;
+        }
+        if (this->fallback != null) {
+            function(Request, ResponseWriter): void fallback = this->fallback;
+            fallback(r, w);
+            return;
+        }
+        w->error(404);
+    }
+
+    // The router as a handler, for http_serve and the http_* wrappers.
+    function handler(): function(Request, ResponseWriter): void {
+        return function(Request r, ResponseWriter w): void {
+            this->serve(r, w);
+        };
+    }
+}
+
+function __server_contains(string[] values, string value): bool {
+    foreach (values as v) {
+        if (v == value) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// A pattern's segments with wildcard names removed, to find duplicates.
+function __router_shape(string[] segments): string {
+    string[] shape;
+    foreach (segments as segment) {
+        if (segment == "{$}") {
+            array_push(shape, "{$}");
+        } else if (str_ends_with(segment, "...}")) {
+            array_push(shape, "{...}");
+        } else if (str_starts_with(segment, "{")) {
+            array_push(shape, "{}");
+        } else {
+            array_push(shape, segment);
+        }
+    }
+    return implode("/", shape);
+}
+
+// How specific a pattern segment is: a fixed name 3, {name} 2, {name...} 1,
+// a trailing "/" 0.
+function __router_rank(string segment): int {
+    if (segment == "") {
+        return 0;
+    }
+    if (segment == "{$}") {
+        return 3;
+    }
+    if (str_ends_with(segment, "...}")) {
+        return 1;
+    }
+    if (str_starts_with(segment, "{")) {
+        return 2;
+    }
+    return 3;
+}
+
+function __router_more_specific(__Route a, __Route b): bool {
+    int shorter = len(a->segments);
+    if (len(b->segments) < shorter) {
+        shorter = len(b->segments);
+    }
+    foreach (range(0, shorter - 1) as i) {
+        int rankA = __router_rank(a->segments[i]);
+        int rankB = __router_rank(b->segments[i]);
+        if (rankA != rankB) {
+            return rankA > rankB;
+        }
+    }
+    if (len(a->segments) != len(b->segments)) {
+        return len(a->segments) > len(b->segments);
+    }
+    return a->method != "" && b->method == "";
+}
+
+// The wildcards' values if the pattern matches the path's segments (raw,
+// split at "/"), or null.
+function __router_match(string[] pattern, string[] path): map[string, string] {
+    map[string, string] params = {};
+    int count = len(pattern);
+    foreach (pattern as i => segment) {
+        bool last = i == count - 1;
+        if (last && segment == "") {
+            // A trailing "/": the path continues with anything.
+            if (len(path) < count) {
+                return null;
+            }
+            return params;
+        }
+        if (i >= len(path)) {
+            return null;
+        }
+        if (segment == "{$}") {
+            if (path[i] != "" || len(path) != count) {
+                return null;
+            }
+            return params;
+        }
+        if (last && str_ends_with(segment, "...}")) {
+            string[] rest;
+            foreach (range(i, len(path) - 1) as j) {
+                array_push(rest, path[j]);
+            }
+            params[substr(segment, 1, len(segment) - 5)] = rawurldecode(implode("/", rest));
+            return params;
+        }
+        string value = rawurldecode(path[i]);
+        if (str_starts_with(segment, "{")) {
+            if (value == "") {
+                return null;
+            }
+            params[substr(segment, 1, len(segment) - 2)] = value;
+        } else if (value != segment) {
+            return null;
+        }
+    }
+    if (len(path) != count) {
+        return null;
+    }
+    return params;
+}
+
+// Removes `prefix` from the request's path before calling `handler`, like
+// Go's http.StripPrefix: router->handle("/static/", http_strip_prefix("/static",
+// http_file_server("public"))). Paths without the prefix get 404.
+function http_strip_prefix(string prefix, function(Request, ResponseWriter): void handler): function(Request, ResponseWriter): void {
+    return function(Request r, ResponseWriter w): void {
+        if (!str_starts_with(r->rawPath, prefix)) {
+            w->error(404);
+            return;
+        }
+        string path = r->path;
+        string rawPath = r->rawPath;
+        r->rawPath = substr(rawPath, len(prefix));
+        if (!str_starts_with(r->rawPath, "/")) {
+            r->rawPath = "/" + r->rawPath;
+        }
+        r->path = rawurldecode(r->rawPath);
+        try {
+            handler(r, w);
+        } finally {
+            r->path = path;
+            r->rawPath = rawPath;
+        }
+    };
+}
+
+// Serves the files in `directory`: a directory's index.html, or a listing
+// of it. Only GET and HEAD; paths containing ".." get 404.
+function http_file_server(string directory): function(Request, ResponseWriter): void {
+    string root = directory;
+    while (len(root) > 1 && str_ends_with(root, "/")) {
+        root = substr(root, 0, len(root) - 1);
+    }
+    return function(Request r, ResponseWriter w): void {
+        if (r->method != "GET" && r->method != "HEAD") {
+            w->header("Allow", "GET, HEAD");
+            w->error(405);
+            return;
+        }
+        string path = r->path;
+        if (!str_starts_with(path, "/")) {
+            path = "/" + path;
+        }
+        foreach (explode("/", path) as segment) {
+            if (segment == "..") {
+                w->error(404);
+                return;
+            }
+        }
+        string full = root + path;
+        if (is_dir(full)) {
+            if (!str_ends_with(path, "/")) {
+                // Relative, so it works behind http_strip_prefix.
+                string[] names = explode("/", path);
+                string target = rawurlencode(names[len(names) - 1]) + "/";
+                if (r->rawQuery != "") {
+                    target = target + "?" + r->rawQuery;
+                }
+                w->redirect(target, 301);
+                return;
+            }
+            if (is_file(full + "index.html")) {
+                __server_send_file(w, full + "index.html");
+                return;
+            }
+            __server_send_listing(w, full, path);
+            return;
+        }
+        if (is_file(full)) {
+            __server_send_file(w, full);
+            return;
+        }
+        w->error(404);
+    };
+}
+
+function __server_send_file(ResponseWriter w, string file): void {
+    byte[] data = [];
+    try {
+        data = file_get_bytes(file);
+    } catch (Exception e) {
+        w->error(403);
+        return;
+    }
+    w->header("Content-Type", http_content_type(file));
+    w->writeBytes(data);
+}
+
+function __server_send_listing(ResponseWriter w, string directory, string path): void {
+    string[] names = [];
+    try {
+        names = scandir(directory);
+    } catch (Exception e) {
+        w->error(403);
+        return;
+    }
+    string title = htmlspecialchars(path);
+    w->header("Content-Type", "text/html; charset=utf-8");
+    w->write("<!doctype html>\n<meta charset=\"utf-8\">\n<title>Index of " + title + "</title>\n<h1>Index of " + title + "</h1>\n<ul>\n");
+    if (path != "/") {
+        w->write("<li><a href=\"../\">../</a></li>\n");
+    }
+    foreach (names as name) {
+        string shown = name;
+        if (is_dir(directory + name)) {
+            shown = name + "/";
+        }
+        string link = rawurlencode(name);
+        if (is_dir(directory + name)) {
+            link = link + "/";
+        }
+        w->write("<li><a href=\"" + link + "\">" + htmlspecialchars(shown) + "</a></li>\n");
+    }
+    w->write("</ul>\n");
+}
+
+// The Content-Type for a file name, from its extension:
+// "application/octet-stream" for unknown ones.
+function http_content_type(string name): string {
+    int dot = -1;
+    int index = strpos(name, ".");
+    while (index >= 0) {
+        dot = index;
+        index = strpos(name, ".", index + 1);
+    }
+    if (dot < 0 || str_contains(substr(name, dot), "/")) {
+        return "application/octet-stream";
+    }
+    string extension = strtolower(substr(name, dot + 1));
+    map[string, string] types = {
+        "html" => "text/html; charset=utf-8",
+        "htm" => "text/html; charset=utf-8",
+        "css" => "text/css; charset=utf-8",
+        "js" => "text/javascript; charset=utf-8",
+        "mjs" => "text/javascript; charset=utf-8",
+        "json" => "application/json",
+        "txt" => "text/plain; charset=utf-8",
+        "md" => "text/markdown; charset=utf-8",
+        "csv" => "text/csv; charset=utf-8",
+        "xml" => "application/xml",
+        "svg" => "image/svg+xml",
+        "png" => "image/png",
+        "jpg" => "image/jpeg",
+        "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "avif" => "image/avif",
+        "ico" => "image/x-icon",
+        "pdf" => "application/pdf",
+        "zip" => "application/zip",
+        "gz" => "application/gzip",
+        "wasm" => "application/wasm",
+        "woff" => "font/woff",
+        "woff2" => "font/woff2",
+        "ttf" => "font/ttf",
+        "otf" => "font/otf",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "ogg" => "audio/ogg",
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        "qiq" => "text/plain; charset=utf-8"
+    };
+    return types[extension] ?? "application/octet-stream";
+}
+
+// Wraps a handler to log each request to stderr, like php -S:
+// [Fri Nov 20 10:15:02 2026] 127.0.0.1:51234 [200]: GET /index.html
+function http_log(function(Request, ResponseWriter): void handler): function(Request, ResponseWriter): void {
+    return function(Request r, ResponseWriter w): void {
+        double started = microtime();
+        try {
+            handler(r, w);
+        } catch (Exception e) {
+            __server_log(r, 500, started);
+            throw e;
+        }
+        __server_log(r, w->statusCode(), started);
+    };
+}
+
+function __server_log(Request r, int status, double started): void {
+    string target = r->rawPath;
+    if (r->rawQuery != "") {
+        target = target + "?" + r->rawQuery;
+    }
+    double millis = (microtime() - started) * 1000.0;
+    File::stderr()->write(sprintf("[%s] %s [%d]: %s %s (%.1f ms)\n", date("D M j H:i:s Y"), r->remoteAddress, status, r->method, target, millis));
+}
+
+// Serves HTTP on `address`, calling `handler` for each request:
+//
+//   ":8080"              every network interface (IPv4 and IPv6)
+//   "127.0.0.1:8080"     this machine only; "[::1]:8080" for IPv6
+//   "unix:/run/app.sock" a Unix socket file, for a proxy such as nginx
+//
+// `workers` processes (by default one per CPU) each serve one connection at
+// a time. With `trustProxy`, the server is behind a proxy such as nginx,
+// and Request::remoteAddress and Request::scheme come from the proxy's
+// X-Forwarded-For (or X-Real-IP) and X-Forwarded-Proto headers. Returns
+// after SIGINT or SIGTERM, once the workers have finished their requests.
+function http_serve(string address, function(Request, ResponseWriter): void handler, int workers = 0, bool trustProxy = false): void {
+    int listener = __server_open(address);
+    int count = workers;
+    if (count <= 0) {
+        count = __server_cpu_count();
+    }
+    int worker = __server_start(count);
+    if (worker == 0) {
+        // The supervising process, after the workers have stopped.
+        __server_close(listener);
+        return;
+    }
+    while (true) {
+        int connection = __server_accept(listener, 30);
+        if (connection < 0) {
+            break;
+        }
+        __server_connection(connection, listener, handler, trustProxy);
+    }
+    if (count > 1) {
+        // A worker: the supervising process removes a Unix socket's file.
+        __socket_close(listener);
+        exit(0);
+    }
+    __server_close(listener);
+}
+
+// Listens on an http_serve address.
+function __server_open(string address): int {
+    if (str_starts_with(address, "unix:")) {
+        return __server_listen_unix(substr(address, 5));
+    }
+    int colon = -1;
+    int index = strpos(address, ":");
+    while (index >= 0) {
+        colon = index;
+        index = strpos(address, ":", index + 1);
+    }
+    if (colon < 0) {
+        throw new InvalidArgumentException("address '" + address + "' has no port; use \"host:port\", \":port\", or \"unix:/path\"");
+    }
+    string host = substr(address, 0, colon);
+    if (str_starts_with(host, "[") && str_ends_with(host, "]")) {
+        host = substr(host, 1, len(host) - 2);
+    }
+    int port = 0;
+    try {
+        port = to_int(substr(address, colon + 1));
+    } catch (InvalidArgumentException e) {
+        throw new InvalidArgumentException("invalid port in address '" + address + "'");
+    }
+    return __server_listen(host, port);
+}
+
+// With trustProxy: the client's address and scheme as the proxy reports
+// them. The proxy appends the address it saw to X-Forwarded-For, so the last
+// entry is the one to trust; earlier ones come from the client.
+function __server_apply_proxy(Request r): void {
+    string forwarded = r->header("X-Forwarded-For") ?? r->header("X-Real-IP");
+    if (forwarded != null) {
+        string[] addresses = explode(",", forwarded);
+        string last = trim(addresses[len(addresses) - 1]);
+        if (last != "") {
+            r->remoteAddress = last;
+        }
+    }
+    string proto = r->header("X-Forwarded-Proto");
+    if (proto != null) {
+        string[] schemes = explode(",", proto);
+        string last = strtolower(trim(schemes[len(schemes) - 1]));
+        if (last == "http" || last == "https") {
+            r->scheme = last;
+        }
+    }
+}
+
+// Serves the requests on one connection, keeping it open between them.
+function __server_connection(int connection, int listener, function(Request, ResponseWriter): void handler, bool trustProxy): void {
+    string peer = __socket_peer(connection);
+    try {
+        int served = 0;
+        bool keepAlive = true;
+        while (keepAlive && served < 1000 && !__server_stopping()) {
+            if (served > 0 && !__server_wait_request(connection, listener, 5)) {
+                break;
+            }
+            string line = __socket_read_line(connection);
+            if (line == null) {
+                break;
+            }
+            if (line == "" && served > 0) {
+                // A stray CRLF after a body: allowed before a request.
+                line = __socket_read_line(connection);
+                if (line == null) {
+                    break;
+                }
+            }
+            served = served + 1;
+            keepAlive = __server_request(connection, line, peer, handler, trustProxy);
+        }
+    } catch (NetworkException e) {
+        // The client went away or was too slow: nothing to answer.
+    } finally {
+        __socket_close(connection);
+    }
+}
+
+// Reads the rest of a request whose first line is `line`, handles it, and
+// sends the response. Returns whether to keep the connection open.
+function __server_request(int connection, string line, string peer, function(Request, ResponseWriter): void handler, bool trustProxy): bool {
+    string[] words = explode(" ", line);
+    if (len(words) != 3 || (words[2] != "HTTP/1.1" && words[2] != "HTTP/1.0") || words[0] == "") {
+        __server_reply_error(connection, 400, "HTTP/1.1");
+        return false;
+    }
+    string method = words[0];
+    string target = words[1];
+    string protocol = words[2];
+
+    map[string, string] headers = {};
+    int count = 0;
+    string header = __socket_read_line(connection);
+    while (header != null && header != "") {
+        count = count + 1;
+        int colon = strpos(header, ":");
+        if (count > 100 || colon <= 0 || str_contains(substr(header, 0, colon), " ")) {
+            __server_reply_error(connection, 400, protocol);
+            return false;
+        }
+        string name = strtolower(substr(header, 0, colon));
+        string value = trim(substr(header, colon + 1), " \t");
+        string earlier = headers[name] ?? null;
+        if (earlier != null) {
+            value = earlier + ", " + value;
+        }
+        headers[name] = value;
+        header = __socket_read_line(connection);
+    }
+    if (header == null) {
+        return false;
+    }
+
+    string connectionHeader = strtolower(headers["connection"] ?? "");
+    bool keepAlive = !str_contains(connectionHeader, "close");
+    if (protocol == "HTTP/1.0") {
+        keepAlive = str_contains(connectionHeader, "keep-alive");
+    }
+
+    // The target: "/path?query", or "http://host/path?query".
+    string rawQuery = "";
+    int question = strpos(target, "?");
+    if (question >= 0) {
+        rawQuery = substr(target, question + 1);
+        target = substr(target, 0, question);
+    }
+    if (str_starts_with(strtolower(target), "http://") || str_starts_with(strtolower(target), "https://")) {
+        int slash = strpos(target, "/", strpos(target, "//") + 2);
+        if (slash < 0) {
+            target = "/";
+        } else {
+            target = substr(target, slash);
+        }
+    }
+    if (!str_starts_with(target, "/") || (protocol == "HTTP/1.1" && !map_key_exists("host", headers))) {
+        __server_reply_error(connection, 400, protocol);
+        return false;
+    }
+
+    // The body.
+    byte[] body = [];
+    string encoding = strtolower(headers["transfer-encoding"] ?? "");
+    string length = headers["content-length"] ?? null;
+    if (encoding != "" || length != null) {
+        if (strtolower(headers["expect"] ?? "") == "100-continue" && protocol == "HTTP/1.1") {
+            __socket_write(connection, "HTTP/1.1 100 Continue\r\n\r\n");
+        }
+    }
+    if (encoding != "") {
+        if (encoding != "chunked") {
+            __server_reply_error(connection, 501, protocol);
+            return false;
+        }
+        while (true) {
+            string sizeLine = __socket_read_line(connection);
+            if (sizeLine == null) {
+                return false;
+            }
+            int extension = strpos(sizeLine, ";");
+            if (extension >= 0) {
+                sizeLine = substr(sizeLine, 0, extension);
+            }
+            int size = 0;
+            try {
+                size = __http_hex(trim(sizeLine), peer);
+            } catch (NetworkException e) {
+                __server_reply_error(connection, 400, protocol);
+                return false;
+            }
+            if (size == 0) {
+                break;
+            }
+            if (len(body) + size > 67108864) {
+                __server_reply_error(connection, 413, protocol);
+                return false;
+            }
+            array_splice(body, len(body), 0, __socket_read_exactly(connection, size));
+            __socket_read_line(connection);
+        }
+        string trailer = __socket_read_line(connection);
+        while (trailer != null && trailer != "") {
+            trailer = __socket_read_line(connection);
+        }
+    } else if (length != null) {
+        int size = -1;
+        try {
+            size = to_int(trim(length));
+        } catch (InvalidArgumentException e) {
+            size = -1;
+        }
+        if (size < 0) {
+            __server_reply_error(connection, 400, protocol);
+            return false;
+        }
+        if (size > 67108864) {
+            __server_reply_error(connection, 413, protocol);
+            return false;
+        }
+        body = __socket_read_exactly(connection, size);
+    }
+
+    Request request = null;
+    try {
+        request = new Request(method, target, rawQuery, protocol, headers, body, peer);
+        if (trustProxy) {
+            __server_apply_proxy(request);
+        }
+    } catch (InvalidUtf8Exception e) {
+        __server_reply_error(connection, 400, protocol);
+        return keepAlive;
+    }
+    ResponseWriter writer = new ResponseWriter();
+    try {
+        handler(request, writer);
+    } catch (Exception e) {
+        File::stderr()->write("qiq: 500 " + method + " " + target + ": " + e->getMessage() + "\n");
+        writer->__reset();
+        writer->error(500);
+    }
+    if (__server_stopping()) {
+        keepAlive = false;
+    }
+    __server_send(connection, protocol, method, writer, keepAlive);
+    return keepAlive;
+}
+
+function __server_reply_error(int connection, int code, string protocol): void {
+    ResponseWriter writer = new ResponseWriter();
+    writer->error(code);
+    __server_send(connection, protocol, "GET", writer, false);
+}
+
+function __server_send(int connection, string protocol, string method, ResponseWriter writer, bool keepAlive): void {
+    int code = writer->statusCode();
+    byte[] body = writer->bytes();
+    string head = protocol + " " + to_string(code) + " " + __server_reason(code) + "\r\n";
+    map[string, string] fields = writer->__fields();
+    if (writer->getHeader("Date") == null) {
+        head = head + "Date: " + gmdate("D, d M Y H:i:s") + " GMT\r\n";
+    }
+    bool bodyless = code == 204 || code == 304 || code < 200;
+    if (writer->getHeader("Content-Type") == null && !bodyless) {
+        head = head + "Content-Type: text/plain; charset=utf-8\r\n";
+    }
+    foreach (fields as name => value) {
+        string lower = strtolower(name);
+        if (lower != "content-length" && lower != "connection" && lower != "transfer-encoding") {
+            head = head + name + ": " + value + "\r\n";
+        }
+    }
+    if (!bodyless) {
+        head = head + "Content-Length: " + to_string(len(body)) + "\r\n";
+    }
+    if (keepAlive) {
+        if (protocol == "HTTP/1.0") {
+            head = head + "Connection: keep-alive\r\n";
+        }
+    } else {
+        head = head + "Connection: close\r\n";
+    }
+    __socket_write(connection, head + "\r\n");
+    if (method != "HEAD" && !bodyless && len(body) > 0) {
+        __socket_write_bytes(connection, body);
+    }
+}
+
+// A header name or value, checked for line breaks that would end it early.
+function __server_header_text(string text): string {
+    if (str_contains(text, "\r") || str_contains(text, "\n")) {
+        throw new InvalidArgumentException("HTTP header names and values can't contain line breaks");
+    }
+    return text;
+}
+
+function __http_parse_query(string query): map[string, string] {
+    map[string, string] fields = {};
+    if (query == "") {
+        return fields;
+    }
+    foreach (explode("&", query) as pair) {
+        if (pair == "") {
+            continue;
+        }
+        string[] parts = explode("=", pair, 2);
+        string name = "";
+        string value = "";
+        try {
+            name = urldecode(parts[0]);
+            if (len(parts) > 1) {
+                value = urldecode(parts[1]);
+            }
+        } catch (InvalidUtf8Exception e) {
+            continue;
+        }
+        if (!map_key_exists(name, fields)) {
+            fields[name] = value;
+        }
+    }
+    return fields;
+}
+
+// The reason phrase for a status code: "Not Found" for 404.
+function __server_reason(int code): string {
+    switch (code) {
+        case 100: return "Continue";
+        case 101: return "Switching Protocols";
+        case 200: return "OK";
+        case 201: return "Created";
+        case 202: return "Accepted";
+        case 204: return "No Content";
+        case 206: return "Partial Content";
+        case 301: return "Moved Permanently";
+        case 302: return "Found";
+        case 303: return "See Other";
+        case 304: return "Not Modified";
+        case 307: return "Temporary Redirect";
+        case 308: return "Permanent Redirect";
+        case 400: return "Bad Request";
+        case 401: return "Unauthorized";
+        case 403: return "Forbidden";
+        case 404: return "Not Found";
+        case 405: return "Method Not Allowed";
+        case 406: return "Not Acceptable";
+        case 408: return "Request Timeout";
+        case 409: return "Conflict";
+        case 410: return "Gone";
+        case 411: return "Length Required";
+        case 413: return "Content Too Large";
+        case 415: return "Unsupported Media Type";
+        case 418: return "I'm a teapot";
+        case 422: return "Unprocessable Content";
+        case 429: return "Too Many Requests";
+        case 500: return "Internal Server Error";
+        case 501: return "Not Implemented";
+        case 502: return "Bad Gateway";
+        case 503: return "Service Unavailable";
+        case 504: return "Gateway Timeout";
+        default: return "Status " + to_string(code);
+    }
+}

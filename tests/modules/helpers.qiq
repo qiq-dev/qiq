@@ -1,0 +1,10 @@
+import Template from "views/template";
+
+function label(): string {
+    return "helpers label";
+}
+
+function render(Template view): void {
+    view->setVariable("title", "Welcome");
+    print(view->getHtml("<h1>Welcome</h1>"));
+}

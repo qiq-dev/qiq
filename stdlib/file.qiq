@@ -1,0 +1,119 @@
+// File functions, implemented in C (stdlib/runtime/file.c). Paths are
+// relative to the directory the program runs in, not to the source file.
+//
+// Failures throw: FileNotFoundException when the path doesn't exist,
+// PermissionDeniedException when access is denied, and IOException for other
+// errors (all three extend IOException).
+
+// The whole file as a string. Throws InvalidUtf8Exception when the contents
+// aren't valid UTF-8 text.
+extern function file_get_contents(string path): string;
+
+// Writes `data` to the file, creating it if needed. Replaces the contents, or
+// adds to the end when `append` is true. Returns the number of bytes written.
+extern function file_put_contents(string path, string data, bool append = false): int;
+
+// Whether the path exists (file or directory).
+extern function file_exists(string path): bool;
+
+// Whether the path is a regular file.
+extern function is_file(string path): bool;
+
+// Whether the path is a directory.
+extern function is_dir(string path): bool;
+
+// The file's lines, without line endings ("\n" or "\r\n"). A final line
+// ending doesn't add an empty line.
+extern function file(string path): string[];
+
+// The names in a directory, sorted, without "." and "..". Throws
+// IOException when the path isn't a directory.
+extern function scandir(string path): string[];
+
+// The file's raw bytes. Unlike file_get_contents, any file can be read,
+// including images, archives, and text that isn't UTF-8.
+extern function file_get_bytes(string path): byte[];
+
+// Writes the bytes, replacing the file or (with `append`) adding to its end.
+// Returns the number of bytes written.
+extern function file_put_bytes(string path, byte[] data, bool append = false): int;
+
+// ---------------------------------------------------------------------------
+// Open files. Functions whose names start with "__" are visible only inside
+// the standard library; programs use the File class below.
+
+extern function __file_open(string path, string mode): int;
+extern function __file_read_line(int handle): string;
+extern function __file_read(int handle, int length): byte[];
+extern function __file_write(int handle, string text): void;
+extern function __file_write_bytes(int handle, byte[] data): void;
+extern function __file_eof(int handle): bool;
+extern function __file_flush(int handle): void;
+extern function __file_close(int handle): void;
+
+// A file opened for reading or writing a piece at a time, so large files
+// don't have to fit in memory. Writes are buffered; close() (or the program
+// ending) flushes them. Errors throw the same exceptions as the functions
+// above, and using a file after close() throws IOException.
+final class File {
+    private int handle;
+
+    private function __construct(int handle) {
+        this->handle = handle;
+    }
+
+    // Opens `path`. Modes: "r" read, "w" write (emptying the file first),
+    // "a" append, "x" create a new file (throws IOException if it exists);
+    // add "+" to also allow the other direction, e.g. "r+".
+    static function open(string path, string mode = "r"): File {
+        return new File(__file_open(path, mode));
+    }
+
+    static function stdin(): File {
+        return new File(0);
+    }
+
+    static function stdout(): File {
+        return new File(1);
+    }
+
+    static function stderr(): File {
+        return new File(2);
+    }
+
+    // The next line without its line ending ("\n" or "\r\n"), or null at the
+    // end of the file. Throws InvalidUtf8Exception if the line isn't UTF-8.
+    function readLine(): string {
+        return __file_read_line(this->handle);
+    }
+
+    // Up to `length` bytes; fewer only at the end of the file, and an empty
+    // array after it.
+    function read(int length): byte[] {
+        return __file_read(this->handle, length);
+    }
+
+    function write(string text): void {
+        __file_write(this->handle, text);
+    }
+
+    function writeBytes(byte[] data): void {
+        __file_write_bytes(this->handle, data);
+    }
+
+    // Whether there is nothing left to read.
+    function eof(): bool {
+        return __file_eof(this->handle);
+    }
+
+    // Writes buffered data to the file now.
+    function flush(): void {
+        __file_flush(this->handle);
+    }
+
+    // Flushes and closes the file. Closing twice does nothing. Closing
+    // stdin, stdout, or stderr only flushes them.
+    function close(): void {
+        __file_close(this->handle);
+    }
+}

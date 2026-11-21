@@ -1,0 +1,13 @@
+// The running program, implemented in C (stdlib/runtime/program.c).
+
+// The command line: element 0 is the program (the source file with
+// `qiq run`, the executable once built), followed by the arguments. Throws
+// InvalidUtf8Exception if an argument isn't valid UTF-8.
+extern function argv(): string[];
+
+// Ends the program with an exit status from 0 (success) to 255, after
+// flushing output. finally blocks don't run; throw an exception to run them.
+extern function exit(int status = 0): void;
+
+// The environment variable's value, or null if it isn't set.
+extern function getenv(string name): string;

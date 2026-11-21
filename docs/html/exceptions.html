@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Exceptions - qiq Manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <button class="menu-toggle" aria-label="Show menu" onclick="document.body.classList.toggle('menu-open')">☰</button>
+  <a class="brand" href="introduction.html"><span class="logo">qiq</span><span class="brand-text">Manual</span></a>
+  <div class="search">
+    <input id="search" type="search" placeholder="Search the manual" autocomplete="off" aria-label="Search the manual">
+    <ul id="search-results" hidden></ul>
+  </div>
+</header>
+<div class="layout">
+<nav class="sidebar" aria-label="Manual">
+<h2>Getting started</h2><ul>
+<li><a href="introduction.html">Introduction</a>
+</li>
+<li><a href="installation.html">Installing and running</a>
+</li>
+</ul>
+<h2>Language reference</h2><ul>
+<li><a href="basic-syntax.html">Basic syntax</a>
+</li>
+<li><a href="types.html">Types</a>
+</li>
+<li><a href="variables.html">Variables</a>
+</li>
+<li><a href="operators.html">Operators</a>
+</li>
+<li><a href="control-structures.html">Control structures</a>
+</li>
+<li><a href="functions.html">Functions</a>
+</li>
+<li><a href="anonymous-functions.html">Anonymous functions</a>
+</li>
+<li><a href="strings.html">Strings and chars</a>
+</li>
+<li><a href="arrays.html">Arrays</a>
+</li>
+<li><a href="maps.html">Maps</a>
+</li>
+<li><a href="classes.html">Classes and objects</a>
+</li>
+<li><a href="static.html">Static members</a>
+</li>
+<li><a href="interfaces.html">Interfaces</a>
+</li>
+<li><a href="exceptions.html" class="active">Exceptions</a>
+</li>
+<li><a href="modules.html">Modules</a>
+</li>
+<li><a href="packages.html">Packages</a>
+</li>
+<li><a href="memory.html">Memory management</a>
+</li>
+<li><a href="printing.html">Printing</a>
+</li>
+</ul>
+<h2>Standard library</h2><ul>
+<li><a href="stdlib.html">Overview</a>
+</li>
+<li><a href="ref.general.html">General</a>
+</li>
+<li><a href="ref.strings.html">Strings</a>
+</li>
+<li><a href="ref.arrays.html">Arrays</a>
+</li>
+<li><a href="ref.maps.html">Maps</a>
+</li>
+<li><a href="ref.files.html">Files</a>
+</li>
+<li><a href="ref.datetime.html">Date and time</a>
+</li>
+<li><a href="ref.json.html">JSON</a>
+</li>
+<li><a href="ref.http.html">HTTP</a>
+</li>
+<li><a href="ref.http-server.html">HTTP server</a>
+</li>
+<li><a href="ref.program.html">Program</a>
+</li>
+<li><a href="ref.conversions.html">Conversions</a>
+</li>
+<li><a href="ref.output.html">Output</a>
+</li>
+<li><a href="class.file.html">The File class</a>
+</li>
+<li><a href="class.response.html">The Response class</a>
+</li>
+<li><a href="class.request.html">The Request class</a>
+</li>
+<li><a href="class.responsewriter.html">The ResponseWriter class</a>
+</li>
+<li><a href="class.router.html">The Router class</a>
+</li>
+<li><a href="class.socket.html">The Socket class</a>
+</li>
+<li><a href="exception-classes.html">Exception classes</a>
+</li>
+</ul>
+</nav>
+<main class="content">
+<div class="breadcrumbs"><a href="introduction.html">Manual</a> › <a href="#">Language reference</a> › <span>Exceptions</span></div>
+<h1>Exceptions</h1>
+<p>Throw an exception with <code>throw</code> and handle it with <code>try</code>/<code>catch</code>/<code>finally</code>, as in PHP.</p>
+
+<div class="code qiq"><pre><code><span class="kw">class</span> <span class="cls">ConfigException</span> <span class="kw">extends</span> <span class="cls">Exception</span> {}
+
+<span class="kw">function</span> <span class="fn">loadPort</span>(<span class="type">string</span> text): <span class="type">int</span> {
+    <span class="kw">if</span> (<span class="fn">len</span>(text) == <span class="number">0</span>) {
+        <span class="kw">throw</span> <span class="kw">new</span> <span class="cls">ConfigException</span>(<span class="string">&quot;port is empty&quot;</span>);
+    }
+    <span class="kw">return</span> <span class="fn">to_int</span>(text);
+}
+
+<span class="kw">try</span> {
+    <span class="kw">print</span>(<span class="fn">loadPort</span>(<span class="string">&quot;&quot;</span>));
+} <span class="kw">catch</span> (<span class="cls">ConfigException</span> e) {
+    <span class="kw">print</span>(<span class="string">&quot;config error: &quot;</span> + e-&gt;<span class="fn">getMessage</span>());
+} <span class="kw">catch</span> (<span class="cls">Exception</span> e) {
+    <span class="kw">print</span>(<span class="string">&quot;other error: &quot;</span> + e-&gt;<span class="fn">getMessage</span>());
+} <span class="kw">finally</span> {
+    <span class="kw">print</span>(<span class="string">&quot;done&quot;</span>);
+}</code></pre></div><div class="output"><div class="output-label">Output</div><pre>config error: port is empty
+done</pre></div>
+
+<h2>throw</h2>
+<ul>
+<li><code>throw</code> takes an instance of <code>Exception</code> or a subclass.</li>
+<li>It ends a code path like <code>return</code>, so a function can end by throwing instead of returning a value.</li>
+<li>Rethrow a caught exception with <code>throw e;</code>.</li>
+<li>Exceptions are unchecked: functions don't declare what they throw.</li>
+</ul>
+
+<h2>try and catch</h2>
+<ul>
+<li>A <code>try</code> needs at least one <code>catch</code> or a <code>finally</code>.</li>
+<li>Each <code>catch (ClassName name)</code> matches that class and its subclasses. Catches are tried in order and the first match runs, with <code>name</code> bound to the exception inside the catch block.</li>
+<li>If no catch matches, the exception propagates to the caller.</li>
+</ul>
+
+<h2>finally</h2>
+<p><code>finally</code> always runs when control leaves the <code>try</code>: after the block or a catch completes, and also on <code>return</code>, <code>break</code>, <code>continue</code>, or an exception, including one thrown inside a catch. A <code>return</code> or <code>throw</code> inside <code>finally</code> replaces the pending return value or exception, as in PHP.</p>
+
+<div class="code qiq"><pre><code><span class="kw">function</span> <span class="fn">attempt</span>(): <span class="type">string</span> {
+    <span class="kw">try</span> {
+        <span class="kw">return</span> <span class="string">&quot;from try&quot;</span>;
+    } <span class="kw">finally</span> {
+        <span class="kw">print</span>(<span class="string">&quot;cleaning up&quot;</span>);
+    }
+}
+<span class="kw">print</span>(<span class="fn">attempt</span>());</code></pre></div><div class="output"><div class="output-label">Output</div><pre>cleaning up
+from try</pre></div>
+
+<h2>Exceptions raised by the runtime</h2>
+<p>Errors detected while the program runs are exceptions too, so they can be caught: integer division by zero, missing map keys, out-of-range array indexes, null arrays, invalid UTF-8, invalid arguments to standard library functions, and failed file operations. Only running out of memory stops the program immediately.</p>
+
+<div class="code qiq"><pre><code><span class="type">int</span> zero = <span class="number">0</span>;
+<span class="kw">try</span> {
+    <span class="kw">print</span>(<span class="number">10</span> / zero);
+} <span class="kw">catch</span> (<span class="cls">DivisionByZeroException</span> e) {
+    <span class="kw">print</span>(<span class="string">&quot;caught:&quot;</span>, e-&gt;<span class="fn">getMessage</span>());
+}
+<span class="type">map</span>[<span class="type">string</span>, <span class="type">int</span>] ages = {<span class="string">&quot;ada&quot;</span> =&gt; <span class="number">36</span>};
+<span class="kw">try</span> {
+    <span class="kw">print</span>(ages[<span class="string">&quot;bob&quot;</span>]);
+} <span class="kw">catch</span> (<span class="cls">RuntimeException</span> e) {
+    <span class="kw">print</span>(<span class="string">&quot;caught a RuntimeException&quot;</span>);
+}</code></pre></div><div class="output"><div class="output-label">Output</div><pre>caught: division by zero
+caught a RuntimeException</pre></div>
+
+<h2>Uncaught exceptions</h2>
+<p>An exception that is never caught stops the program with exit status 1 and a message on standard error:</p>
+
+<div class="code text"><pre><code>qiq: uncaught ConfigException: port is empty</code></pre></div>
+
+<h2>Exception classes</h2>
+<p>The built-in exception classes are available in every file without an import. Your own exceptions extend one of them and inherit the constructor <code>__construct(string message = "", int code = 0)</code> and the methods <code>getMessage()</code> and <code>getCode()</code>. The full hierarchy is listed in <a href="exception-classes.html">Exception classes</a>.</p>
+
+<div class="code qiq"><pre><code><span class="kw">class</span> <span class="cls">ApiException</span> <span class="kw">extends</span> <span class="cls">Exception</span> {}
+
+<span class="kw">try</span> {
+    <span class="kw">throw</span> <span class="kw">new</span> <span class="cls">ApiException</span>(<span class="string">&quot;not found&quot;</span>, <span class="number">404</span>);
+} <span class="kw">catch</span> (<span class="cls">ApiException</span> e) {
+    <span class="kw">print</span>(e-&gt;<span class="fn">getCode</span>(), e-&gt;<span class="fn">getMessage</span>());
+}</code></pre></div><div class="output"><div class="output-label">Output</div><pre>404 not found</pre></div>
+
+<div class="note"><strong>Note:</strong> Exceptions are propagated by checking for a pending exception after each call that can throw. There is no stack unwinding, so code that throws nothing pays only a load and a branch per call. Stack traces aren't recorded.</div>
+
+<nav class="pager"><a class="prev" href="interfaces.html">« Interfaces</a><a class="next" href="modules.html">Modules »</a></nav>
+</main>
+</div>
+<script src="search.js"></script>
+</body>
+</html>

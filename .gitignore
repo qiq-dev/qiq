@@ -1,0 +1,35 @@
+# Cargo build output
+/target/
+
+# Generated LLVM and native test artifacts
+/tests/*.ll
+/tests/*.bc
+/tests/arrays
+/tests/chars
+/tests/conditions
+/tests/maps
+/tests/map_missing_key
+/tests/foreach
+/tests/functions
+/tests/types
+
+# Compiled object files
+*.o
+*.obj
+/tests/files_output.txt
+/tests/exceptions
+/tests/files
+/tests/while
+/tests/literals
+/tests/nested_arrays
+/tests/print
+/tests/bytes
+/tests/bytes_output.bin
+/tests/switch
+/tests/final
+/tests/static
+/tests/static_binding
+/tests/streams
+/tests/streams_output.txt
+/tests/streams_output.bin
+/tests/memory

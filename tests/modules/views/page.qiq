@@ -1,0 +1,20 @@
+import BaseView from "template";
+
+// This module's own `label` does not clash with the one in helpers.qiq.
+function label(): string {
+    return "page label";
+}
+
+class Page extends BaseView {
+    function __construct(string title) {
+        parent::__construct(title);
+    }
+
+    function setVariable(string name, string var): void {
+        print(label());
+    }
+
+    function getHtml(string template): string {
+        return template;
+    }
+}

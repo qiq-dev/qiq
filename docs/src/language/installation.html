@@ -1,0 +1,56 @@
+<!-- title: Installing and running -->
+<h1>Installing and running</h1>
+
+<h2>Requirements</h2>
+<table>
+<thead><tr><th>To…</th><th>You need</th></tr></thead>
+<tbody>
+<tr><td>Compile and run qiq programs</td><td>Only the <code>qiq</code> binary. It contains everything it needs: LLVM for code generation, the qiq runtime, musl libc, and a linker. It runs on x86-64 Linux.</td></tr>
+<tr><td>Download <a href="packages.html">packages</a></td><td><code>git</code>, used by <code>qiq get</code>, and by builds that need a module that isn't downloaded yet.</td></tr>
+<tr><td>Run a compiled program</td><td>Nothing. Executables are statically linked, so they run on any x86-64 Linux machine.</td></tr>
+<tr><td>Build qiq itself</td><td>See the <a href="https://github.com/qiq-dev/qiq#building-from-source">README</a> in the qiq repository.</td></tr>
+</tbody>
+</table>
+
+<h2>Your first program</h2>
+<p>Save this as <code>hello.qiq</code>:</p>
+
+```qiq
+string name = "world";
+print("Hello, " + name + "!");
+```
+```output
+Hello, world!
+```
+
+<p>Then run it:</p>
+
+```sh
+qiq run hello.qiq          # compile and run, like `php hello.php` or `go run`
+```
+
+<h2>Commands</h2>
+
+```sh
+qiq run hello.qiq [arguments...]    # compile to a temporary executable and run it
+qiq build hello.qiq                 # write the executable ./hello
+qiq build hello.qiq -o app          # choose the output name
+qiq build hello.qiq --emit-llvm     # also write hello.ll, the generated LLVM IR
+qiq serve public --port 8080        # serve a directory over HTTP, like `php -S`
+qiq mod init github.com/you/app     # make this directory a module (see Packages)
+qiq get github.com/ada/web          # add a module (needs git)
+qiq mod tidy                        # require exactly the modules that are imported
+qiq help                            # show a summary
+qiq version                         # show the version
+```
+
+<ul>
+<li><code>qiq run</code> exits with the program's exit status: <code>0</code> normally, and <code>1</code> when an exception is never caught.</li>
+<li>Both commands optimize the program (like <code>-O2</code>). A small program compiles in about a fifth of a second.</li>
+<li>Compile errors name the file and, for syntax errors, the line and column: <code>hello.qiq:3:12: expected ';' after declaration</code>.</li>
+<li><code>qiq serve [directory] [--host host] [--port port] [--workers n]</code> serves a directory's files (the current one by default) at <code>http://127.0.0.1:8000/</code>; see <a href="ref.http-server.html">HTTP server</a>.</li>
+<li>The older form <code>qiq hello.qiq -o hello</code> still works and means <code>qiq build</code>.</li>
+</ul>
+
+<h2>How a program is built</h2>
+<p>Everything happens inside the <code>qiq</code> process: the compiler turns qiq source into LLVM IR; LLVM optimizes it together with the qiq runtime and emits machine code; and a built-in linker links it statically against musl libc. Building never runs another program, which is why it needs nothing else installed; only downloading packages uses <code>git</code>.</p>

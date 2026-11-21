@@ -1,0 +1,33 @@
+// Maps keep insertion order; map functions and ??.
+map[string, int] stock = {"pears" => 2, "apples" => 5, "plums" => 0};
+stock["kiwis"] = 7;
+stock["pears"] = 3;                      // keeps its place
+print(stock);
+print(map_key_exists("apples", stock), map_key_exists("figs", stock), in_map(7, stock), in_map(99, stock));
+print(map_keys(stock), map_values(stock));
+print(stock["figs"] ?? 0, stock["kiwis"] ?? 0);
+
+unset(stock["apples"]);
+unset(stock["nothing"]);
+stock["apples"] = 1;                     // re-added at the end
+print(stock);
+
+foreach (stock as fruit => count) {
+    if (count == 0) {
+        unset(stock[fruit]);             // safe while iterating
+    }
+}
+print(stock, len(stock));
+
+try {
+    foreach (stock as fruit => count) {
+        stock[fruit + "!"] = count;      // adding keys while iterating throws
+    }
+} catch (RuntimeException e) {
+    print(e->getMessage());
+}
+
+string[] args = ["run"];
+string missing = null;
+print(args[0] ?? "help", args[5] ?? "none", missing ?? "default");
+print(json_encode(stock));

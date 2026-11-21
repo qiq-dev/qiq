@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Router class - qiq Manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <button class="menu-toggle" aria-label="Show menu" onclick="document.body.classList.toggle('menu-open')">☰</button>
+  <a class="brand" href="introduction.html"><span class="logo">qiq</span><span class="brand-text">Manual</span></a>
+  <div class="search">
+    <input id="search" type="search" placeholder="Search the manual" autocomplete="off" aria-label="Search the manual">
+    <ul id="search-results" hidden></ul>
+  </div>
+</header>
+<div class="layout">
+<nav class="sidebar" aria-label="Manual">
+<h2>Getting started</h2><ul>
+<li><a href="introduction.html">Introduction</a>
+</li>
+<li><a href="installation.html">Installing and running</a>
+</li>
+</ul>
+<h2>Language reference</h2><ul>
+<li><a href="basic-syntax.html">Basic syntax</a>
+</li>
+<li><a href="types.html">Types</a>
+</li>
+<li><a href="variables.html">Variables</a>
+</li>
+<li><a href="operators.html">Operators</a>
+</li>
+<li><a href="control-structures.html">Control structures</a>
+</li>
+<li><a href="functions.html">Functions</a>
+</li>
+<li><a href="anonymous-functions.html">Anonymous functions</a>
+</li>
+<li><a href="strings.html">Strings and chars</a>
+</li>
+<li><a href="arrays.html">Arrays</a>
+</li>
+<li><a href="maps.html">Maps</a>
+</li>
+<li><a href="classes.html">Classes and objects</a>
+</li>
+<li><a href="static.html">Static members</a>
+</li>
+<li><a href="interfaces.html">Interfaces</a>
+</li>
+<li><a href="exceptions.html">Exceptions</a>
+</li>
+<li><a href="modules.html">Modules</a>
+</li>
+<li><a href="packages.html">Packages</a>
+</li>
+<li><a href="memory.html">Memory management</a>
+</li>
+<li><a href="printing.html">Printing</a>
+</li>
+</ul>
+<h2>Standard library</h2><ul>
+<li><a href="stdlib.html">Overview</a>
+</li>
+<li><a href="ref.general.html">General</a>
+</li>
+<li><a href="ref.strings.html">Strings</a>
+</li>
+<li><a href="ref.arrays.html">Arrays</a>
+</li>
+<li><a href="ref.maps.html">Maps</a>
+</li>
+<li><a href="ref.files.html">Files</a>
+</li>
+<li><a href="ref.datetime.html">Date and time</a>
+</li>
+<li><a href="ref.json.html">JSON</a>
+</li>
+<li><a href="ref.http.html">HTTP</a>
+</li>
+<li><a href="ref.http-server.html">HTTP server</a>
+</li>
+<li><a href="ref.program.html">Program</a>
+</li>
+<li><a href="ref.conversions.html">Conversions</a>
+</li>
+<li><a href="ref.output.html">Output</a>
+</li>
+<li><a href="class.file.html">The File class</a>
+</li>
+<li><a href="class.response.html">The Response class</a>
+</li>
+<li><a href="class.request.html">The Request class</a>
+</li>
+<li><a href="class.responsewriter.html">The ResponseWriter class</a>
+</li>
+<li><a href="class.router.html" class="active">The Router class</a>
+</li>
+<li><a href="class.socket.html">The Socket class</a>
+</li>
+<li><a href="exception-classes.html">Exception classes</a>
+</li>
+</ul>
+</nav>
+<main class="content">
+<div class="breadcrumbs"><a href="stdlib.html">Standard library</a> › <span>The Router class</span></div>
+<h1>The Router class</h1>
+<p>Sends each request to a handler chosen by its method and path, like Go's <code>http.ServeMux</code> (with the patterns of Go 1.22).</p><p class="import">Import it with <code>import Router from "std/http/server";</code></p>
+<h2>Class synopsis</h2>
+<div class="synopsis"><code><span class="kw">final class</span> <span class="cls">Router</span> {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">handle</span>(<span class="type">string</span> pattern, <span class="kw">function</span>(<span class="cls">Request</span>, <span class="cls">ResponseWriter</span>): <span class="type">void</span> handler): <span class="type">void</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">notFound</span>(<span class="kw">function</span>(<span class="cls">Request</span>, <span class="cls">ResponseWriter</span>): <span class="type">void</span> handler): <span class="type">void</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">serve</span>(<span class="cls">Request</span> r, <span class="cls">ResponseWriter</span> w): <span class="type">void</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">handler</span>(): <span class="kw">function</span>(<span class="cls">Request</span>, <span class="cls">ResponseWriter</span>): <span class="type">void</span><br>
+}</code></div>
+<h2>Patterns</h2>
+<p>A pattern is an optional method and a path: <code>[METHOD ]/path</code>.</p>
+<table>
+<thead><tr><th>Pattern</th><th>Matches</th></tr></thead>
+<tbody>
+<tr><td><code>/about</code></td><td>Only <code>/about</code>, with any method</td></tr>
+<tr><td><code>GET /about</code></td><td>Only <code>/about</code>, with <code>GET</code> or <code>HEAD</code></td></tr>
+<tr><td><code>/static/</code></td><td><code>/static/</code> and every path below it; <code>/static</code> is redirected to <code>/static/</code></td></tr>
+<tr><td><code>/</code></td><td>Every path: what no other pattern matches</td></tr>
+<tr><td><code>/{$}</code></td><td>Only <code>/</code> itself</td></tr>
+<tr><td><code>/items/{id}</code></td><td><code>/items/7</code>, with <code>r-&gt;pathValue("id")</code> = <code>7</code>; a wildcard matches one non-empty segment, decoded</td></tr>
+<tr><td><code>/files/{path...}</code></td><td><code>/files/a/b.txt</code>, with <code>path</code> = <code>a/b.txt</code>; only as the last segment</td></tr>
+</tbody>
+</table>
+<p>When several patterns match, the most specific wins: at the first segment where they differ, a fixed name beats <code>{name}</code>, which beats <code>{name...}</code> or a trailing <code>/</code>; then the longer pattern wins, then the one with a method. So <code>/items/new</code> beats <code>/items/{id}</code>, whatever the order they were added in. A path that only matches patterns for other methods gets <code>405 Method Not Allowed</code> with an <code>Allow</code> header; one that matches nothing gets <code>404 Not Found</code>, or the <code>notFound</code> handler.</p>
+<p><code>handle</code> throws <code>InvalidArgumentException</code> for a malformed pattern or one that duplicates an earlier pattern.</p>
+<table>
+<thead><tr><th>Method</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>handle(pattern, handler)</code></td><td>Adds a route</td></tr>
+<tr><td><code>notFound(handler)</code></td><td>Sets the handler for requests that match no pattern</td></tr>
+<tr><td><code>serve(r, w)</code></td><td>Handles a request: finds the route, sets <code>r-&gt;params</code>, and calls its handler. Useful in tests, with a <code>Request</code> built by hand.</td></tr>
+<tr><td><code>handler()</code></td><td>The router as a handler, for <a href="function.http-serve.html">http_serve</a> and middleware such as <a href="function.http-log.html">http_log</a></td></tr>
+</tbody>
+</table>
+<h2>Example</h2>
+<pre class="code"><span class="kw">import</span> http_serve, <span class="cls">Request</span>, <span class="cls">ResponseWriter</span>, <span class="cls">Router</span> <span class="kw">from</span> <span class="string">&quot;std/http/server&quot;</span>;
+
+Router router = new Router();
+router-&gt;handle("GET /{$}", fn(Request r, ResponseWriter w) =&gt; w-&gt;write("home\n"));
+router-&gt;handle("GET /items/{id}", fn(Request r, ResponseWriter w) =&gt; w-&gt;write("item " + r-&gt;pathValue("id") + "\n"));
+router-&gt;handle("GET /items/new", fn(Request r, ResponseWriter w) =&gt; w-&gt;write("new item form\n"));
+router-&gt;handle("DELETE /items/{id}", function(Request r, ResponseWriter w): void {
+    w-&gt;status(204);
+});
+
+// Without a server: build a request and call serve().
+Request request = new Request("GET", "/items/42", "", "HTTP/1.1", {"host" =&gt; "example.com"}, [], "127.0.0.1:5000");
+ResponseWriter writer = new ResponseWriter();
+router-&gt;serve(request, writer);
+print(writer-&gt;statusCode(), bytes_to_string(writer-&gt;bytes()));   // 200 item 42
+
+http_serve(":8080", router-&gt;handler());</pre>
+
+<nav class="pager"><a class="prev" href="class.responsewriter.html">« The ResponseWriter class</a><a class="next" href="class.socket.html">The Socket class »</a></nav>
+</main>
+</div>
+<script src="search.js"></script>
+</body>
+</html>

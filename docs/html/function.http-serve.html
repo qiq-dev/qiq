@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>http_serve - qiq Manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <button class="menu-toggle" aria-label="Show menu" onclick="document.body.classList.toggle('menu-open')">☰</button>
+  <a class="brand" href="introduction.html"><span class="logo">qiq</span><span class="brand-text">Manual</span></a>
+  <div class="search">
+    <input id="search" type="search" placeholder="Search the manual" autocomplete="off" aria-label="Search the manual">
+    <ul id="search-results" hidden></ul>
+  </div>
+</header>
+<div class="layout">
+<nav class="sidebar" aria-label="Manual">
+<h2>Getting started</h2><ul>
+<li><a href="introduction.html">Introduction</a>
+</li>
+<li><a href="installation.html">Installing and running</a>
+</li>
+</ul>
+<h2>Language reference</h2><ul>
+<li><a href="basic-syntax.html">Basic syntax</a>
+</li>
+<li><a href="types.html">Types</a>
+</li>
+<li><a href="variables.html">Variables</a>
+</li>
+<li><a href="operators.html">Operators</a>
+</li>
+<li><a href="control-structures.html">Control structures</a>
+</li>
+<li><a href="functions.html">Functions</a>
+</li>
+<li><a href="anonymous-functions.html">Anonymous functions</a>
+</li>
+<li><a href="strings.html">Strings and chars</a>
+</li>
+<li><a href="arrays.html">Arrays</a>
+</li>
+<li><a href="maps.html">Maps</a>
+</li>
+<li><a href="classes.html">Classes and objects</a>
+</li>
+<li><a href="static.html">Static members</a>
+</li>
+<li><a href="interfaces.html">Interfaces</a>
+</li>
+<li><a href="exceptions.html">Exceptions</a>
+</li>
+<li><a href="modules.html">Modules</a>
+</li>
+<li><a href="packages.html">Packages</a>
+</li>
+<li><a href="memory.html">Memory management</a>
+</li>
+<li><a href="printing.html">Printing</a>
+</li>
+</ul>
+<h2>Standard library</h2><ul>
+<li><a href="stdlib.html">Overview</a>
+</li>
+<li><a href="ref.general.html">General</a>
+</li>
+<li><a href="ref.strings.html">Strings</a>
+</li>
+<li><a href="ref.arrays.html">Arrays</a>
+</li>
+<li><a href="ref.maps.html">Maps</a>
+</li>
+<li><a href="ref.files.html">Files</a>
+</li>
+<li><a href="ref.datetime.html">Date and time</a>
+</li>
+<li><a href="ref.json.html">JSON</a>
+</li>
+<li><a href="ref.http.html">HTTP</a>
+</li>
+<li><a href="ref.http-server.html">HTTP server</a>
+<ul class="children">
+<li><a href="function.http-serve.html" class="active"><code>http_serve</code></a></li>
+<li><a href="function.http-file-server.html"><code>http_file_server</code></a></li>
+<li><a href="function.http-strip-prefix.html"><code>http_strip_prefix</code></a></li>
+<li><a href="function.http-log.html"><code>http_log</code></a></li>
+<li><a href="function.http-content-type.html"><code>http_content_type</code></a></li>
+</ul>
+</li>
+<li><a href="ref.program.html">Program</a>
+</li>
+<li><a href="ref.conversions.html">Conversions</a>
+</li>
+<li><a href="ref.output.html">Output</a>
+</li>
+<li><a href="class.file.html">The File class</a>
+</li>
+<li><a href="class.response.html">The Response class</a>
+</li>
+<li><a href="class.request.html">The Request class</a>
+</li>
+<li><a href="class.responsewriter.html">The ResponseWriter class</a>
+</li>
+<li><a href="class.router.html">The Router class</a>
+</li>
+<li><a href="class.socket.html">The Socket class</a>
+</li>
+<li><a href="exception-classes.html">Exception classes</a>
+</li>
+</ul>
+</nav>
+<main class="content">
+<div class="breadcrumbs"><a href="stdlib.html">Standard library</a> › <a href="ref.http-server.html">HTTP server</a> › <span>http_serve</span></div>
+<h1 class="refname"><code>http_serve</code></h1>
+<p class="refpurpose"><code>http_serve</code> — Run an HTTP server</p>
+<h2>Description</h2>
+<div class="synopsis"><code><span class="fn">http_serve</span>(<span class="type">string</span> <span class="param">address</span>, <span class="type">function(Request, ResponseWriter): void</span> <span class="param">handler</span>, <span class="type">int</span> <span class="param">workers</span> = <span class="default">0</span>, <span class="type">bool</span> <span class="param">trustProxy</span> = <span class="default">false</span>): <span class="type">void</span></code></div>
+<p class="import">Import it with <code>import http_serve from "std/http/server";</code></p>
+<p>Listens on the address, starts the workers, and serves requests until the program gets SIGINT (Ctrl-C) or SIGTERM. Each worker serves one connection at a time; see <a href="ref.http-server.html">How the server works</a>.</p>
+<h2>Parameters</h2>
+<dl class="parameters">
+<dt><code>address</code></dt><dd>Where to listen: <code>":8080"</code> for every network interface (IPv4 and IPv6), <code>"127.0.0.1:8080"</code> for this machine only, <code>"[::1]:8080"</code> for an IPv6 address, or <code>"unix:/run/app.sock"</code> for a Unix socket file, to sit behind a proxy such as nginx.</dd>
+<dt><code>handler</code></dt><dd>Called for each request; usually <code>router-&gt;handler()</code>.</dd>
+<dt><code>workers</code></dt><dd>The number of worker processes; <code>0</code> means one per CPU. With <code>1</code>, the server runs in this process without forking.</dd>
+<dt><code>trustProxy</code></dt><dd>Whether the server is behind a proxy such as nginx. If so, <code>Request::remoteAddress</code> is the client address the proxy forwarded (the last entry of <code>X-Forwarded-For</code>, or <code>X-Real-IP</code>), and <code>Request::scheme</code> comes from <code>X-Forwarded-Proto</code>. Only set it when clients can't reach the server except through the proxy, because anyone else could send those headers.</dd>
+</dl>
+<h2>Return values</h2><p>Returns in the first process once the workers have finished their requests and stopped; worker processes exit without returning.</p>
+<h2>Errors/Exceptions</h2><ul>
+<li><code>NetworkException</code> if the address can't be used, for example because another program is listening on the port (<code>could not listen on :8080: Address in use</code>) or on the socket file.</li>
+<li><code>InvalidArgumentException</code> for an address without a port.</li>
+</ul>
+<h2>Examples</h2>
+<div class="example"><p class="example-title"><strong>Example #1</strong> Hello, world</p>
+<div class="code qiq"><pre><code><span class="kw">import</span> http_serve, <span class="cls">Request</span>, <span class="cls">ResponseWriter</span> <span class="kw">from</span> <span class="string">&quot;std/http/server&quot;</span>;
+
+<span class="fn">http_serve</span>(<span class="string">&quot;:8080&quot;</span>, <span class="fn">fn</span>(<span class="cls">Request</span> r, <span class="cls">ResponseWriter</span> w) =&gt; w-&gt;<span class="fn">write</span>(<span class="string">&quot;Hello, world!\n&quot;</span>));</code></pre></div>
+</div>
+<div class="example"><p class="example-title"><strong>Example #2</strong> Behind nginx, on a Unix socket</p>
+<div class="code qiq"><pre><code><span class="kw">import</span> http_log, http_serve <span class="kw">from</span> <span class="string">&quot;std/http/server&quot;</span>;
+
+<span class="fn">http_serve</span>(<span class="string">&quot;unix:/run/app/app.sock&quot;</span>, <span class="fn">http_log</span>(router-&gt;<span class="fn">handler</span>()), trustProxy: <span class="lit">true</span>);</code></pre></div>
+</div>
+<div class="example"><p class="example-title"><strong>Example #3</strong> Two workers on localhost</p>
+<div class="code qiq"><pre><code><span class="kw">import</span> date <span class="kw">from</span> <span class="string">&quot;std/time&quot;</span>;
+<span class="kw">import</span> http_log, http_serve, <span class="cls">Request</span>, <span class="cls">ResponseWriter</span>, <span class="cls">Router</span> <span class="kw">from</span> <span class="string">&quot;std/http/server&quot;</span>;
+
+<span class="cls">Router</span> router = <span class="kw">new</span> <span class="cls">Router</span>();
+router-&gt;<span class="fn">handle</span>(<span class="string">&quot;GET /time&quot;</span>, <span class="fn">fn</span>(<span class="cls">Request</span> r, <span class="cls">ResponseWriter</span> w) =&gt; w-&gt;<span class="fn">write</span>(<span class="fn">date</span>(<span class="string">&quot;H:i:s&quot;</span>) + <span class="string">&quot;\n&quot;</span>));
+<span class="fn">http_serve</span>(<span class="string">&quot;127.0.0.1:3000&quot;</span>, <span class="fn">http_log</span>(router-&gt;<span class="fn">handler</span>()), workers: <span class="number">2</span>);
+<span class="kw">print</span>(<span class="string">&quot;stopped&quot;</span>);</code></pre></div>
+</div>
+<h2>See also</h2><p><a href="function.http-file-server.html"><code>http_file_server</code></a>, <a href="function.http-log.html"><code>http_log</code></a></p>
+<nav class="pager"><a class="prev" href="ref.http-server.html">« HTTP server</a><a class="next" href="function.http-file-server.html">http_file_server »</a></nav>
+</main>
+</div>
+<script src="search.js"></script>
+</body>
+</html>

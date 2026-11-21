@@ -1,0 +1,77 @@
+// Exception classes. Every class here is available in every file without an
+// import. Throw with `throw new SomeException("message");` and handle with
+// try/catch; your own exceptions extend Exception or one of its subclasses.
+//
+// Exception
+// ├── RuntimeException
+// │   ├── IOException
+// │   │   ├── FileNotFoundException
+// │   │   ├── PermissionDeniedException
+// │   │   └── NetworkException
+// │   ├── KeyNotFoundException
+// │   ├── OutOfRangeException
+// │   └── InvalidUtf8Exception
+// ├── ArithmeticException
+// │   └── DivisionByZeroException
+// ├── InvalidArgumentException
+// ├── JsonException
+// └── HttpException
+//
+// The runtime raises some of these itself (see QiqExceptionKind in
+// stdlib/runtime/qiq_runtime.h).
+
+class Exception {
+    protected string message;
+    protected int code;
+
+    function __construct(string message = "", int code = 0) {
+        this->message = message;
+        this->code = code;
+    }
+
+    function getMessage(): string {
+        return this->message;
+    }
+
+    function getCode(): int {
+        return this->code;
+    }
+}
+
+// Errors that can only be detected while the program runs.
+class RuntimeException extends Exception {}
+
+// Reading or writing files failed.
+class IOException extends RuntimeException {}
+class FileNotFoundException extends IOException {}
+class PermissionDeniedException extends IOException {}
+
+// A network connection failed: the host couldn't be found, refused the
+// connection, timed out, or failed the TLS certificate check.
+class NetworkException extends IOException {}
+
+// A map lookup used a key that is not in the map.
+class KeyNotFoundException extends RuntimeException {}
+
+// An array index is below 0 or not less than the array's length.
+class OutOfRangeException extends RuntimeException {}
+
+// A string is not valid UTF-8.
+class InvalidUtf8Exception extends RuntimeException {}
+
+// An arithmetic operation has no result, such as a negative int exponent.
+class ArithmeticException extends Exception {}
+
+// `/` or `%` on ints with a zero right-hand side.
+class DivisionByZeroException extends ArithmeticException {}
+
+// A function was given an argument it cannot accept.
+class InvalidArgumentException extends Exception {}
+
+// json_decode was given text that isn't JSON or doesn't match the type it
+// decodes into, or json_encode was given a value JSON can't represent.
+class JsonException extends Exception {}
+
+// An HTTP request got an error status (from Response::raiseForStatus, with
+// the status as its code) or was redirected too many times.
+class HttpException extends Exception {}

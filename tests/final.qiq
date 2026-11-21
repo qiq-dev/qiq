@@ -1,0 +1,43 @@
+// A final class can be instantiated but not extended.
+final class Money {
+    private int cents;
+
+    function __construct(int cents) {
+        this->cents = cents;
+    }
+
+    function format(): string {
+        return to_string(this->cents / 100) + "." + substr(to_string(100 + this->cents % 100), 1);
+    }
+}
+
+Money price = new Money(1250);
+print(price->format());
+
+// A final method can't be overridden. Here it fixes the overall shape
+// (the template), while subclasses fill in the abstract part.
+abstract class Report {
+    final public function render(): string {
+        return "[" + this->title() + "]";
+    }
+
+    abstract protected function title(): string;
+}
+
+class SalesReport extends Report {
+    protected function title(): string {
+        return "sales";
+    }
+}
+
+Report report = new SalesReport();
+print(report->render());
+
+// Modifiers can come in any order.
+class Base {
+    public final function id(): int {
+        return 1;
+    }
+}
+class Derived extends Base {}
+print(new Derived()->id());

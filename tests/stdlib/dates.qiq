@@ -1,0 +1,49 @@
+// Date and time functions. Uses fixed timestamps and UTC so the output
+// doesn't depend on when or where it runs.
+import checkdate, date, date_default_timezone_get, date_default_timezone_set, gmdate, gmmktime, hrtime, microtime, mktime, strtotime, time, usleep from "std/time";
+
+int moonLanding = -14182940;            // 1969-07-20 20:17:40 UTC
+int launch = 1763560800;                // 2025-11-19 14:00:00 UTC
+print(gmdate("Y-m-d H:i:s", moonLanding));
+print(gmdate("D, d M Y", launch), gmdate("l jS F", launch));
+print(gmdate("c", launch), gmdate("r", launch));
+print(gmdate("N w z t L W o", launch));
+print(gmdate("g:i a / h A / G", launch), gmdate("U", launch));
+print(gmdate("\\T\\o\\d\\a\\y \\i\\s l", launch));
+print(gmdate("e T O P p Z", launch));
+print(gmdate("jS", 1704067200), gmdate("jS", 1704153600), gmdate("jS", 1704240000), gmdate("jS", 1704931200));
+
+print(gmmktime(14, 0, 0, 11, 19, 2025) == launch);
+print(gmdate("Y-m-d", gmmktime(0, month: 13, day: 1, year: 2025)));
+print(gmdate("Y-m-d", gmmktime(0, month: 3, day: 0, year: 2024)));
+print(checkdate(2, 29, 2024), checkdate(2, 29, 2025), checkdate(13, 1, 2025));
+
+print(strtotime("2025-11-19T14:00:00Z") == launch);
+print(strtotime("2025-11-19T16:00:00+02:00") == launch);
+print(strtotime("2025-11-19 09:00:00-0500") == launch);
+print(strtotime("2025-11-19T14:00:00.250Z") == launch);
+try {
+    int bad = strtotime("next monday");
+} catch (InvalidArgumentException e) {
+    print(e->getMessage());
+}
+
+date_default_timezone_set("UTC");
+print(date_default_timezone_get(), date("Y-m-d H:i T", launch));
+print(strtotime("2025-11-19") == gmmktime(0, month: 11, day: 19, year: 2025));
+date_default_timezone_set("America/New_York");
+print(date_default_timezone_get(), date("Y-m-d H:i T P I", launch));
+print(date("H:i T I", strtotime("2025-07-01T12:00:00Z")));
+print(mktime(9, 0, 0, 11, 19, 2025) == launch);
+try {
+    date_default_timezone_set("Mars/Olympus");
+} catch (InvalidArgumentException e) {
+    print(e->getMessage());
+}
+
+int now = time();
+print(now > launch, microtime() > to_double(launch));
+int start = hrtime();
+usleep(20000);
+int elapsed = hrtime() - start;
+print(elapsed >= 20000000);

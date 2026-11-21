@@ -1,0 +1,40 @@
+// Standard library string functions: available without imports, and
+// character-based (UTF-8), so "héllo wörld" has 11 characters, not 13 bytes.
+string text = "héllo wörld";
+
+print(len(text));
+print(substr(text, 1, 4));
+print(substr(text, 6, 100));
+print(strpos(text, "wörld"));
+print(strpos(text, "missing"));
+print(str_contains(text, "ö"));
+print(str_starts_with(text, "hé"));
+print(str_starts_with(text, "wö"));
+print(str_ends_with(text, "örld"));
+print(str_replace("ö", "oe", text));
+print(str_repeat("ab", 3));
+print(strtoupper(text));
+print(strtolower("ÀÉÎÕÜ ΑΒΓ АБВ"));
+print(ucfirst("élan"));
+print(strrev("añb界"));
+print(trim("  \t padded \n"));
+
+// `+` concatenates strings and chars.
+string greeting = "hello" + ", " + "wörld";
+char exclamation = '!';
+print(greeting + exclamation);
+print('é' + 'ü');
+print(len(greeting + exclamation));
+
+foreach (strrev("ab界") as letter) {
+    print(letter);
+}
+
+// explode and implode split and join with a separator.
+string[] parts = explode(",", "a,b,c");
+print(implode(" + ", parts));
+print(implode("|", explode(",", "a,b,c,d", 2)));
+
+// sprintf: PHP's format specifiers, counting characters for widths.
+print(sprintf("%-6s|%6s|%06.2f|%+d|%x|%b|%e", "héllo", "ab", 3.14159, 42, 255, 5, 1234.5));
+print(sprintf("%2$s %1$s", "world", "hello"), sprintf("%'*8.3f", 2.5), sprintf("%c", 233));

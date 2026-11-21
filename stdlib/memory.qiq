@@ -1,0 +1,8 @@
+// Memory management, implemented in C (stdlib/runtime/memory.c).
+//
+// Values are freed as soon as nothing refers to them. Values that refer to
+// each other in a cycle are found and freed by a cycle collector, which runs
+// automatically as possible cycles accumulate.
+
+// Runs the cycle collector now and returns how many values it freed.
+extern function gc_collect_cycles(): int;

@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Control structures - qiq Manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <button class="menu-toggle" aria-label="Show menu" onclick="document.body.classList.toggle('menu-open')">☰</button>
+  <a class="brand" href="introduction.html"><span class="logo">qiq</span><span class="brand-text">Manual</span></a>
+  <div class="search">
+    <input id="search" type="search" placeholder="Search the manual" autocomplete="off" aria-label="Search the manual">
+    <ul id="search-results" hidden></ul>
+  </div>
+</header>
+<div class="layout">
+<nav class="sidebar" aria-label="Manual">
+<h2>Getting started</h2><ul>
+<li><a href="introduction.html">Introduction</a>
+</li>
+<li><a href="installation.html">Installing and running</a>
+</li>
+</ul>
+<h2>Language reference</h2><ul>
+<li><a href="basic-syntax.html">Basic syntax</a>
+</li>
+<li><a href="types.html">Types</a>
+</li>
+<li><a href="variables.html">Variables</a>
+</li>
+<li><a href="operators.html">Operators</a>
+</li>
+<li><a href="control-structures.html" class="active">Control structures</a>
+</li>
+<li><a href="functions.html">Functions</a>
+</li>
+<li><a href="anonymous-functions.html">Anonymous functions</a>
+</li>
+<li><a href="strings.html">Strings and chars</a>
+</li>
+<li><a href="arrays.html">Arrays</a>
+</li>
+<li><a href="maps.html">Maps</a>
+</li>
+<li><a href="classes.html">Classes and objects</a>
+</li>
+<li><a href="static.html">Static members</a>
+</li>
+<li><a href="interfaces.html">Interfaces</a>
+</li>
+<li><a href="exceptions.html">Exceptions</a>
+</li>
+<li><a href="modules.html">Modules</a>
+</li>
+<li><a href="packages.html">Packages</a>
+</li>
+<li><a href="memory.html">Memory management</a>
+</li>
+<li><a href="printing.html">Printing</a>
+</li>
+</ul>
+<h2>Standard library</h2><ul>
+<li><a href="stdlib.html">Overview</a>
+</li>
+<li><a href="ref.general.html">General</a>
+</li>
+<li><a href="ref.strings.html">Strings</a>
+</li>
+<li><a href="ref.arrays.html">Arrays</a>
+</li>
+<li><a href="ref.maps.html">Maps</a>
+</li>
+<li><a href="ref.files.html">Files</a>
+</li>
+<li><a href="ref.datetime.html">Date and time</a>
+</li>
+<li><a href="ref.json.html">JSON</a>
+</li>
+<li><a href="ref.http.html">HTTP</a>
+</li>
+<li><a href="ref.http-server.html">HTTP server</a>
+</li>
+<li><a href="ref.program.html">Program</a>
+</li>
+<li><a href="ref.conversions.html">Conversions</a>
+</li>
+<li><a href="ref.output.html">Output</a>
+</li>
+<li><a href="class.file.html">The File class</a>
+</li>
+<li><a href="class.response.html">The Response class</a>
+</li>
+<li><a href="class.request.html">The Request class</a>
+</li>
+<li><a href="class.responsewriter.html">The ResponseWriter class</a>
+</li>
+<li><a href="class.router.html">The Router class</a>
+</li>
+<li><a href="class.socket.html">The Socket class</a>
+</li>
+<li><a href="exception-classes.html">Exception classes</a>
+</li>
+</ul>
+</nav>
+<main class="content">
+<div class="breadcrumbs"><a href="introduction.html">Manual</a> › <a href="#">Language reference</a> › <span>Control structures</span></div>
+<h1>Control structures</h1>
+
+<h2>if / else</h2>
+<p>The condition must be a <code>bool</code>. Braces are required.</p>
+
+<div class="code qiq"><pre><code><span class="type">int</span> age = <span class="number">30</span>;
+<span class="kw">if</span> (age &gt;= <span class="number">18</span> &amp;&amp; age &lt;= <span class="number">65</span>) {
+    <span class="kw">print</span>(<span class="string">&quot;working age&quot;</span>);
+} <span class="kw">else</span> {
+    <span class="kw">print</span>(<span class="string">&quot;not working age&quot;</span>);
+}</code></pre></div><div class="output"><div class="output-label">Output</div><pre>working age</pre></div>
+
+<p>Chain conditions with <code>else if</code>:</p>
+
+<div class="code qiq"><pre><code><span class="kw">function</span> <span class="fn">grade</span>(<span class="type">int</span> score): <span class="type">string</span> {
+    <span class="kw">if</span> (score &gt;= <span class="number">90</span>) {
+        <span class="kw">return</span> <span class="string">&quot;A&quot;</span>;
+    } <span class="kw">else</span> <span class="kw">if</span> (score &gt;= <span class="number">80</span>) {
+        <span class="kw">return</span> <span class="string">&quot;B&quot;</span>;
+    } <span class="kw">else</span> {
+        <span class="kw">return</span> <span class="string">&quot;C&quot;</span>;
+    }
+}
+<span class="kw">print</span>(<span class="fn">grade</span>(<span class="number">95</span>), <span class="fn">grade</span>(<span class="number">85</span>), <span class="fn">grade</span>(<span class="number">70</span>));</code></pre></div><div class="output"><div class="output-label">Output</div><pre>A B C</pre></div>
+
+<p>PHP's one-word <code>elseif</code> isn't supported; write <code>else if</code>. To compare one value against several constants, <a href="#switch">switch</a> is clearer.</p>
+
+<h2>while</h2>
+<p><code>while</code> repeats its body while the condition is true, testing it before each iteration.</p>
+
+<div class="code qiq"><pre><code><span class="type">int</span> i = <span class="number">0</span>;
+<span class="kw">while</span> (i &lt; <span class="number">3</span>) {
+    <span class="kw">print</span>(i);
+    i = i + <span class="number">1</span>;
+}</code></pre></div><div class="output"><div class="output-label">Output</div><pre>0
+1
+2</pre></div>
+
+<p>A function can end with <code>while (true) { ... }</code> instead of a <code>return</code> when the loop has no <code>break</code> and only leaves by returning or throwing.</p>
+
+<h2>foreach</h2>
+<p><code>foreach (collection as value)</code> visits each element of an array, each value of a map, or each character of a string. <code>foreach (collection as key =&gt; value)</code> also binds the index (for arrays and strings, counting from <code>0</code>) or the map key.</p>
+
+<div class="code qiq"><pre><code><span class="kw">foreach</span> ([<span class="string">&quot;a&quot;</span>, <span class="string">&quot;b&quot;</span>] <span class="kw">as</span> index =&gt; letter) {
+    <span class="kw">print</span>(index, letter);
+}
+<span class="kw">foreach</span> (<span class="string">&quot;aé界&quot;</span> <span class="kw">as</span> character) {
+    <span class="kw">print</span>(character);
+}
+<span class="type">map</span>[<span class="type">string</span>, <span class="type">int</span>] ages = {<span class="string">&quot;ada&quot;</span> =&gt; <span class="number">36</span>};
+<span class="kw">foreach</span> (ages <span class="kw">as</span> name =&gt; age) {
+    <span class="kw">print</span>(name, age);
+}</code></pre></div><div class="output"><div class="output-label">Output</div><pre>0 a
+1 b
+a
+é
+界
+ada 36</pre></div>
+
+<p>Strings iterate by Unicode character, not by byte. Maps iterate in the order their keys were added. The loop variables are new variables for each iteration and can't be reassigned.</p>
+
+<h3>Counting with range</h3>
+<p>qiq has no C-style <code>for</code> loop. To repeat something a number of times, or count through numbers, loop over <a href="function.range.html"><code>range(start, end, step)</code></a>. The end is included, as in PHP, and the step defaults to <code>1</code>:</p>
+
+<div class="code qiq"><pre><code><span class="kw">foreach</span> (<span class="fn">range</span>(<span class="number">1</span>, <span class="number">3</span>) <span class="kw">as</span> n) {
+    <span class="kw">print</span>(<span class="string">&quot;round&quot;</span>, n);
+}
+<span class="kw">foreach</span> (<span class="fn">range</span>(<span class="number">10</span>, <span class="number">0</span>, <span class="number">5</span>) <span class="kw">as</span> index =&gt; value) {
+    <span class="kw">print</span>(index, value);
+}
+<span class="type">string</span>[] names = [<span class="string">&quot;Ada&quot;</span>, <span class="string">&quot;Lin&quot;</span>];
+<span class="kw">foreach</span> (<span class="fn">range</span>(<span class="number">0</span>, <span class="fn">len</span>(names) - <span class="number">1</span>) <span class="kw">as</span> i) {
+    <span class="kw">print</span>(i, names[i]);
+}</code></pre></div><div class="output"><div class="output-label">Output</div><pre>round 1
+round 2
+round 3
+0 10
+1 5
+2 0
+0 Ada
+1 Lin</pre></div>
+
+<p>A <code>foreach</code> over a range of ints doesn't build an array: it compiles to a counting loop, so <code>range(1, 1000000000)</code> costs nothing extra. When <code>end</code> is less than <code>start</code>, the range counts down. For an empty array, <code>range(0, len(names) - 1)</code> would count down from 0 to -1, so loop over the array itself, or check its length first.</p>
+
+<h2 id="switch">switch</h2>
+<p><code>switch</code> compares a value with each case in order and runs the first match. Cases don't fall through, so no <code>break</code> is needed; list several values in one case with commas. <code>default</code> runs when nothing matches.</p>
+
+<div class="code qiq"><pre><code><span class="kw">function</span> <span class="fn">describe</span>(<span class="type">int</span> status): <span class="type">string</span> {
+    <span class="kw">switch</span> (status) {
+        <span class="kw">case</span> <span class="number">200</span>, <span class="number">204</span>:
+            <span class="kw">return</span> <span class="string">&quot;ok&quot;</span>;
+        <span class="kw">case</span> <span class="number">404</span>:
+            <span class="kw">return</span> <span class="string">&quot;not found&quot;</span>;
+        <span class="kw">default</span>:
+            <span class="kw">return</span> <span class="string">&quot;error&quot;</span>;
+    }
+}
+<span class="kw">print</span>(<span class="fn">describe</span>(<span class="number">204</span>), <span class="fn">describe</span>(<span class="number">404</span>), <span class="fn">describe</span>(<span class="number">500</span>));</code></pre></div><div class="output"><div class="output-label">Output</div><pre>ok not found error</pre></div>
+
+<ul>
+<li>The value can be an <code>int</code>, <code>double</code>, <code>bool</code>, <code>byte</code>, <code>string</code>, or <code>char</code>. Case values are expressions of the same type, tested in order; the switch value is evaluated once.</li>
+<li>Duplicate literal case values are an error, and so is a case with no statements, because it would silently do nothing (this catches PHP-style stacked <code>case 1: case 2:</code>). Write <code>break;</code> for a case that deliberately does nothing.</li>
+<li><code>default</code> can appear anywhere, at most once.</li>
+<li>A switch with a <code>default</code> in which every branch returns or throws ends a function's code path.</li>
+</ul>
+
+<h2>break and continue</h2>
+<p><code>break</code> leaves the innermost loop or switch. <code>continue</code> skips to the next iteration of the innermost loop; inside a switch inside a loop, it goes to the loop.</p>
+
+<div class="code qiq"><pre><code><span class="kw">foreach</span> ([<span class="number">1</span>, <span class="number">2</span>, <span class="number">3</span>, <span class="number">4</span>, <span class="number">5</span>] <span class="kw">as</span> n) {
+    <span class="kw">if</span> (n == <span class="number">2</span>) {
+        <span class="kw">continue</span>;
+    }
+    <span class="kw">if</span> (n == <span class="number">4</span>) {
+        <span class="kw">break</span>;
+    }
+    <span class="kw">print</span>(n);
+}</code></pre></div><div class="output"><div class="output-label">Output</div><pre>1
+3</pre></div>
+
+<p>When <code>break</code>, <code>continue</code>, or <code>return</code> leaves a <code>try</code> block, its <code>finally</code> block runs first; see <a href="exceptions.html">Exceptions</a>.</p>
+
+<nav class="pager"><a class="prev" href="operators.html">« Operators</a><a class="next" href="functions.html">Functions »</a></nav>
+</main>
+</div>
+<script src="search.js"></script>
+</body>
+</html>

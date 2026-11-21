@@ -1,0 +1,117 @@
+interface Template
+{
+    function setVariable(string name, string var);
+    function getHtml(string template): string;
+}
+
+interface Named {
+    function getName(): string;
+}
+
+class Page implements Template, Named {
+    private string title;
+
+    function __construct(string title) {
+        this->title = title;
+    }
+
+    function setVariable(string name, string var): void {
+        print(name);
+        print(var);
+    }
+
+    function getHtml(string template): string {
+        return template;
+    }
+
+    function getName(): string {
+        return this->title;
+    }
+}
+
+class Email implements Template {
+    function setVariable(string name, string var): void {
+        print("email variable");
+    }
+
+    function getHtml(string template): string {
+        return "<email>";
+    }
+}
+
+// Interface-typed parameter: the method is chosen at run time.
+function render(Template template): void {
+    template->setVariable("title", "Welcome");
+    print(template->getHtml("<h1>Welcome</h1>"));
+}
+
+Page page = new Page("Home");
+Email email = new Email();
+render(page);
+render(email);
+print(page->getName());
+
+// An implementation inherited from a parent class, behind an extended interface.
+interface Shape {
+    function area(): int;
+}
+
+interface Scalable extends Shape {
+    function sum(int[] values): int;
+}
+
+class BaseSquare {
+    protected int side;
+
+    function __construct(int side) {
+        this->side = side;
+    }
+
+    function area(): int {
+        return this->side + this->side;
+    }
+}
+
+class Square extends BaseSquare implements Scalable {
+    function __construct(int side) {
+        parent::__construct(side);
+    }
+
+    function sum(int[] values): int {
+        return values[0] + values[1];
+    }
+}
+
+function measure(Scalable shape): void {
+    int[] values = [3, 4];
+    print(shape->area());
+    print(shape->sum(values));
+}
+
+measure(new Square(5));
+
+// An abstract class calling its own abstract method.
+abstract class Greeter {
+    abstract protected function greeting(): string;
+
+    function greet(): void {
+        print(this->greeting());
+    }
+}
+
+class EnglishGreeter extends Greeter {
+    protected function greeting(): string {
+        return "hello";
+    }
+}
+
+class FrenchGreeter extends Greeter {
+    protected function greeting(): string {
+        return "bonjour";
+    }
+}
+
+EnglishGreeter english = new EnglishGreeter();
+FrenchGreeter french = new FrenchGreeter();
+english->greet();
+french->greet();

@@ -1,0 +1,48 @@
+<!-- title: Introduction -->
+<h1>Introduction</h1>
+<p>qiq is a statically typed programming language with a syntax familiar to PHP developers. Its compiler turns qiq programs into fast, statically linked native executables for Linux, so a program you build runs on any x86-64 Linux machine without qiq or any libraries installed.</p>
+
+```qiq
+class Greeter {
+    private string name;
+
+    function __construct(string name) {
+        this->name = name;
+    }
+
+    function greet(string greeting = "Hello"): string {
+        return greeting + ", " + this->name + "!";
+    }
+}
+
+Greeter greeter = new Greeter("Ada");
+print(greeter->greet());
+print(greeter->greet(greeting: "Welcome"));
+```
+```output
+Hello, Ada!
+Welcome, Ada!
+```
+
+<h2>What qiq looks like</h2>
+<p>If you know PHP, most of qiq will feel familiar: <code>class</code>, <code>extends</code>, <code>implements</code>, <code>-&gt;</code> and <code>::</code>, <code>foreach (items as key =&gt; value)</code>, <code>try</code>/<code>catch</code>/<code>finally</code>, and standard library functions such as <code>substr</code>, <code>explode</code>, and <code>file_get_contents</code>. The main differences:</p>
+<ul>
+<li><strong>Types are checked at compile time.</strong> Variables, parameters, and return values have types, and mistakes such as passing a <code>string</code> where an <code>int</code> is expected are compile errors. qiq never converts between types implicitly; see <a href="ref.conversions.html">Conversions</a>.</li>
+<li><strong>No <code>$</code> on variables</strong>, and <code>this</code> instead of <code>$this</code>.</li>
+<li><strong>Strings are UTF-8</strong>, and string functions count characters rather than bytes: <code>len("héllo")</code> is <code>5</code>.</li>
+<li><strong>Arrays and maps are separate types</strong>: <code>int[]</code> for a list, <code>map[string, int]</code> for key/value pairs, written <code>[1, 2]</code> and <code>{"a" =&gt; 1}</code>.</li>
+<li><strong>It compiles to a native executable</strong> instead of running in an interpreter, with <code>qiq run</code> for a PHP-style "just run it" workflow.</li>
+</ul>
+
+<h2>Features at a glance</h2>
+<ul>
+<li><a href="types.html">Types</a>: <code>int</code> (64-bit), <code>double</code>, <code>bool</code>, <code>byte</code>, <code>string</code>, <code>char</code>, arrays, maps, and classes.</li>
+<li><a href="functions.html">Functions</a> with optional parameters and named arguments.</li>
+<li><a href="classes.html">Classes</a> with inheritance, abstract and final classes, <a href="static.html">static members and late static binding</a>, and <a href="interfaces.html">interfaces</a>.</li>
+<li><a href="exceptions.html">Exceptions</a> with <code>try</code>/<code>catch</code>/<code>finally</code>; runtime errors such as division by zero are exceptions too.</li>
+<li><a href="modules.html">Modules</a>: <code>import Page from "views/page";</code></li>
+<li>A <a href="stdlib.html">standard library</a> for strings, files, and conversions.</li>
+</ul>
+
+<h2>Where to go next</h2>
+<p><a href="installation.html">Installing and running</a> shows how to build qiq and run your first program. The <a href="basic-syntax.html">language reference</a> describes each feature, and the <a href="stdlib.html">standard library</a> documents every built-in function.</p>

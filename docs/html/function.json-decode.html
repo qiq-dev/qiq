@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>json_decode - qiq Manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <button class="menu-toggle" aria-label="Show menu" onclick="document.body.classList.toggle('menu-open')">☰</button>
+  <a class="brand" href="introduction.html"><span class="logo">qiq</span><span class="brand-text">Manual</span></a>
+  <div class="search">
+    <input id="search" type="search" placeholder="Search the manual" autocomplete="off" aria-label="Search the manual">
+    <ul id="search-results" hidden></ul>
+  </div>
+</header>
+<div class="layout">
+<nav class="sidebar" aria-label="Manual">
+<h2>Getting started</h2><ul>
+<li><a href="introduction.html">Introduction</a>
+</li>
+<li><a href="installation.html">Installing and running</a>
+</li>
+</ul>
+<h2>Language reference</h2><ul>
+<li><a href="basic-syntax.html">Basic syntax</a>
+</li>
+<li><a href="types.html">Types</a>
+</li>
+<li><a href="variables.html">Variables</a>
+</li>
+<li><a href="operators.html">Operators</a>
+</li>
+<li><a href="control-structures.html">Control structures</a>
+</li>
+<li><a href="functions.html">Functions</a>
+</li>
+<li><a href="anonymous-functions.html">Anonymous functions</a>
+</li>
+<li><a href="strings.html">Strings and chars</a>
+</li>
+<li><a href="arrays.html">Arrays</a>
+</li>
+<li><a href="maps.html">Maps</a>
+</li>
+<li><a href="classes.html">Classes and objects</a>
+</li>
+<li><a href="static.html">Static members</a>
+</li>
+<li><a href="interfaces.html">Interfaces</a>
+</li>
+<li><a href="exceptions.html">Exceptions</a>
+</li>
+<li><a href="modules.html">Modules</a>
+</li>
+<li><a href="packages.html">Packages</a>
+</li>
+<li><a href="memory.html">Memory management</a>
+</li>
+<li><a href="printing.html">Printing</a>
+</li>
+</ul>
+<h2>Standard library</h2><ul>
+<li><a href="stdlib.html">Overview</a>
+</li>
+<li><a href="ref.general.html">General</a>
+</li>
+<li><a href="ref.strings.html">Strings</a>
+</li>
+<li><a href="ref.arrays.html">Arrays</a>
+</li>
+<li><a href="ref.maps.html">Maps</a>
+</li>
+<li><a href="ref.files.html">Files</a>
+</li>
+<li><a href="ref.datetime.html">Date and time</a>
+</li>
+<li><a href="ref.json.html">JSON</a>
+<ul class="children">
+<li><a href="function.json-encode.html"><code>json_encode</code></a></li>
+<li><a href="function.json-decode.html" class="active"><code>json_decode</code></a></li>
+</ul>
+</li>
+<li><a href="ref.http.html">HTTP</a>
+</li>
+<li><a href="ref.http-server.html">HTTP server</a>
+</li>
+<li><a href="ref.program.html">Program</a>
+</li>
+<li><a href="ref.conversions.html">Conversions</a>
+</li>
+<li><a href="ref.output.html">Output</a>
+</li>
+<li><a href="class.file.html">The File class</a>
+</li>
+<li><a href="class.response.html">The Response class</a>
+</li>
+<li><a href="class.request.html">The Request class</a>
+</li>
+<li><a href="class.responsewriter.html">The ResponseWriter class</a>
+</li>
+<li><a href="class.router.html">The Router class</a>
+</li>
+<li><a href="class.socket.html">The Socket class</a>
+</li>
+<li><a href="exception-classes.html">Exception classes</a>
+</li>
+</ul>
+</nav>
+<main class="content">
+<div class="breadcrumbs"><a href="stdlib.html">Standard library</a> › <a href="ref.json.html">JSON</a> › <span>json_decode</span></div>
+<h1 class="refname"><code>json_decode</code></h1>
+<p class="refpurpose"><code>json_decode</code> — Convert JSON to a typed value</p>
+<h2>Description</h2>
+<div class="synopsis"><code><span class="fn">json_decode</span>(<span class="type">string</span> <span class="param">text</span>): <span class="type">the type it&#x27;s used as</span></code></div>
+
+<p><p>Parses <code>text</code> and builds a value of the type the result is used as, checking that the JSON matches it:</p>
+<ul>
+<li>The type comes from where the call is used: <code>User user = json_decode(text);</code>, an assignment, a property, an argument, or a return value. Without one, such as in <code>print(json_decode(text))</code>, it's a compile error.</li>
+<li>For a class, the JSON object's keys are matched to public properties by name. Keys the class doesn't have are ignored, and properties the JSON doesn't mention keep their default (zero, <code>false</code>, or <code>null</code>). The constructor isn't called. The class, and every class reachable through its public properties, must be concrete, which the compiler checks.</li>
+<li><code>null</code> is accepted wherever a string, char, array, map, or object is expected. If a key appears twice, the last value wins.</li>
+</ul></p>
+<h2>Parameters</h2>
+<dl class="parameters">
+<dt><code>text</code></dt><dd>The JSON text.</dd>
+</dl>
+<h2>Return values</h2><p>The decoded value.</p>
+<h2>Errors/Exceptions</h2><ul>
+<li><code>JsonException</code> if the text isn't valid JSON (<code>syntax error at line 1, column 14: expected a string key</code>), or doesn't match the type, with the path to the value: <code>$.users[2].age: expected int, found a string</code>.</li>
+</ul>
+<h2>Examples</h2>
+<div class="example"><p class="example-title"><strong>Example #1</strong> Into a class</p>
+<div class="code qiq"><pre><code><span class="kw">class</span> <span class="cls">Address</span> {
+    <span class="kw">public</span> <span class="type">string</span> city;
+}
+<span class="kw">class</span> <span class="cls">User</span> {
+    <span class="kw">public</span> <span class="type">string</span> name;
+    <span class="kw">public</span> <span class="type">string</span>[] tags;
+    <span class="kw">public</span> <span class="cls">Address</span> address;
+}
+
+<span class="cls">User</span> user = <span class="fn">json_decode</span>(<span class="string">&quot;{\&quot;name\&quot;: \&quot;Ada\&quot;, \&quot;tags\&quot;: [\&quot;math\&quot;], \&quot;address\&quot;: {\&quot;city\&quot;: \&quot;London\&quot;}, \&quot;extra\&quot;: 1}&quot;</span>);
+<span class="kw">print</span>(user-&gt;name, user-&gt;tags, user-&gt;address-&gt;city);</code></pre></div>
+<div class="output"><div class="output-label">Output</div><pre>Ada [&quot;math&quot;] London</pre></div>
+</div>
+<div class="example"><p class="example-title"><strong>Example #2</strong> Into arrays and maps</p>
+<div class="code qiq"><pre><code><span class="type">int</span>[] ids = <span class="fn">json_decode</span>(<span class="string">&quot;[3, 1, 2]&quot;</span>);
+<span class="type">map</span>[<span class="type">string</span>, <span class="type">double</span>[]] series = <span class="fn">json_decode</span>(<span class="string">&quot;{\&quot;a\&quot;: [1, 2.5], \&quot;b\&quot;: []}&quot;</span>);
+<span class="kw">print</span>(ids, series[<span class="string">&quot;a&quot;</span>], <span class="fn">len</span>(series[<span class="string">&quot;b&quot;</span>]));</code></pre></div>
+<div class="output"><div class="output-label">Output</div><pre>[3, 1, 2] [1, 2.5] 0</pre></div>
+</div>
+<div class="example"><p class="example-title"><strong>Example #3</strong> Handling bad input</p>
+<div class="code qiq"><pre><code><span class="kw">class</span> <span class="cls">Order</span> {
+    <span class="kw">public</span> <span class="type">int</span> quantity;
+}
+
+<span class="type">string</span>[] inputs = [<span class="string">&quot;{\&quot;quantity\&quot;: 2}&quot;</span>, <span class="string">&quot;{\&quot;quantity\&quot;: \&quot;two\&quot;}&quot;</span>, <span class="string">&quot;{\&quot;quantity\&quot;: 2&quot;</span>];
+<span class="kw">foreach</span> (inputs <span class="kw">as</span> input) {
+    <span class="kw">try</span> {
+        <span class="cls">Order</span> order = <span class="fn">json_decode</span>(input);
+        <span class="kw">print</span>(<span class="string">&quot;ok:&quot;</span>, order-&gt;quantity);
+    } <span class="kw">catch</span> (<span class="cls">JsonException</span> e) {
+        <span class="kw">print</span>(<span class="string">&quot;rejected:&quot;</span>, e-&gt;<span class="fn">getMessage</span>());
+    }
+}</code></pre></div>
+<div class="output"><div class="output-label">Output</div><pre>ok: 2
+rejected: $.quantity: expected int, found a string
+rejected: syntax error at line 1, column 15: unexpected end of JSON, expected &#x27;,&#x27; or &#x27;}&#x27;</pre></div>
+</div>
+<h2>Notes</h2>
+<div class="note"><strong>Note:</strong> PHP's <code>json_decode</code> returns whatever the JSON contains; qiq's builds exactly the declared type, like JSON decoding in Go or Rust. To accept several shapes, decode into a class with all the properties any of them might have.</div>
+<div class="note"><strong>Note:</strong> JSON is checked in full: text that is both malformed and the wrong shape is reported as a syntax error.</div>
+<h2>See also</h2><p><a href="function.json-encode.html"><code>json_encode</code></a></p>
+<nav class="pager"><a class="prev" href="function.json-encode.html">« json_encode</a><a class="next" href="ref.http.html">HTTP »</a></nav>
+</main>
+</div>
+<script src="search.js"></script>
+</body>
+</html>

@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sprintf - qiq Manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <button class="menu-toggle" aria-label="Show menu" onclick="document.body.classList.toggle('menu-open')">☰</button>
+  <a class="brand" href="introduction.html"><span class="logo">qiq</span><span class="brand-text">Manual</span></a>
+  <div class="search">
+    <input id="search" type="search" placeholder="Search the manual" autocomplete="off" aria-label="Search the manual">
+    <ul id="search-results" hidden></ul>
+  </div>
+</header>
+<div class="layout">
+<nav class="sidebar" aria-label="Manual">
+<h2>Getting started</h2><ul>
+<li><a href="introduction.html">Introduction</a>
+</li>
+<li><a href="installation.html">Installing and running</a>
+</li>
+</ul>
+<h2>Language reference</h2><ul>
+<li><a href="basic-syntax.html">Basic syntax</a>
+</li>
+<li><a href="types.html">Types</a>
+</li>
+<li><a href="variables.html">Variables</a>
+</li>
+<li><a href="operators.html">Operators</a>
+</li>
+<li><a href="control-structures.html">Control structures</a>
+</li>
+<li><a href="functions.html">Functions</a>
+</li>
+<li><a href="anonymous-functions.html">Anonymous functions</a>
+</li>
+<li><a href="strings.html">Strings and chars</a>
+</li>
+<li><a href="arrays.html">Arrays</a>
+</li>
+<li><a href="maps.html">Maps</a>
+</li>
+<li><a href="classes.html">Classes and objects</a>
+</li>
+<li><a href="static.html">Static members</a>
+</li>
+<li><a href="interfaces.html">Interfaces</a>
+</li>
+<li><a href="exceptions.html">Exceptions</a>
+</li>
+<li><a href="modules.html">Modules</a>
+</li>
+<li><a href="packages.html">Packages</a>
+</li>
+<li><a href="memory.html">Memory management</a>
+</li>
+<li><a href="printing.html">Printing</a>
+</li>
+</ul>
+<h2>Standard library</h2><ul>
+<li><a href="stdlib.html">Overview</a>
+</li>
+<li><a href="ref.general.html">General</a>
+</li>
+<li><a href="ref.strings.html">Strings</a>
+<ul class="children">
+<li><a href="function.substr.html"><code>substr</code></a></li>
+<li><a href="function.strpos.html"><code>strpos</code></a></li>
+<li><a href="function.str-contains.html"><code>str_contains</code></a></li>
+<li><a href="function.str-starts-with.html"><code>str_starts_with</code></a></li>
+<li><a href="function.str-ends-with.html"><code>str_ends_with</code></a></li>
+<li><a href="function.str-replace.html"><code>str_replace</code></a></li>
+<li><a href="function.htmlspecialchars.html"><code>htmlspecialchars</code></a></li>
+<li><a href="function.sprintf.html" class="active"><code>sprintf</code></a></li>
+<li><a href="function.str-repeat.html"><code>str_repeat</code></a></li>
+<li><a href="function.strtoupper.html"><code>strtoupper</code></a></li>
+<li><a href="function.strtolower.html"><code>strtolower</code></a></li>
+<li><a href="function.ucfirst.html"><code>ucfirst</code></a></li>
+<li><a href="function.strrev.html"><code>strrev</code></a></li>
+<li><a href="function.trim.html"><code>trim</code></a></li>
+<li><a href="function.explode.html"><code>explode</code></a></li>
+<li><a href="function.implode.html"><code>implode</code></a></li>
+<li><a href="function.string-to-bytes.html"><code>string_to_bytes</code></a></li>
+<li><a href="function.bytes-to-string.html"><code>bytes_to_string</code></a></li>
+</ul>
+</li>
+<li><a href="ref.arrays.html">Arrays</a>
+</li>
+<li><a href="ref.maps.html">Maps</a>
+</li>
+<li><a href="ref.files.html">Files</a>
+</li>
+<li><a href="ref.datetime.html">Date and time</a>
+</li>
+<li><a href="ref.json.html">JSON</a>
+</li>
+<li><a href="ref.http.html">HTTP</a>
+</li>
+<li><a href="ref.http-server.html">HTTP server</a>
+</li>
+<li><a href="ref.program.html">Program</a>
+</li>
+<li><a href="ref.conversions.html">Conversions</a>
+</li>
+<li><a href="ref.output.html">Output</a>
+</li>
+<li><a href="class.file.html">The File class</a>
+</li>
+<li><a href="class.response.html">The Response class</a>
+</li>
+<li><a href="class.request.html">The Request class</a>
+</li>
+<li><a href="class.responsewriter.html">The ResponseWriter class</a>
+</li>
+<li><a href="class.router.html">The Router class</a>
+</li>
+<li><a href="class.socket.html">The Socket class</a>
+</li>
+<li><a href="exception-classes.html">Exception classes</a>
+</li>
+</ul>
+</nav>
+<main class="content">
+<div class="breadcrumbs"><a href="stdlib.html">Standard library</a> › <a href="ref.strings.html">Strings</a> › <span>sprintf</span></div>
+<h1 class="refname"><code>sprintf</code></h1>
+<p class="refpurpose"><code>sprintf</code> — Format values into a string</p>
+<h2>Description</h2>
+<div class="synopsis"><code><span class="fn">sprintf</span>(<span class="type">string</span> <span class="param">format</span>, <span class="type">int|double|bool|byte|string|char...</span> <span class="param">values</span>): <span class="type">string</span></code></div>
+
+<p><p>Returns <code>format</code> with each placeholder replaced by a formatted value, as PHP's <code>sprintf</code> does. A placeholder is written <code>%[argnum$][flags][width][.precision]specifier</code>; <code>%%</code> is a literal percent sign.</p>
+<table>
+<thead><tr><th>Specifier</th><th>Formats the value as</th><th>Example</th></tr></thead>
+<tbody>
+<tr><td><code>s</code></td><td>A string; <code>.precision</code> is the maximum number of characters</td><td><code>sprintf("%.3s", "abcdef")</code> is <code>abc</code></td></tr>
+<tr><td><code>d</code></td><td>An int</td><td><code>-42</code></td></tr>
+<tr><td><code>u</code></td><td>An int as unsigned</td><td><code>sprintf("%u", -1)</code> is <code>18446744073709551615</code></td></tr>
+<tr><td><code>f</code>, <code>F</code></td><td>A double with <code>.precision</code> decimals (default 6)</td><td><code>sprintf("%.2f", 3.14159)</code> is <code>3.14</code></td></tr>
+<tr><td><code>e</code>, <code>E</code></td><td>Scientific notation with <code>.precision</code> decimals</td><td><code>sprintf("%.2e", 1234.5)</code> is <code>1.23e+3</code></td></tr>
+<tr><td><code>g</code>, <code>G</code></td><td>Plain or scientific notation, whichever is shorter, with <code>.precision</code> significant digits</td><td><code>sprintf("%g", 0.00001234)</code> is <code>1.234e-5</code></td></tr>
+<tr><td><code>x</code>, <code>X</code></td><td>An int in hexadecimal</td><td><code>sprintf("%x", 255)</code> is <code>ff</code></td></tr>
+<tr><td><code>o</code></td><td>An int in octal</td><td><code>sprintf("%o", 8)</code> is <code>10</code></td></tr>
+<tr><td><code>b</code></td><td>An int in binary</td><td><code>sprintf("%b", 5)</code> is <code>101</code></td></tr>
+<tr><td><code>c</code></td><td>The character with that Unicode code point; width doesn't apply</td><td><code>sprintf("%c", 233)</code> is <code>é</code></td></tr>
+</tbody>
+</table>
+<table>
+<thead><tr><th>Before the width</th><th>Effect</th></tr></thead>
+<tbody>
+<tr><td><code>-</code></td><td>Left-justify within the width (the default is right)</td></tr>
+<tr><td><code>+</code></td><td>Show a <code>+</code> sign on positive numbers</td></tr>
+<tr><td><code>0</code></td><td>Pad with zeros instead of spaces; a sign stays in front</td></tr>
+<tr><td><code>'</code><var>char</var></td><td>Pad with any character, such as <code>'*</code> or <code>'·</code></td></tr>
+</tbody>
+</table>
+<p>The width is the minimum number of characters. <code>argnum$</code> picks a value by position, from 1, so <code>%2$s</code> uses the second value and a value can be used more than once.</p>
+<p>Values are converted as PHP converts them: <code>%d</code> truncates a double and reads the number at the start of a string (<code>"12abc"</code> is 12); <code>%f</code> reads a double from a string. With <code>%s</code>, bools are <code>1</code> and <code>0</code>, and doubles are written like <a href="function.to-string.html">to_string</a> (<code>%g</code>, so <code>1e+20</code>), where PHP would write <code>1.0E+20</code>.</p></p>
+<h2>Parameters</h2>
+<dl class="parameters">
+<dt><code>format</code></dt><dd>Text with placeholders, described below.</dd>
+<dt><code>values</code></dt><dd>The values the placeholders use, in order.</dd>
+</dl>
+<h2>Return values</h2><p>The formatted string.</p>
+<h2>Errors/Exceptions</h2><ul>
+<li>When <code>format</code> is a string literal, the compiler checks it: an unknown specifier, or fewer values than the placeholders use, is a compile error. Values must be ints, doubles, bools, bytes, strings, or chars.</li>
+<li><code>InvalidArgumentException</code> for the same mistakes in a format that isn't a literal, and for <code>%c</code> with a number that isn't a Unicode code point.</li>
+<li><code>RuntimeException</code> if a string value or the format is <code>null</code>.</li>
+</ul>
+<h2>Examples</h2>
+<div class="example"><p class="example-title"><strong>Example #1</strong> Padding and precision</p>
+<div class="code qiq"><pre><code><span class="kw">print</span>(<span class="fn">sprintf</span>(<span class="string">&quot;%-8s|%6.2f|%05d|%+d&quot;</span>, <span class="string">&quot;price&quot;</span>, <span class="number">3.14159</span>, <span class="number">42</span>, <span class="number">7</span>));
+<span class="kw">print</span>(<span class="fn">sprintf</span>(<span class="string">&quot;%x %X %o %b&quot;</span>, <span class="number">255</span>, <span class="number">255</span>, <span class="number">8</span>, <span class="number">5</span>));
+<span class="kw">print</span>(<span class="fn">sprintf</span>(<span class="string">&quot;%&#x27;*10s|%-10s|&quot;</span>, <span class="string">&quot;right&quot;</span>, <span class="string">&quot;left&quot;</span>));</code></pre></div>
+<div class="output"><div class="output-label">Output</div><pre>price   |  3.14|00042|+7
+ff FF 10 101
+*****right|left      |</pre></div>
+</div>
+<div class="example"><p class="example-title"><strong>Example #2</strong> A table of rows</p>
+<div class="code qiq"><pre><code><span class="type">string</span>[] items = [<span class="string">&quot;Coffee&quot;</span>, <span class="string">&quot;Croissant&quot;</span>];
+<span class="type">double</span>[] prices = [<span class="number">3.5</span>, <span class="number">2.25</span>];
+<span class="type">int</span> i = <span class="number">0</span>;
+<span class="kw">while</span> (i &lt; <span class="fn">len</span>(items)) {
+    <span class="kw">print</span>(<span class="fn">sprintf</span>(<span class="string">&quot;%-10s %6.2f&quot;</span>, items[i], prices[i]));
+    i = i + <span class="number">1</span>;
+}</code></pre></div>
+<div class="output"><div class="output-label">Output</div><pre>Coffee       3.50
+Croissant    2.25</pre></div>
+</div>
+<div class="example"><p class="example-title"><strong>Example #3</strong> Characters, not bytes</p>
+<div class="code qiq"><pre><code><span class="kw">print</span>(<span class="fn">sprintf</span>(<span class="string">&quot;[%-7s] [%.2s] [%2$s again]&quot;</span>, <span class="string">&quot;héllo&quot;</span>, <span class="string">&quot;日本語&quot;</span>));</code></pre></div>
+<div class="output"><div class="output-label">Output</div><pre>[héllo  ] [日本] [日本語 again]</pre></div>
+</div>
+<h2>Notes</h2>
+<div class="note"><strong>Note:</strong> Widths and string precisions count characters, like every length in qiq, where PHP counts bytes. Everything else matches PHP: integers and floating-point numbers are formatted exactly as PHP formats them.</div>
+<div class="note"><strong>Note:</strong> To print the result, use <code>print(sprintf(...))</code>; there is no separate <code>printf</code>.</div>
+<h2>See also</h2><p><a href="function.to-string.html"><code>to_string</code></a>, <a href="function.str-repeat.html"><code>str_repeat</code></a>, <a href="function.implode.html"><code>implode</code></a></p>
+<nav class="pager"><a class="prev" href="function.htmlspecialchars.html">« htmlspecialchars</a><a class="next" href="function.str-repeat.html">str_repeat »</a></nav>
+</main>
+</div>
+<script src="search.js"></script>
+</body>
+</html>

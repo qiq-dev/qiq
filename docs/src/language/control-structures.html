@@ -1,0 +1,157 @@
+<!-- title: Control structures -->
+<h1>Control structures</h1>
+
+<h2>if / else</h2>
+<p>The condition must be a <code>bool</code>. Braces are required.</p>
+
+```qiq
+int age = 30;
+if (age >= 18 && age <= 65) {
+    print("working age");
+} else {
+    print("not working age");
+}
+```
+```output
+working age
+```
+
+<p>Chain conditions with <code>else if</code>:</p>
+
+```qiq
+function grade(int score): string {
+    if (score >= 90) {
+        return "A";
+    } else if (score >= 80) {
+        return "B";
+    } else {
+        return "C";
+    }
+}
+print(grade(95), grade(85), grade(70));
+```
+```output
+A B C
+```
+
+<p>PHP's one-word <code>elseif</code> isn't supported; write <code>else if</code>. To compare one value against several constants, <a href="#switch">switch</a> is clearer.</p>
+
+<h2>while</h2>
+<p><code>while</code> repeats its body while the condition is true, testing it before each iteration.</p>
+
+```qiq
+int i = 0;
+while (i < 3) {
+    print(i);
+    i = i + 1;
+}
+```
+```output
+0
+1
+2
+```
+
+<p>A function can end with <code>while (true) { ... }</code> instead of a <code>return</code> when the loop has no <code>break</code> and only leaves by returning or throwing.</p>
+
+<h2>foreach</h2>
+<p><code>foreach (collection as value)</code> visits each element of an array, each value of a map, or each character of a string. <code>foreach (collection as key =&gt; value)</code> also binds the index (for arrays and strings, counting from <code>0</code>) or the map key.</p>
+
+```qiq
+foreach (["a", "b"] as index => letter) {
+    print(index, letter);
+}
+foreach ("aé界" as character) {
+    print(character);
+}
+map[string, int] ages = {"ada" => 36};
+foreach (ages as name => age) {
+    print(name, age);
+}
+```
+```output
+0 a
+1 b
+a
+é
+界
+ada 36
+```
+
+<p>Strings iterate by Unicode character, not by byte. Maps iterate in the order their keys were added. The loop variables are new variables for each iteration and can't be reassigned.</p>
+
+<h3>Counting with range</h3>
+<p>qiq has no C-style <code>for</code> loop. To repeat something a number of times, or count through numbers, loop over <a href="function.range.html"><code>range(start, end, step)</code></a>. The end is included, as in PHP, and the step defaults to <code>1</code>:</p>
+
+```qiq
+foreach (range(1, 3) as n) {
+    print("round", n);
+}
+foreach (range(10, 0, 5) as index => value) {
+    print(index, value);
+}
+string[] names = ["Ada", "Lin"];
+foreach (range(0, len(names) - 1) as i) {
+    print(i, names[i]);
+}
+```
+```output
+round 1
+round 2
+round 3
+0 10
+1 5
+2 0
+0 Ada
+1 Lin
+```
+
+<p>A <code>foreach</code> over a range of ints doesn't build an array: it compiles to a counting loop, so <code>range(1, 1000000000)</code> costs nothing extra. When <code>end</code> is less than <code>start</code>, the range counts down. For an empty array, <code>range(0, len(names) - 1)</code> would count down from 0 to -1, so loop over the array itself, or check its length first.</p>
+
+<h2 id="switch">switch</h2>
+<p><code>switch</code> compares a value with each case in order and runs the first match. Cases don't fall through, so no <code>break</code> is needed; list several values in one case with commas. <code>default</code> runs when nothing matches.</p>
+
+```qiq
+function describe(int status): string {
+    switch (status) {
+        case 200, 204:
+            return "ok";
+        case 404:
+            return "not found";
+        default:
+            return "error";
+    }
+}
+print(describe(204), describe(404), describe(500));
+```
+```output
+ok not found error
+```
+
+<ul>
+<li>The value can be an <code>int</code>, <code>double</code>, <code>bool</code>, <code>byte</code>, <code>string</code>, or <code>char</code>. Case values are expressions of the same type, tested in order; the switch value is evaluated once.</li>
+<li>Duplicate literal case values are an error, and so is a case with no statements, because it would silently do nothing (this catches PHP-style stacked <code>case 1: case 2:</code>). Write <code>break;</code> for a case that deliberately does nothing.</li>
+<li><code>default</code> can appear anywhere, at most once.</li>
+<li>A switch with a <code>default</code> in which every branch returns or throws ends a function's code path.</li>
+</ul>
+
+<h2>break and continue</h2>
+<p><code>break</code> leaves the innermost loop or switch. <code>continue</code> skips to the next iteration of the innermost loop; inside a switch inside a loop, it goes to the loop.</p>
+
+```qiq
+foreach ([1, 2, 3, 4, 5] as n) {
+    if (n == 2) {
+        continue;
+    }
+    if (n == 4) {
+        break;
+    }
+    print(n);
+}
+```
+```output
+1
+3
+```
+
+<p>When <code>break</code>, <code>continue</code>, or <code>return</code> leaves a <code>try</code> block, its <code>finally</code> block runs first; see <a href="exceptions.html">Exceptions</a>.</p>

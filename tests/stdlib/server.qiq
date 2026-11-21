@@ -1,0 +1,96 @@
+// The HTTP server's Router, request parsing helpers, and file server,
+// called directly (no sockets). To try a live server:
+//   ./target/release/qiq serve docs/html --port 8000
+import rawurldecode, urldecode from "std/http";
+import http_content_type, http_strip_prefix, Request, ResponseWriter, Router from "std/http/server";
+
+function named(string name): function(Request, ResponseWriter): void {
+    return fn(Request r, ResponseWriter w) => w->write(name + " " + json_encode(r->params));
+}
+
+Router router = new Router();
+router->handle("/", named("root"));
+router->handle("/{$}", named("home"));
+router->handle("GET /items/{id}", named("item"));
+router->handle("DELETE /items/{id}", named("delete"));
+router->handle("/items/new", named("new"));
+router->handle("/static/", named("static"));
+router->handle("/files/{path...}", named("files"));
+router->handle("POST /form", function(Request r, ResponseWriter w): void {
+    w->status(201);
+    w->header("X-Name", r->form("name"));
+    w->write("hello " + r->form("name") + " page " + r->form("page"));
+});
+router->handle("/boom", function(Request r, ResponseWriter w): void {
+    throw new RuntimeException("kaboom");
+});
+
+function show(Router router, string method, string target, string body = ""): void {
+    string query = "";
+    int question = strpos(target, "?");
+    string path = target;
+    if (question >= 0) {
+        query = substr(target, question + 1);
+        path = substr(target, 0, question);
+    }
+    map[string, string] headers = {"host" => "example.com", "content-type" => "application/x-www-form-urlencoded"};
+    Request r = new Request(method, path, query, "HTTP/1.1", headers, string_to_bytes(body), "127.0.0.1:5000");
+    ResponseWriter w = new ResponseWriter();
+    try {
+        router->serve(r, w);
+    } catch (RuntimeException e) {
+        print(method, target, "threw", e->getMessage());
+        return;
+    }
+    string extra = "";
+    foreach (["Allow", "Location", "X-Name"] as name) {
+        if (w->getHeader(name) != null) {
+            extra = extra + " " + name + "=" + w->getHeader(name);
+        }
+    }
+    print(method, target, "->", w->statusCode(), trim(bytes_to_string(w->bytes())) + extra);
+}
+
+show(router, "GET", "/");
+show(router, "GET", "/about");
+show(router, "GET", "/items/42");
+show(router, "HEAD", "/items/42");
+show(router, "DELETE", "/items/7");
+show(router, "PUT", "/items/7");
+show(router, "GET", "/items/new");
+show(router, "GET", "/items/a%20b");
+show(router, "GET", "/static/css/site.css");
+show(router, "GET", "/static");
+show(router, "GET", "/static?v=1");
+show(router, "GET", "/files/a/b%2Fc.txt");
+show(router, "POST", "/form?page=2", "name=Ada+L%C3%B3pez");
+show(router, "GET", "/form");
+show(router, "GET", "/boom");
+
+Router api = new Router();
+api->handle("GET /users/{id}", named("user"));
+api->notFound(function(Request r, ResponseWriter w): void {
+    w->status(404);
+    w->write("no route for " + r->path);
+});
+show(api, "GET", "/users/1");
+show(api, "GET", "/nothing");
+
+// Patterns are checked when they're added.
+foreach (["items", "/a/{$}/b", "/{rest...}/x", "/{x", "/a//b", "GET /items/{name}"] as pattern) {
+    try {
+        router->handle(pattern, named("bad"));
+    } catch (InvalidArgumentException e) {
+        print(e->getMessage());
+    }
+}
+
+// Mounting a handler under a prefix.
+Router site = new Router();
+site->handle("/docs/", http_strip_prefix("/docs", fn(Request r, ResponseWriter w) => w->write("docs sees " + r->path)));
+show(site, "GET", "/docs/a/b.html");
+
+// Helpers.
+print(rawurldecode("a%20b+c"), urldecode("a%20b+c"));
+print(htmlspecialchars("<a href=\"x\">Tom & 'Jerry'</a>"));
+print(http_content_type("index.HTML"), http_content_type("app.js"), http_content_type("archive"), http_content_type("v1.2/README"));

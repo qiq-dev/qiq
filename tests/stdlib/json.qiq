@@ -1,0 +1,39 @@
+// json_encode and json_decode. json_decode decodes into the type its result
+// is used as, checking the JSON against it.
+class Address {
+    public string city;
+    public string[] lines;
+}
+
+class User {
+    public string name;
+    public int age;
+    public bool admin;
+    public string[] tags;
+    public Address address;
+    public map[string, int] scores;
+    private string password;
+}
+
+string text = "{\"name\": \"Ada\", \"age\": 36, \"admin\": true, \"tags\": [\"math\", \"code\"], \"address\": {\"city\": \"London\", \"lines\": [\"12 Main St\"]}, \"scores\": {\"b\": 2, \"a\": 1}, \"unknown\": [1, 2]}";
+User user = json_decode(text);
+print(user->name, user->age, user->admin, user->tags, user->address->city, user->scores["b"]);
+
+// Public properties only; map keys sorted; UTF-8 written as is.
+user->tags = ["math", "café"];
+print(json_encode(user));
+print(json_encode(user->address, true));
+
+int[] ids = json_decode("[3, 1, 2]");
+map[string, double] prices = json_decode("{\"tea\": 2.5, \"cake\": 4}");
+print(ids, prices["cake"], json_encode(prices));
+print(json_encode([1.5, 0.1, 1e20]), json_encode("line\nbreak \"quoted\""), json_encode(null));
+
+string[] inputs = ["{\"name\": 42}", "{\"tags\": [\"a\", 2]}", "{\"age\": 1.5}", "{\"name\": \"x\",}"];
+foreach (inputs as input) {
+    try {
+        User bad = json_decode(input);
+    } catch (JsonException e) {
+        print(e->getMessage());
+    }
+}

@@ -1,0 +1,88 @@
+function greet(string name, string greeting = "Hello", int times = 1): void {
+    print(str_repeat(greeting + ", " + name + "! ", times));
+}
+
+// Skip an optional parameter by naming a later one.
+greet("Ada", times: 2);
+// Named arguments can be in any order, and can name required parameters too.
+greet(times: 1, greeting: "Hi", name: "Lin");
+greet("Ada", greeting: "Hey");
+
+// Arguments are evaluated in the order written, then passed in parameter order.
+function trace(string label, int value): int {
+    print("evaluating " + label);
+    return value;
+}
+function pair(int first, int second): void {
+    print(first - second);
+}
+pair(second: trace("second", 1), first: trace("first", 10));
+
+// Constructors, methods, and parent::__construct(...)
+class Logger {
+    protected string prefix;
+    protected bool timestamps;
+
+    function __construct(string prefix = "[app]", bool timestamps = false) {
+        this->prefix = prefix;
+        this->timestamps = timestamps;
+    }
+
+    function log(string message, string level = "info", bool loud = false): void {
+        string line = this->prefix + " " + level + ": " + message;
+        if (loud) {
+            line = strtoupper(line);
+        }
+        print(line);
+    }
+}
+
+class FileLogger extends Logger {
+    function __construct(string path) {
+        parent::__construct(timestamps: true);
+    }
+}
+
+Logger logger = new Logger(timestamps: true);
+logger->log("started", loud: true);
+logger->log(level: "warn", message: "disk low");
+FileLogger file = new FileLogger(path: "/tmp/app.log");
+file->log("written");
+
+// Interface calls: names come from the interface. Skipping the middle
+// parameter still uses the running class's default for it.
+interface Template {
+    function render(string template, bool escape = true, string wrapper = "p"): string;
+}
+
+class Page implements Template {
+    function render(string template, bool escape = true, string wrapper = "p"): string {
+        string result = "<" + wrapper + ">" + template + "</" + wrapper + ">";
+        if (escape) {
+            return "escaped " + result;
+        }
+        return result;
+    }
+}
+
+class RawPage implements Template {
+    function render(string template, bool escape = false, string wrapper = "div"): string {
+        string result = "<" + wrapper + ">" + template + "</" + wrapper + ">";
+        if (escape) {
+            return "escaped " + result;
+        }
+        return result;
+    }
+}
+
+function show(Template view): void {
+    print(view->render("hi", wrapper: "span"));
+}
+
+show(new Page());
+show(new RawPage());
+
+// Standard library functions
+print(substr("héllo wörld", start: 6, length: 3));
+print(strpos("ab-ab", "ab", offset: 1));
+print(trim("--x--", characters: "-"));

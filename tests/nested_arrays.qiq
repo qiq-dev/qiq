@@ -1,0 +1,76 @@
+// Arrays of arrays: each row is an array, and rows can have different lengths.
+int[][] grid = [[1, 2, 3], [4, 5], [6]];
+foreach (grid as rowIndex => row) {
+    int sum = 0;
+    foreach (row as value) {
+        sum = sum + value;
+    }
+    print(sum);
+}
+print(grid[1][0] + grid[2][0]);
+grid[2] = [7, 8, 9, 10];
+print(grid[2][3]);
+
+// `new int[][n]` makes n rows that start out null; fill them in.
+function identity(int size): int[][] {
+    int[][] matrix = new int[][size];
+    int i = 0;
+    while (i < size) {
+        matrix[i] = new int[size];
+        matrix[i][i] = 1;
+        i = i + 1;
+    }
+    return matrix;
+}
+int[][] id = identity(3);
+foreach (id as row) {
+    print(implode(" ", [substr("01", row[0], 1), substr("01", row[1], 1), substr("01", row[2], 1)]));
+}
+
+// Parsing CSV text into rows of fields.
+string[] lines = explode("\n", "name,age\nada,36\nlin,29");
+string[][] table = new string[][3];
+foreach (lines as index => line) {
+    table[index] = explode(",", line);
+}
+print(table[2][0] + " is " + table[2][1]);
+
+// Arrays of maps and of objects.
+map[string, int][] people = [{"age" => 36}, {"age" => 29}];
+print(people[1]["age"]);
+
+interface Shape {
+    function area(): int;
+}
+class Square implements Shape {
+    private int side;
+    function __construct(int side) { this->side = side; }
+    function area(): int { return this->side * this->side; }
+}
+class Rect implements Shape {
+    private int w;
+    private int h;
+    function __construct(int w, int h) { this->w = w; this->h = h; }
+    function area(): int { return this->w * this->h; }
+}
+Shape[] shapes = [new Square(3), new Rect(2, 5)];
+foreach (shapes as shape) {
+    print(shape->area());
+}
+
+// Three dimensions, inferred from the literal.
+cube = [[["a", "b"]], [["c"]]];
+print(cube[0][0][1] + cube[1][0][0]);
+
+// Errors: inner bounds are checked, and unfilled rows are null.
+try {
+    print(grid[0][7]);
+} catch (OutOfRangeException e) {
+    print("OutOfRangeException: " + e->getMessage());
+}
+int[][] holes = new int[][2];
+try {
+    print(holes[1][0]);
+} catch (RuntimeException e) {
+    print("RuntimeException: " + e->getMessage());
+}

@@ -1,0 +1,93 @@
+<!-- title: Functions -->
+<h1>Functions</h1>
+
+<h2>Declaring functions</h2>
+<p>A function declares its parameters' types and its return type after a colon. Use <code>void</code> for a function that returns nothing.</p>
+
+```qiq
+function add(int left, int right): int {
+    return left + right;
+}
+
+function announce(string message): void {
+    print("> " + message);
+}
+
+print(add(5, 2));
+announce("done");
+```
+```output
+7
+> done
+```
+
+<ul>
+<li>A non-void function must return a value on every path; the compiler checks this. A path may also end by throwing an exception, by an infinite <code>while (true)</code> loop, or by a <code>switch</code> whose every branch returns.</li>
+<li>A <code>void</code> function may use <code>return;</code> or simply reach the end of its body.</li>
+<li>Functions can be called before they're declared in the file.</li>
+<li>A call can stand alone as a statement; if it returns a value, the value is discarded.</li>
+<li>Parameters can be reassigned inside the function, which doesn't affect the caller's variable. Arrays, maps, and objects are passed by reference, so changing their contents is visible to the caller.</li>
+</ul>
+
+<h2>void functions and null</h2>
+<p>Calling a <code>void</code> function as a value gives <code>null</code>. A void function can also end with <code>return null;</code>.</p>
+
+```qiq
+function act(): void {
+    print("acting");
+}
+result = act();
+if (result == null) {
+    print("act returned null");
+}
+```
+```output
+acting
+act returned null
+```
+
+<h2>Optional parameters</h2>
+<p>A parameter with a default value is optional. Optional parameters come after the required ones. A default must be a literal of the parameter's type, or <code>null</code> for a string, char, array, map, or object parameter.</p>
+
+```qiq
+function greet(string name, string greeting = "Hello", int times = 1): void {
+    print(trim(str_repeat(greeting + ", " + name + "! ", times)));
+}
+greet("Ada");
+greet("Ada", "Hi");
+greet("Ada", "Hi", 2);
+```
+```output
+Hello, Ada!
+Hi, Ada!
+Hi, Ada! Hi, Ada!
+```
+
+<p>Omitted arguments are filled in by the compiler at each call. For methods, the defaults of the method that actually runs are used, even through an interface; see <a href="interfaces.html">Interfaces</a>.</p>
+
+<h2>Named arguments</h2>
+<p>Pass an argument by parameter name with <code>name: value</code>. This lets you skip optional parameters, and pass arguments in any order.</p>
+
+```qiq
+function greet(string name, string greeting = "Hello", int times = 1): void {
+    print(trim(str_repeat(greeting + ", " + name + "! ", times)));
+}
+greet("Ada", times: 2);
+greet(times: 1, greeting: "Hey", name: "Lin");
+```
+```output
+Hello, Ada! Hello, Ada!
+Hey, Lin!
+```
+
+<ul>
+<li>Named arguments come after positional ones, and each parameter can be given only once.</li>
+<li>Arguments are evaluated in the order written, then passed in parameter order.</li>
+<li>Named arguments work for functions, methods, static methods, constructors, <code>parent::__construct</code>, and standard library functions.</li>
+</ul>
+
+<h2>Argument checking</h2>
+<p>The compiler checks every call: the number of arguments, their types, unknown parameter names, and missing required parameters. For example, calling <code>add("5", 2)</code> is the error <code>argument type mismatch calling 'add': expected int, found string</code>.</p>
+
+<h2>Functions as values</h2>
+<p>Functions can be stored in variables and passed around, and written inline without a name; see <a href="anonymous-functions.html">Anonymous functions</a>.</p>

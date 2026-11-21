@@ -1,0 +1,14 @@
+class Person {
+    private string name;
+
+    function __construct(string name) {
+        this->name = name;
+    }
+
+    function getName(): string {
+        return this->name;
+    }
+}
+
+Person person = new Person("Alias");
+print(person->getName());

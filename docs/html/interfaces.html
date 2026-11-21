@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interfaces - qiq Manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <button class="menu-toggle" aria-label="Show menu" onclick="document.body.classList.toggle('menu-open')">☰</button>
+  <a class="brand" href="introduction.html"><span class="logo">qiq</span><span class="brand-text">Manual</span></a>
+  <div class="search">
+    <input id="search" type="search" placeholder="Search the manual" autocomplete="off" aria-label="Search the manual">
+    <ul id="search-results" hidden></ul>
+  </div>
+</header>
+<div class="layout">
+<nav class="sidebar" aria-label="Manual">
+<h2>Getting started</h2><ul>
+<li><a href="introduction.html">Introduction</a>
+</li>
+<li><a href="installation.html">Installing and running</a>
+</li>
+</ul>
+<h2>Language reference</h2><ul>
+<li><a href="basic-syntax.html">Basic syntax</a>
+</li>
+<li><a href="types.html">Types</a>
+</li>
+<li><a href="variables.html">Variables</a>
+</li>
+<li><a href="operators.html">Operators</a>
+</li>
+<li><a href="control-structures.html">Control structures</a>
+</li>
+<li><a href="functions.html">Functions</a>
+</li>
+<li><a href="anonymous-functions.html">Anonymous functions</a>
+</li>
+<li><a href="strings.html">Strings and chars</a>
+</li>
+<li><a href="arrays.html">Arrays</a>
+</li>
+<li><a href="maps.html">Maps</a>
+</li>
+<li><a href="classes.html">Classes and objects</a>
+</li>
+<li><a href="static.html">Static members</a>
+</li>
+<li><a href="interfaces.html" class="active">Interfaces</a>
+</li>
+<li><a href="exceptions.html">Exceptions</a>
+</li>
+<li><a href="modules.html">Modules</a>
+</li>
+<li><a href="packages.html">Packages</a>
+</li>
+<li><a href="memory.html">Memory management</a>
+</li>
+<li><a href="printing.html">Printing</a>
+</li>
+</ul>
+<h2>Standard library</h2><ul>
+<li><a href="stdlib.html">Overview</a>
+</li>
+<li><a href="ref.general.html">General</a>
+</li>
+<li><a href="ref.strings.html">Strings</a>
+</li>
+<li><a href="ref.arrays.html">Arrays</a>
+</li>
+<li><a href="ref.maps.html">Maps</a>
+</li>
+<li><a href="ref.files.html">Files</a>
+</li>
+<li><a href="ref.datetime.html">Date and time</a>
+</li>
+<li><a href="ref.json.html">JSON</a>
+</li>
+<li><a href="ref.http.html">HTTP</a>
+</li>
+<li><a href="ref.http-server.html">HTTP server</a>
+</li>
+<li><a href="ref.program.html">Program</a>
+</li>
+<li><a href="ref.conversions.html">Conversions</a>
+</li>
+<li><a href="ref.output.html">Output</a>
+</li>
+<li><a href="class.file.html">The File class</a>
+</li>
+<li><a href="class.response.html">The Response class</a>
+</li>
+<li><a href="class.request.html">The Request class</a>
+</li>
+<li><a href="class.responsewriter.html">The ResponseWriter class</a>
+</li>
+<li><a href="class.router.html">The Router class</a>
+</li>
+<li><a href="class.socket.html">The Socket class</a>
+</li>
+<li><a href="exception-classes.html">Exception classes</a>
+</li>
+</ul>
+</nav>
+<main class="content">
+<div class="breadcrumbs"><a href="introduction.html">Manual</a> › <a href="#">Language reference</a> › <span>Interfaces</span></div>
+<h1>Interfaces</h1>
+<p>An interface declares methods that implementing classes must provide. Interface methods have no body and are always public; a missing return type means <code>void</code>.</p>
+
+<div class="code qiq"><pre><code><span class="kw">interface</span> <span class="cls">Shape</span> {
+    <span class="kw">function</span> <span class="fn">area</span>(): <span class="type">int</span>;
+    <span class="kw">function</span> <span class="fn">name</span>(): <span class="type">string</span>;
+}
+
+<span class="kw">class</span> <span class="cls">Square</span> <span class="kw">implements</span> <span class="cls">Shape</span> {
+    <span class="kw">private</span> <span class="type">int</span> side;
+    <span class="kw">function</span> <span class="fn">__construct</span>(<span class="type">int</span> side) { <span class="kw">this</span>-&gt;side = side; }
+    <span class="kw">function</span> <span class="fn">area</span>(): <span class="type">int</span> { <span class="kw">return</span> <span class="kw">this</span>-&gt;side * <span class="kw">this</span>-&gt;side; }
+    <span class="kw">function</span> <span class="fn">name</span>(): <span class="type">string</span> { <span class="kw">return</span> <span class="string">&quot;square&quot;</span>; }
+}
+
+<span class="kw">class</span> <span class="cls">Rect</span> <span class="kw">implements</span> <span class="cls">Shape</span> {
+    <span class="kw">private</span> <span class="type">int</span> w;
+    <span class="kw">private</span> <span class="type">int</span> h;
+    <span class="kw">function</span> <span class="fn">__construct</span>(<span class="type">int</span> w, <span class="type">int</span> h) { <span class="kw">this</span>-&gt;w = w; <span class="kw">this</span>-&gt;h = h; }
+    <span class="kw">function</span> <span class="fn">area</span>(): <span class="type">int</span> { <span class="kw">return</span> <span class="kw">this</span>-&gt;w * <span class="kw">this</span>-&gt;h; }
+    <span class="kw">function</span> <span class="fn">name</span>(): <span class="type">string</span> { <span class="kw">return</span> <span class="string">&quot;rectangle&quot;</span>; }
+}
+
+<span class="kw">function</span> <span class="fn">describe</span>(<span class="cls">Shape</span> shape): <span class="type">void</span> {
+    <span class="kw">print</span>(shape-&gt;<span class="fn">name</span>(), shape-&gt;<span class="fn">area</span>());
+}
+
+<span class="cls">Shape</span>[] shapes = [<span class="kw">new</span> <span class="cls">Square</span>(<span class="number">3</span>), <span class="kw">new</span> <span class="cls">Rect</span>(<span class="number">2</span>, <span class="number">5</span>)];
+<span class="kw">foreach</span> (shapes <span class="kw">as</span> shape) {
+    <span class="fn">describe</span>(shape);
+}</code></pre></div><div class="output"><div class="output-label">Output</div><pre>square 9
+rectangle 10</pre></div>
+
+<h2>Rules</h2>
+<ul>
+<li>A class can implement several interfaces, <code>class A implements B, C</code>, and combine them with inheritance: <code>class Child extends Base implements Named</code>.</li>
+<li>An interface can extend other interfaces: <code>interface Scalable extends Shape</code>.</li>
+<li>A concrete class must implement every interface method as a <code>public</code> method with the same parameter and return types. The implementation may be inherited from a parent class. An abstract class may leave interface methods to its subclasses.</li>
+<li>Interfaces can't declare properties, constructors, static methods, or <code>final</code> methods, and can't be instantiated. They must be declared before use.</li>
+</ul>
+
+<h2>Interface types and dispatch</h2>
+<p>An interface name can be used as the type of a variable, parameter, return value, or array element, and holds an object of any implementing class. Calls through it run the object's own implementation, chosen at run time from a table indexed by the object's class.</p>
+
+<h2>Defaults in interface methods</h2>
+<p>Interface methods can have <a href="functions.html">optional parameters</a>. An implementation may declare different defaults, and a call always uses the defaults of the method that actually runs:</p>
+
+<div class="code qiq"><pre><code><span class="kw">interface</span> <span class="cls">Template</span> {
+    <span class="kw">function</span> <span class="fn">render</span>(<span class="type">string</span> text, <span class="type">bool</span> escape = <span class="lit">true</span>): <span class="type">string</span>;
+}
+<span class="kw">class</span> <span class="cls">Page</span> <span class="kw">implements</span> <span class="cls">Template</span> {
+    <span class="kw">function</span> <span class="fn">render</span>(<span class="type">string</span> text, <span class="type">bool</span> escape = <span class="lit">true</span>): <span class="type">string</span> {
+        <span class="kw">if</span> (escape) {
+            <span class="kw">return</span> <span class="string">&quot;escaped &quot;</span> + text;
+        }
+        <span class="kw">return</span> text;
+    }
+}
+<span class="kw">class</span> <span class="cls">RawPage</span> <span class="kw">implements</span> <span class="cls">Template</span> {
+    <span class="kw">function</span> <span class="fn">render</span>(<span class="type">string</span> text, <span class="type">bool</span> escape = <span class="lit">false</span>): <span class="type">string</span> {
+        <span class="kw">if</span> (escape) {
+            <span class="kw">return</span> <span class="string">&quot;escaped &quot;</span> + text;
+        }
+        <span class="kw">return</span> text;
+    }
+}
+<span class="cls">Template</span>[] views = [<span class="kw">new</span> <span class="cls">Page</span>(), <span class="kw">new</span> <span class="cls">RawPage</span>()];
+<span class="kw">foreach</span> (views <span class="kw">as</span> view) {
+    <span class="kw">print</span>(view-&gt;<span class="fn">render</span>(<span class="string">&quot;&lt;p&gt;&quot;</span>));
+}</code></pre></div><div class="output"><div class="output-label">Output</div><pre>escaped &lt;p&gt;
+&lt;p&gt;</pre></div>
+
+<p>An implementation may make a required parameter optional, but not the other way round.</p>
+
+<nav class="pager"><a class="prev" href="static.html">« Static members</a><a class="next" href="exceptions.html">Exceptions »</a></nav>
+</main>
+</div>
+<script src="search.js"></script>
+</body>
+</html>

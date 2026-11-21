@@ -1,0 +1,16 @@
+abstract class AbstractClass {
+    abstract protected function getValue();
+}
+
+class ConcreteClass extends AbstractClass {
+    protected function getValue(): void {
+        print(42);
+    }
+
+    public function display(): void {
+        this->getValue();
+    }
+}
+
+ConcreteClass value = new ConcreteClass();
+value->display();

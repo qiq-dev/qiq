@@ -1,0 +1,51 @@
+// Date and time functions, implemented in C (stdlib/runtime/time.c).
+//
+// Timestamps are ints counting seconds since 1970-01-01 00:00:00 UTC. Local
+// time follows the system (the TZ environment variable, or /etc/localtime)
+// until the program calls date_default_timezone_set. A `timestamp` default
+// of -9223372036854775808 (the smallest int) means "now".
+
+// The current time as a timestamp.
+extern function time(): int;
+
+// The current time in seconds, with microseconds.
+extern function microtime(): double;
+
+// Nanoseconds from a monotonic clock, for measuring durations. It has no
+// fixed starting point and never jumps when the system clock is changed.
+extern function hrtime(): int;
+
+// The timestamp (by default, now) formatted with PHP's date() letters in the
+// current timezone, such as "Y-m-d H:i:s". Escape a letter with "\\".
+extern function date(string format, int timestamp = -9223372036854775808): string;
+
+// Like date, in UTC.
+extern function gmdate(string format, int timestamp = -9223372036854775808): string;
+
+// The timestamp of a local date and time. Out-of-range values roll over:
+// month 13 is January of the next year, day 0 the last day of the previous
+// month.
+extern function mktime(int hour, int minute = 0, int second = 0, int month = 1, int day = 1, int year = 1970): int;
+
+// Like mktime, in UTC.
+extern function gmmktime(int hour, int minute = 0, int second = 0, int month = 1, int day = 1, int year = 1970): int;
+
+// Whether the date exists in the Gregorian calendar (years 1 to 32767).
+extern function checkdate(int month, int day, int year): bool;
+
+// Parses an ISO 8601 date ("2026-11-19"), date and time ("2026-11-19 14:30",
+// "2026-11-19T14:30:00"), optionally with "Z" or an offset ("+02:00").
+// Without an offset the time is local. Throws InvalidArgumentException for
+// anything else.
+extern function strtotime(string text): int;
+
+// Sets the timezone used by date and mktime, such as "Europe/London" or
+// "UTC". Throws InvalidArgumentException for an unknown zone.
+extern function date_default_timezone_set(string zone): void;
+
+// The current timezone's name.
+extern function date_default_timezone_get(): string;
+
+// Pauses the program. Negative values throw InvalidArgumentException.
+extern function sleep(int seconds): void;
+extern function usleep(int microseconds): void;

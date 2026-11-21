@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>exit - qiq Manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <button class="menu-toggle" aria-label="Show menu" onclick="document.body.classList.toggle('menu-open')">☰</button>
+  <a class="brand" href="introduction.html"><span class="logo">qiq</span><span class="brand-text">Manual</span></a>
+  <div class="search">
+    <input id="search" type="search" placeholder="Search the manual" autocomplete="off" aria-label="Search the manual">
+    <ul id="search-results" hidden></ul>
+  </div>
+</header>
+<div class="layout">
+<nav class="sidebar" aria-label="Manual">
+<h2>Getting started</h2><ul>
+<li><a href="introduction.html">Introduction</a>
+</li>
+<li><a href="installation.html">Installing and running</a>
+</li>
+</ul>
+<h2>Language reference</h2><ul>
+<li><a href="basic-syntax.html">Basic syntax</a>
+</li>
+<li><a href="types.html">Types</a>
+</li>
+<li><a href="variables.html">Variables</a>
+</li>
+<li><a href="operators.html">Operators</a>
+</li>
+<li><a href="control-structures.html">Control structures</a>
+</li>
+<li><a href="functions.html">Functions</a>
+</li>
+<li><a href="anonymous-functions.html">Anonymous functions</a>
+</li>
+<li><a href="strings.html">Strings and chars</a>
+</li>
+<li><a href="arrays.html">Arrays</a>
+</li>
+<li><a href="maps.html">Maps</a>
+</li>
+<li><a href="classes.html">Classes and objects</a>
+</li>
+<li><a href="static.html">Static members</a>
+</li>
+<li><a href="interfaces.html">Interfaces</a>
+</li>
+<li><a href="exceptions.html">Exceptions</a>
+</li>
+<li><a href="modules.html">Modules</a>
+</li>
+<li><a href="packages.html">Packages</a>
+</li>
+<li><a href="memory.html">Memory management</a>
+</li>
+<li><a href="printing.html">Printing</a>
+</li>
+</ul>
+<h2>Standard library</h2><ul>
+<li><a href="stdlib.html">Overview</a>
+</li>
+<li><a href="ref.general.html">General</a>
+</li>
+<li><a href="ref.strings.html">Strings</a>
+</li>
+<li><a href="ref.arrays.html">Arrays</a>
+</li>
+<li><a href="ref.maps.html">Maps</a>
+</li>
+<li><a href="ref.files.html">Files</a>
+</li>
+<li><a href="ref.datetime.html">Date and time</a>
+</li>
+<li><a href="ref.json.html">JSON</a>
+</li>
+<li><a href="ref.http.html">HTTP</a>
+</li>
+<li><a href="ref.http-server.html">HTTP server</a>
+</li>
+<li><a href="ref.program.html">Program</a>
+<ul class="children">
+<li><a href="function.argv.html"><code>argv</code></a></li>
+<li><a href="function.exit.html" class="active"><code>exit</code></a></li>
+<li><a href="function.getenv.html"><code>getenv</code></a></li>
+</ul>
+</li>
+<li><a href="ref.conversions.html">Conversions</a>
+</li>
+<li><a href="ref.output.html">Output</a>
+</li>
+<li><a href="class.file.html">The File class</a>
+</li>
+<li><a href="class.response.html">The Response class</a>
+</li>
+<li><a href="class.request.html">The Request class</a>
+</li>
+<li><a href="class.responsewriter.html">The ResponseWriter class</a>
+</li>
+<li><a href="class.router.html">The Router class</a>
+</li>
+<li><a href="class.socket.html">The Socket class</a>
+</li>
+<li><a href="exception-classes.html">Exception classes</a>
+</li>
+</ul>
+</nav>
+<main class="content">
+<div class="breadcrumbs"><a href="stdlib.html">Standard library</a> › <a href="ref.program.html">Program</a> › <span>exit</span></div>
+<h1 class="refname"><code>exit</code></h1>
+<p class="refpurpose"><code>exit</code> — End the program with an exit status</p>
+<h2>Description</h2>
+<div class="synopsis"><code><span class="fn">exit</span>(<span class="type">int</span> <span class="param">status</span> = <span class="default">0</span>): <span class="type">void</span></code></div>
+<p class="import">Import it with <code>import exit from "std/os";</code></p>
+<p>Flushes output and ends the program immediately with <code>status</code>, which the shell sees as <code>$?</code>. Without <code>exit</code>, a program exits with 0, or with 1 after an uncaught exception.</p>
+<h2>Parameters</h2>
+<dl class="parameters">
+<dt><code>status</code></dt><dd>The exit status, from 0 (success) to 255.</dd>
+</dl>
+<h2>Return values</h2><p>It doesn't return.</p>
+<h2>Errors/Exceptions</h2><ul>
+<li><code>InvalidArgumentException</code> if <code>status</code> is outside 0 to 255.</li>
+</ul>
+<h2>Examples</h2>
+<div class="example"><p class="example-title"><strong>Example #1</strong> Stopping early</p>
+<div class="code qiq"><pre><code><span class="kw">import</span> argv, exit <span class="kw">from</span> <span class="string">&quot;std/os&quot;</span>;
+
+<span class="kw">print</span>(<span class="string">&quot;checking input&quot;</span>);
+<span class="type">string</span>[] args = <span class="fn">argv</span>();
+<span class="kw">if</span> (<span class="fn">len</span>(args) &lt; <span class="number">2</span>) {
+    <span class="kw">print</span>(<span class="string">&quot;no input given&quot;</span>);
+    <span class="fn">exit</span>(<span class="number">1</span>);
+}
+<span class="kw">print</span>(<span class="string">&quot;never printed without an argument&quot;</span>);</code></pre></div>
+<div class="output"><div class="output-label">Output</div><pre>checking input
+no input given</pre></div>
+</div>
+<h2>Notes</h2>
+<div class="note"><strong>Note:</strong> <code>finally</code> blocks don't run, as with PHP's <code>exit</code>. To run them, throw an exception and let it reach the top of the program, which exits with status 1.</div>
+<h2>See also</h2><p><a href="function.argv.html"><code>argv</code></a></p>
+<nav class="pager"><a class="prev" href="function.argv.html">« argv</a><a class="next" href="function.getenv.html">getenv »</a></nav>
+</main>
+</div>
+<script src="search.js"></script>
+</body>
+</html>

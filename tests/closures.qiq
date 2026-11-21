@@ -1,0 +1,106 @@
+// Anonymous functions: capturing variables (shared, as in Go and JavaScript),
+// arrow functions, function types, closures returned from functions, and
+// named functions used as values.
+// Shared capture.
+int count = 0;
+function(): void increment = function(): void {
+    count = count + 1;
+};
+increment();
+increment();
+print(count);
+
+// Arrow functions, inferred and expected types.
+function(int): int twice = fn(int x) => x * 2;
+print(twice(21));
+triple = fn(int x) => x * 3;
+print(triple(5));
+greet = fn(string name) => "hello " + name;
+print(greet("Ada"));
+
+// Returned closures keep their captured variables alive.
+function makeCounter(int start): function(): int {
+    int current = start;
+    return function(): int {
+        current = current + 1;
+        return current;
+    };
+}
+function(): int a = makeCounter(10);
+function(): int b = makeCounter(100);
+print(a(), a(), b(), a());
+
+function makeAdder(int n): function(int): int {
+    return fn(int x) => x + n;
+}
+print(makeAdder(2)(3));
+
+// Recursion through a captured variable.
+function(int): int factorial = null;
+factorial = function(int n): int {
+    if (n <= 1) {
+        return 1;
+    }
+    return n * factorial(n - 1);
+};
+print(factorial(10));
+
+// Closures created in a loop each capture their own iteration's value.
+(function(): int)[] makers = [];
+foreach (range(1, 3) as i) {
+    array_push(makers, fn() => i * 10);
+}
+foreach (makers as maker) {
+    print(maker());
+}
+
+// Function values in maps and as parameters.
+map[string, function(int, int): int] operations = {
+    "add" => fn(int x, int y) => x + y,
+    "max" => function(int x, int y): int { if (x > y) { return x; } return y; }
+};
+print(operations["add"](2, 3), operations["max"](7, 4));
+
+function apply(int[] values, function(int): int f): int[] {
+    int[] result;
+    foreach (values as v) {
+        array_push(result, f(v));
+    }
+    return result;
+}
+print(apply([1, 2, 3], fn(int v) => v * v));
+
+// A named function as a value.
+function square(int x): int {
+    return x * x;
+}
+print(apply([4, 5], square));
+function(string): string shout = strtoupper;
+print(shout("quiet"));
+
+// Methods: closures use this, and properties can hold functions.
+class Button {
+    public string label;
+    public function(string): void onClick;
+    private int clicks;
+
+    function __construct(string label) {
+        this->label = label;
+        this->onClick = function(string who): void {
+            this->clicks = this->clicks + 1;
+            print(who, "clicked", this->label, this->clicks);
+        };
+    }
+}
+Button button = new Button("OK");
+button->onClick("Ada");
+button->onClick("Lin");
+(button->onClick)("Grace");
+
+// Void arrow functions and calls through expressions.
+function log(string s): void {
+    print("says:", s);
+}
+function(string): void say = fn(string s) => log(s);
+say("hi");
+print(null == say, (fn(int x) => x + 1)(41));

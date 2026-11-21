@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Standard library - qiq Manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <button class="menu-toggle" aria-label="Show menu" onclick="document.body.classList.toggle('menu-open')">☰</button>
+  <a class="brand" href="introduction.html"><span class="logo">qiq</span><span class="brand-text">Manual</span></a>
+  <div class="search">
+    <input id="search" type="search" placeholder="Search the manual" autocomplete="off" aria-label="Search the manual">
+    <ul id="search-results" hidden></ul>
+  </div>
+</header>
+<div class="layout">
+<nav class="sidebar" aria-label="Manual">
+<h2>Getting started</h2><ul>
+<li><a href="introduction.html">Introduction</a>
+</li>
+<li><a href="installation.html">Installing and running</a>
+</li>
+</ul>
+<h2>Language reference</h2><ul>
+<li><a href="basic-syntax.html">Basic syntax</a>
+</li>
+<li><a href="types.html">Types</a>
+</li>
+<li><a href="variables.html">Variables</a>
+</li>
+<li><a href="operators.html">Operators</a>
+</li>
+<li><a href="control-structures.html">Control structures</a>
+</li>
+<li><a href="functions.html">Functions</a>
+</li>
+<li><a href="anonymous-functions.html">Anonymous functions</a>
+</li>
+<li><a href="strings.html">Strings and chars</a>
+</li>
+<li><a href="arrays.html">Arrays</a>
+</li>
+<li><a href="maps.html">Maps</a>
+</li>
+<li><a href="classes.html">Classes and objects</a>
+</li>
+<li><a href="static.html">Static members</a>
+</li>
+<li><a href="interfaces.html">Interfaces</a>
+</li>
+<li><a href="exceptions.html">Exceptions</a>
+</li>
+<li><a href="modules.html">Modules</a>
+</li>
+<li><a href="packages.html">Packages</a>
+</li>
+<li><a href="memory.html">Memory management</a>
+</li>
+<li><a href="printing.html">Printing</a>
+</li>
+</ul>
+<h2>Standard library</h2><ul>
+<li><a href="stdlib.html" class="active">Overview</a>
+</li>
+<li><a href="ref.general.html">General</a>
+</li>
+<li><a href="ref.strings.html">Strings</a>
+</li>
+<li><a href="ref.arrays.html">Arrays</a>
+</li>
+<li><a href="ref.maps.html">Maps</a>
+</li>
+<li><a href="ref.files.html">Files</a>
+</li>
+<li><a href="ref.datetime.html">Date and time</a>
+</li>
+<li><a href="ref.json.html">JSON</a>
+</li>
+<li><a href="ref.http.html">HTTP</a>
+</li>
+<li><a href="ref.http-server.html">HTTP server</a>
+</li>
+<li><a href="ref.program.html">Program</a>
+</li>
+<li><a href="ref.conversions.html">Conversions</a>
+</li>
+<li><a href="ref.output.html">Output</a>
+</li>
+<li><a href="class.file.html">The File class</a>
+</li>
+<li><a href="class.response.html">The Response class</a>
+</li>
+<li><a href="class.request.html">The Request class</a>
+</li>
+<li><a href="class.responsewriter.html">The ResponseWriter class</a>
+</li>
+<li><a href="class.router.html">The Router class</a>
+</li>
+<li><a href="class.socket.html">The Socket class</a>
+</li>
+<li><a href="exception-classes.html">Exception classes</a>
+</li>
+</ul>
+</nav>
+<main class="content">
+<div class="breadcrumbs"><a href="introduction.html">Manual</a> › <span>Standard library</span></div>
+<h1>Standard library</h1>
+<p>The everyday parts of the standard library are available in every file without an <code>import</code>, like PHP's built-in functions: the general functions (<code>len</code>, <code>print</code>, the conversions, and the array, map, and JSON functions), the string functions, and the exception classes. They can't be redeclared: declaring your own <code>substr</code> is a compile error. The rest is in modules that you import by name, like Go's packages:</p>
+<table><thead><tr><th>Import path</th><th>Contents</th></tr></thead><tbody><tr><td><code>std/file</code></td><td><a href="ref.files.html">Files</a> and the <a href="class.file.html">File</a> class</td></tr><tr><td><code>std/time</code></td><td><a href="ref.datetime.html">Date and time</a></td></tr><tr><td><code>std/os</code></td><td>The <a href="ref.program.html">program</a>: arguments, exit status, environment</td></tr><tr><td><code>std/memory</code></td><td><a href="function.gc-collect-cycles.html">gc_collect_cycles</a></td></tr><tr><td><code>std/net</code></td><td>The <a href="class.socket.html">Socket</a> class</td></tr><tr><td><code>std/http</code></td><td>The <a href="ref.http.html">HTTP client</a> and URL encoding</td></tr><tr><td><code>std/http/server</code></td><td>The <a href="ref.http-server.html">HTTP server</a></td></tr></tbody></table>
+<pre class="code">import File, file_get_contents from "std/file";
+import date from "std/time";</pre>
+<p>Names from these modules are free for your own code when you don't import them: a program can declare its own <code>File</code> class or <code>time</code> function. Each function's page shows its import line. Strings are UTF-8, and every position and length counts characters, not bytes.</p>
+<h2><a href="ref.general.html">General</a></h2><p><code>len</code> works on several types, so like <code>to_int</code> and the other conversions it's part of the compiler rather than declared in <code>stdlib/</code>. <code>gc_collect_cycles</code> controls memory management.</p>
+<table class="listing"><thead><tr><th>Function</th><th>Description</th></tr></thead><tbody><tr><td><a href="function.len.html"><code>len</code></a></td><td>The length of a string, array, or map</td></tr><tr><td><a href="function.gc-collect-cycles.html"><code>gc_collect_cycles</code></a></td><td>Free garbage reference cycles now</td></tr></tbody></table>
+<h2><a href="ref.strings.html">Strings</a></h2><p>Functions for working with <code>string</code> values. Strings are UTF-8, and positions and lengths count characters (Unicode scalar values), so <code>len("héllo")</code> is 5 (see <a href="function.len.html">len</a>). Concatenate with <code>+</code>; see <a href="strings.html">Strings and chars</a>.</p>
+<table class="listing"><thead><tr><th>Function</th><th>Description</th></tr></thead><tbody><tr><td><a href="function.substr.html"><code>substr</code></a></td><td>Return part of a string</td></tr><tr><td><a href="function.strpos.html"><code>strpos</code></a></td><td>Find the position of the first occurrence of a substring</td></tr><tr><td><a href="function.str-contains.html"><code>str_contains</code></a></td><td>Determine if a string contains a substring</td></tr><tr><td><a href="function.str-starts-with.html"><code>str_starts_with</code></a></td><td>Check if a string starts with a given substring</td></tr><tr><td><a href="function.str-ends-with.html"><code>str_ends_with</code></a></td><td>Check if a string ends with a given substring</td></tr><tr><td><a href="function.str-replace.html"><code>str_replace</code></a></td><td>Replace all occurrences of a substring</td></tr><tr><td><a href="function.htmlspecialchars.html"><code>htmlspecialchars</code></a></td><td>Escape text for HTML</td></tr><tr><td><a href="function.sprintf.html"><code>sprintf</code></a></td><td>Format values into a string</td></tr><tr><td><a href="function.str-repeat.html"><code>str_repeat</code></a></td><td>Repeat a string</td></tr><tr><td><a href="function.strtoupper.html"><code>strtoupper</code></a></td><td>Make a string uppercase</td></tr><tr><td><a href="function.strtolower.html"><code>strtolower</code></a></td><td>Make a string lowercase</td></tr><tr><td><a href="function.ucfirst.html"><code>ucfirst</code></a></td><td>Make a string's first character uppercase</td></tr><tr><td><a href="function.strrev.html"><code>strrev</code></a></td><td>Reverse a string</td></tr><tr><td><a href="function.trim.html"><code>trim</code></a></td><td>Strip characters from the beginning and end of a string</td></tr><tr><td><a href="function.explode.html"><code>explode</code></a></td><td>Split a string by a separator</td></tr><tr><td><a href="function.implode.html"><code>implode</code></a></td><td>Join array elements with a string</td></tr><tr><td><a href="function.string-to-bytes.html"><code>string_to_bytes</code></a></td><td>Get a string's UTF-8 bytes</td></tr><tr><td><a href="function.bytes-to-string.html"><code>bytes_to_string</code></a></td><td>Decode UTF-8 bytes into a string</td></tr></tbody></table>
+<h2><a href="ref.arrays.html">Arrays</a></h2><p><code>range</code> builds arrays of numbers or characters; the other functions grow and shrink <a href="arrays.html">arrays</a> in place, like Python's list methods. They're built into the compiler, because they work with any element type. Indexes always run from 0 to <code>len(array) - 1</code>: removing an element moves the later ones down. Every variable that refers to the array sees the change.</p>
+<table class="listing"><thead><tr><th>Function</th><th>Description</th></tr></thead><tbody><tr><td><a href="function.range.html"><code>range</code></a></td><td>An array of numbers or characters from start to end</td></tr><tr><td><a href="function.array-push.html"><code>array_push</code></a></td><td>Add values to the end of an array</td></tr><tr><td><a href="function.array-pop.html"><code>array_pop</code></a></td><td>Remove and return the last element</td></tr><tr><td><a href="function.array-shift.html"><code>array_shift</code></a></td><td>Remove and return the first element</td></tr><tr><td><a href="function.array-unshift.html"><code>array_unshift</code></a></td><td>Add values to the front of an array</td></tr><tr><td><a href="function.array-splice.html"><code>array_splice</code></a></td><td>Remove or replace a range of elements</td></tr></tbody></table>
+<h2><a href="ref.maps.html">Maps</a></h2><p>Functions for <a href="maps.html">maps</a>. They're built into the compiler, because they work with any key and value types. Maps keep insertion order, so <code>map_keys</code> and <code>map_values</code> return entries in the order they were added. To read a key with a default, use <code>map[key] ?? default</code>.</p>
+<table class="listing"><thead><tr><th>Function</th><th>Description</th></tr></thead><tbody><tr><td><a href="function.map-key-exists.html"><code>map_key_exists</code></a></td><td>Check whether a map has a key</td></tr><tr><td><a href="function.map-keys.html"><code>map_keys</code></a></td><td>The keys of a map, as an array</td></tr><tr><td><a href="function.map-values.html"><code>map_values</code></a></td><td>The values of a map, as an array</td></tr><tr><td><a href="function.in-map.html"><code>in_map</code></a></td><td>Check whether a map has a value</td></tr><tr><td><a href="function.unset.html"><code>unset</code></a></td><td>Remove an entry from a map</td></tr></tbody></table>
+<h2><a href="ref.files.html">Files</a></h2><p>Functions for reading and writing files and directories. Paths are relative to the directory the program runs in, not to the source file. Failures throw exceptions; see <a href="exception-classes.html">Exception classes</a>.</p>
+<table class="listing"><thead><tr><th>Function</th><th>Description</th></tr></thead><tbody><tr><td><a href="function.file-get-contents.html"><code>file_get_contents</code></a></td><td>Read an entire file into a string</td></tr><tr><td><a href="function.file-put-contents.html"><code>file_put_contents</code></a></td><td>Write a string to a file</td></tr><tr><td><a href="function.file.html"><code>file</code></a></td><td>Read a file into an array of lines</td></tr><tr><td><a href="function.file-exists.html"><code>file_exists</code></a></td><td>Check whether a file or directory exists</td></tr><tr><td><a href="function.is-file.html"><code>is_file</code></a></td><td>Check whether a path is a regular file</td></tr><tr><td><a href="function.is-dir.html"><code>is_dir</code></a></td><td>Check whether a path is a directory</td></tr><tr><td><a href="function.scandir.html"><code>scandir</code></a></td><td>List the names in a directory</td></tr><tr><td><a href="function.file-get-bytes.html"><code>file_get_bytes</code></a></td><td>Read an entire file as raw bytes</td></tr><tr><td><a href="function.file-put-bytes.html"><code>file_put_bytes</code></a></td><td>Write raw bytes to a file</td></tr></tbody></table>
+<h2><a href="ref.datetime.html">Date and time</a></h2><p>A <em>timestamp</em> is an <code>int</code> counting seconds since 1970-01-01 00:00:00 UTC. Timestamps work like PHP's: get the current one with <code>time</code>, format one with <code>date</code>, and build one with <code>mktime</code> or <code>strtotime</code>. Local time follows the system (the <code>TZ</code> environment variable, or <code>/etc/localtime</code>) until the program calls <code>date_default_timezone_set</code>. Zone data is read from the system's zoneinfo files when the program runs, so compiled programs stay static.</p>
+<table class="listing"><thead><tr><th>Function</th><th>Description</th></tr></thead><tbody><tr><td><a href="function.time.html"><code>time</code></a></td><td>The current timestamp</td></tr><tr><td><a href="function.microtime.html"><code>microtime</code></a></td><td>The current time with microseconds</td></tr><tr><td><a href="function.hrtime.html"><code>hrtime</code></a></td><td>A monotonic clock in nanoseconds</td></tr><tr><td><a href="function.date.html"><code>date</code></a></td><td>Format a timestamp in the current timezone</td></tr><tr><td><a href="function.gmdate.html"><code>gmdate</code></a></td><td>Format a timestamp in UTC</td></tr><tr><td><a href="function.mktime.html"><code>mktime</code></a></td><td>Build a timestamp from a local date and time</td></tr><tr><td><a href="function.gmmktime.html"><code>gmmktime</code></a></td><td>Build a timestamp from a UTC date and time</td></tr><tr><td><a href="function.checkdate.html"><code>checkdate</code></a></td><td>Check whether a date exists</td></tr><tr><td><a href="function.strtotime.html"><code>strtotime</code></a></td><td>Parse an ISO 8601 date</td></tr><tr><td><a href="function.date-default-timezone-set.html"><code>date_default_timezone_set</code></a></td><td>Set the timezone for local times</td></tr><tr><td><a href="function.date-default-timezone-get.html"><code>date_default_timezone_get</code></a></td><td>The current timezone's name</td></tr><tr><td><a href="function.sleep.html"><code>sleep</code></a></td><td>Pause for whole seconds</td></tr><tr><td><a href="function.usleep.html"><code>usleep</code></a></td><td>Pause for microseconds</td></tr></tbody></table>
+<h2><a href="ref.json.html">JSON</a></h2><p>Converting values to and from JSON. Because qiq is statically typed, <code>json_decode</code> decodes into the type its result is used as (a variable, property, argument, or return value), and checks the JSON against it, so the rest of the program works with ordinary typed values. Both are built into the compiler and can't be redeclared.</p>
+<table class="listing"><thead><tr><th>Function</th><th>Description</th></tr></thead><tbody><tr><td><a href="function.json-encode.html"><code>json_encode</code></a></td><td>Convert a value to JSON</td></tr><tr><td><a href="function.json-decode.html"><code>json_decode</code></a></td><td>Convert JSON to a typed value</td></tr></tbody></table>
+<h2><a href="ref.http.html">HTTP</a></h2><p>HTTP and HTTPS requests in the style of Python's <code>requests</code> module, plus URL encoding. The client is written in qiq (<code>stdlib/http.qiq</code>) on top of the <a href="class.socket.html">Socket</a> class, and returns a <a href="class.response.html">Response</a>. HTTPS uses Mbed TLS, built into qiq, and always checks the server's certificate against the system's CA certificates. Network failures throw <code>NetworkException</code>; error statuses such as 404 don't, until you call <code>raiseForStatus()</code>.</p>
+<table class="listing"><thead><tr><th>Function</th><th>Description</th></tr></thead><tbody><tr><td><a href="function.http-request.html"><code>http_request</code></a></td><td>Send an HTTP request</td></tr><tr><td><a href="function.http-get.html"><code>http_get</code></a></td><td>Send a GET request</td></tr><tr><td><a href="function.http-post.html"><code>http_post</code></a></td><td>Send a POST request</td></tr><tr><td><a href="function.urlencode.html"><code>urlencode</code></a></td><td>Percent-encode text for a query string</td></tr><tr><td><a href="function.rawurlencode.html"><code>rawurlencode</code></a></td><td>Percent-encode text for a URL path</td></tr><tr><td><a href="function.urldecode.html"><code>urldecode</code></a></td><td>Decode percent-encoded text</td></tr><tr><td><a href="function.rawurldecode.html"><code>rawurldecode</code></a></td><td>Decode a percent-encoded URL path</td></tr><tr><td><a href="function.http-build-query.html"><code>http_build_query</code></a></td><td>Build a query string from a map</td></tr></tbody></table>
+<h2><a href="ref.http-server.html">HTTP server</a></h2><p>An HTTP server in the style of Go's <code>net/http</code>. A <em>handler</em> is any <code>function(Request, ResponseWriter): void</code>, usually an <a href="anonymous-functions.html">anonymous function</a>: it reads the <a href="class.request.html">Request</a> and writes the response with the <a href="class.responsewriter.html">ResponseWriter</a>. A <a href="class.router.html">Router</a> sends each request to a handler by method and path, and <a href="function.http-serve.html">http_serve</a> runs the server. To serve a directory of files without writing any code, run <code>qiq serve</code>.</p>
+<table class="listing"><thead><tr><th>Function</th><th>Description</th></tr></thead><tbody><tr><td><a href="function.http-serve.html"><code>http_serve</code></a></td><td>Run an HTTP server</td></tr><tr><td><a href="function.http-file-server.html"><code>http_file_server</code></a></td><td>A handler that serves files from a directory</td></tr><tr><td><a href="function.http-strip-prefix.html"><code>http_strip_prefix</code></a></td><td>Remove a prefix from the path before calling a handler</td></tr><tr><td><a href="function.http-log.html"><code>http_log</code></a></td><td>Log each request to stderr</td></tr><tr><td><a href="function.http-content-type.html"><code>http_content_type</code></a></td><td>The Content-Type for a file name</td></tr></tbody></table>
+<h2><a href="ref.program.html">Program</a></h2><p>The running program: its command-line arguments, its exit status, and its environment variables.</p>
+<table class="listing"><thead><tr><th>Function</th><th>Description</th></tr></thead><tbody><tr><td><a href="function.argv.html"><code>argv</code></a></td><td>The command-line arguments</td></tr><tr><td><a href="function.exit.html"><code>exit</code></a></td><td>End the program with an exit status</td></tr><tr><td><a href="function.getenv.html"><code>getenv</code></a></td><td>Read an environment variable</td></tr></tbody></table>
+<h2><a href="ref.conversions.html">Conversions</a></h2><p>qiq never converts between types implicitly: <code>1 + 1.5</code> and <code>"n" + 1</code> are compile errors. These built-in functions convert explicitly. They are part of the compiler rather than declared in <code>stdlib/</code>, because each accepts several types, and like other built-ins they can't be redeclared. Each also accepts its own result type and returns the value unchanged.</p>
+<table class="listing"><thead><tr><th>Function</th><th>Description</th></tr></thead><tbody><tr><td><a href="function.to-int.html"><code>to_int</code></a></td><td>Convert a value to an int</td></tr><tr><td><a href="function.to-double.html"><code>to_double</code></a></td><td>Convert a value to a double</td></tr><tr><td><a href="function.to-byte.html"><code>to_byte</code></a></td><td>Convert an int to a byte</td></tr><tr><td><a href="function.to-string.html"><code>to_string</code></a></td><td>Convert a value to a string</td></tr></tbody></table>
+<h2><a href="ref.output.html">Output</a></h2><p>Writing to standard output. See also <a href="printing.html">Printing</a> in the language reference.</p>
+<table class="listing"><thead><tr><th>Function</th><th>Description</th></tr></thead><tbody><tr><td><a href="function.print.html"><code>print</code></a></td><td>Write values to standard output</td></tr></tbody></table>
+<h2><a href="class.file.html">The File class</a></h2><p>Reading and writing files a line or a chunk at a time, including standard input and output.</p>
+<h2><a href="class.response.html">The Response class</a></h2><p>The result of an HTTP request: status, headers, and body.</p>
+<h2><a href="class.request.html">The Request class</a></h2><p>A request received by the HTTP server: method, path, headers, and body.</p>
+<h2><a href="class.responsewriter.html">The ResponseWriter class</a></h2><p>Builds the HTTP server's response to a request.</p>
+<h2><a href="class.router.html">The Router class</a></h2><p>Sends each HTTP request to a handler by method and path.</p>
+<h2><a href="class.socket.html">The Socket class</a></h2><p>TCP connections, optionally encrypted with TLS, for talking to network services.</p>
+<h2><a href="exception-classes.html">Exception classes</a></h2><p>The exception classes thrown by the language and the standard library.</p>
+<nav class="pager"><a class="prev" href="printing.html">« Printing</a><a class="next" href="ref.general.html">General »</a></nav>
+</main>
+</div>
+<script src="search.js"></script>
+</body>
+</html>

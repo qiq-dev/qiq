@@ -1,0 +1,38 @@
+// An uninitialized array reference does not allocate storage.
+int[] reference;
+
+// Brace initialization allocates and fills the listed values.
+int[] values = [1, 2, 3];
+double[] weights = [1.5, 2.5];
+bool[] flags = [true, false];
+string[] words = ["first", "second"];
+char[] letters = ['a', 'é'];
+
+// Sized arrays are zero-initialized.
+int length = 5;
+int[] zeroes = new int[length];
+double[] dynamicWeights = new double[1];
+bool[] dynamicFlags = new bool[1];
+string[] dynamicWords = new string[1];
+char[] dynamicLetters = new char[1];
+
+values[1] = values[0] + 8;
+weights[0] = 3.75;
+flags[1] = true;
+words[0] = "updated";
+letters[1] = '界';
+dynamicWeights[0] = 4.5;
+dynamicFlags[0] = true;
+dynamicWords[0] = "heap";
+dynamicLetters[0] = 'Ω';
+
+print(zeroes[0]);
+print(values[1]);
+print(weights[0]);
+print(flags[1]);
+print(words[0]);
+print(letters[1]);
+print(dynamicWeights[0]);
+print(dynamicFlags[0]);
+print(dynamicWords[0]);
+print(dynamicLetters[0]);

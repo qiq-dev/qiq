@@ -1,0 +1,30 @@
+// Arrays and maps print like qiq literals.
+int[] numbers = [1, 2, 3];
+print(numbers);
+print(["a", "b,c", "quote\"d"]);
+print([[1, 2], [3]]);
+print([1.5, -2.0]);
+print([true, false]);
+print(['x', 'é']);
+print(new string[2]);
+print({"ada" => 36});
+print({"tags" => ["x", "y"]});
+int[] none = [];
+print(none);
+
+// Objects print as their class name: the actual class, not the declared one.
+class Shape {}
+class Square extends Shape {}
+Shape shape = new Square();
+print(shape);
+Shape[] shapes = [new Square(), new Shape()];
+print(shapes);
+
+// Several values print on one line, separated by spaces.
+string name = "Ada";
+int age = 36;
+print(name, age);
+print("age:", age, "adult:", age >= 18);
+print("scores", [9, 7], {"best" => 9});
+print();
+print("done");

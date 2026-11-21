@@ -1,0 +1,91 @@
+<!-- title: Maps -->
+<h1>Maps</h1>
+<p>A map stores values by key, written <code>map[keyType, valueType]</code>. It's the qiq counterpart of a PHP associative array.</p>
+
+```qiq
+map[string, int] ages = {"ada" => 36, "lin" => 29};
+ages["grace"] = 85;        // add an entry
+ages["ada"] = 37;          // update one
+print(ages["ada"], ages["grace"]);
+int total = 0;
+foreach (ages as name => age) {
+    total = total + age;
+}
+print(total, len(ages));
+```
+```output
+37 85
+151 3
+```
+
+<h2>Keys and values</h2>
+<ul>
+<li>Keys can be <code>int</code>, <code>double</code>, <code>bool</code>, <code>string</code>, or <code>char</code>. String and char keys compare by content; for doubles, <code>-0.0</code> and <code>0.0</code> are the same key, and NaN is rejected.</li>
+<li>Values can be any type, including arrays and other maps: <code>map[string, int[]]</code>, <code>map[string, map[string, int]]</code>.</li>
+<li>Reading a key that isn't in the map throws <code>KeyNotFoundException</code>.</li>
+<li><a href="function.len.html"><code>len(map)</code></a> is the number of entries.</li>
+</ul>
+
+<h2>Creating maps</h2>
+<p>A map literal is written <code>{key =&gt; value, ...}</code>. Its types come from its entries, and an empty <code>{}</code> takes its type from where it's used. A map declared without a value starts empty.</p>
+
+```qiq
+map[string, int[]] groups = {"small" => [1, 2], "none" => []};
+groups["big"] = [7, 8, 9];
+print(groups["small"], groups["none"], groups["big"]);
+map[int, string] names;
+names[1] = "one";
+print(names);
+```
+```output
+[1, 2] [] [7, 8, 9]
+{1 => "one"}
+```
+
+<h2>Maps are references</h2>
+<p>Like arrays, maps are shared when assigned or passed, so a function can fill in a map it's given. Map variables can be reassigned, for example to <code>{}</code> to start over.</p>
+
+<h2>Order</h2>
+<p>Maps keep their entries in the order the keys were first added, as PHP arrays and Python dicts do. <code>foreach</code>, <code>print</code>, <a href="function.map-keys.html"><code>map_keys</code></a>, and <a href="function.json-encode.html"><code>json_encode</code></a> all follow that order. Updating a key's value keeps its place; removing a key and adding it again moves it to the end.</p>
+
+<h2>Checking, reading, and removing keys</h2>
+
+```qiq
+map[string, int] stock = {"apples" => 3, "pears" => 0, "plums" => 12};
+
+if (map_key_exists("pears", stock)) {
+    print("pears are listed");
+}
+int kiwis = stock["kiwis"] ?? 0;     // a default instead of KeyNotFoundException
+unset(stock["pears"]);               // no error if the key isn't there
+print(stock, kiwis);
+print(map_keys(stock), map_values(stock), in_map(12, stock));
+```
+```output
+pears are listed
+{"apples" => 3, "plums" => 12} 0
+["apples", "plums"] [3, 12] 1
+```
+
+<ul>
+<li><a href="function.map-key-exists.html"><code>map_key_exists(key, map)</code></a> tests for a key, and <a href="function.in-map.html"><code>in_map(value, map)</code></a> for a value.</li>
+<li><code>map[key] ?? default</code> reads a key, or gives <code>default</code> when the key is missing (or its value is <code>null</code>); see <a href="operators.html">Operators</a>.</li>
+<li><a href="function.unset.html"><code>unset(map[key])</code></a> removes an entry.</li>
+<li><a href="function.map-keys.html"><code>map_keys</code></a> and <a href="function.map-values.html"><code>map_values</code></a> return the keys and values as arrays, in order.</li>
+</ul>
+
+<h2>Changing a map during foreach</h2>
+<p>Inside a <code>foreach</code> over a map, you can change values and remove entries, including ones the loop hasn't reached yet (they're skipped). Adding a new key to the same map throws <code>RuntimeException</code>, as in Python; collect the new entries in another map and add them after the loop.</p>
+
+```qiq
+map[string, int] scores = {"ada" => 90, "lin" => 40, "bob" => 75};
+foreach (scores as name => score) {
+    if (score < 50) {
+        unset(scores[name]);
+    }
+}
+print(scores);
+```
+```output
+{"ada" => 90, "bob" => 75}
+```

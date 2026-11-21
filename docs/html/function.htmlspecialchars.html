@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>htmlspecialchars - qiq Manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <button class="menu-toggle" aria-label="Show menu" onclick="document.body.classList.toggle('menu-open')">☰</button>
+  <a class="brand" href="introduction.html"><span class="logo">qiq</span><span class="brand-text">Manual</span></a>
+  <div class="search">
+    <input id="search" type="search" placeholder="Search the manual" autocomplete="off" aria-label="Search the manual">
+    <ul id="search-results" hidden></ul>
+  </div>
+</header>
+<div class="layout">
+<nav class="sidebar" aria-label="Manual">
+<h2>Getting started</h2><ul>
+<li><a href="introduction.html">Introduction</a>
+</li>
+<li><a href="installation.html">Installing and running</a>
+</li>
+</ul>
+<h2>Language reference</h2><ul>
+<li><a href="basic-syntax.html">Basic syntax</a>
+</li>
+<li><a href="types.html">Types</a>
+</li>
+<li><a href="variables.html">Variables</a>
+</li>
+<li><a href="operators.html">Operators</a>
+</li>
+<li><a href="control-structures.html">Control structures</a>
+</li>
+<li><a href="functions.html">Functions</a>
+</li>
+<li><a href="anonymous-functions.html">Anonymous functions</a>
+</li>
+<li><a href="strings.html">Strings and chars</a>
+</li>
+<li><a href="arrays.html">Arrays</a>
+</li>
+<li><a href="maps.html">Maps</a>
+</li>
+<li><a href="classes.html">Classes and objects</a>
+</li>
+<li><a href="static.html">Static members</a>
+</li>
+<li><a href="interfaces.html">Interfaces</a>
+</li>
+<li><a href="exceptions.html">Exceptions</a>
+</li>
+<li><a href="modules.html">Modules</a>
+</li>
+<li><a href="packages.html">Packages</a>
+</li>
+<li><a href="memory.html">Memory management</a>
+</li>
+<li><a href="printing.html">Printing</a>
+</li>
+</ul>
+<h2>Standard library</h2><ul>
+<li><a href="stdlib.html">Overview</a>
+</li>
+<li><a href="ref.general.html">General</a>
+</li>
+<li><a href="ref.strings.html">Strings</a>
+<ul class="children">
+<li><a href="function.substr.html"><code>substr</code></a></li>
+<li><a href="function.strpos.html"><code>strpos</code></a></li>
+<li><a href="function.str-contains.html"><code>str_contains</code></a></li>
+<li><a href="function.str-starts-with.html"><code>str_starts_with</code></a></li>
+<li><a href="function.str-ends-with.html"><code>str_ends_with</code></a></li>
+<li><a href="function.str-replace.html"><code>str_replace</code></a></li>
+<li><a href="function.htmlspecialchars.html" class="active"><code>htmlspecialchars</code></a></li>
+<li><a href="function.sprintf.html"><code>sprintf</code></a></li>
+<li><a href="function.str-repeat.html"><code>str_repeat</code></a></li>
+<li><a href="function.strtoupper.html"><code>strtoupper</code></a></li>
+<li><a href="function.strtolower.html"><code>strtolower</code></a></li>
+<li><a href="function.ucfirst.html"><code>ucfirst</code></a></li>
+<li><a href="function.strrev.html"><code>strrev</code></a></li>
+<li><a href="function.trim.html"><code>trim</code></a></li>
+<li><a href="function.explode.html"><code>explode</code></a></li>
+<li><a href="function.implode.html"><code>implode</code></a></li>
+<li><a href="function.string-to-bytes.html"><code>string_to_bytes</code></a></li>
+<li><a href="function.bytes-to-string.html"><code>bytes_to_string</code></a></li>
+</ul>
+</li>
+<li><a href="ref.arrays.html">Arrays</a>
+</li>
+<li><a href="ref.maps.html">Maps</a>
+</li>
+<li><a href="ref.files.html">Files</a>
+</li>
+<li><a href="ref.datetime.html">Date and time</a>
+</li>
+<li><a href="ref.json.html">JSON</a>
+</li>
+<li><a href="ref.http.html">HTTP</a>
+</li>
+<li><a href="ref.http-server.html">HTTP server</a>
+</li>
+<li><a href="ref.program.html">Program</a>
+</li>
+<li><a href="ref.conversions.html">Conversions</a>
+</li>
+<li><a href="ref.output.html">Output</a>
+</li>
+<li><a href="class.file.html">The File class</a>
+</li>
+<li><a href="class.response.html">The Response class</a>
+</li>
+<li><a href="class.request.html">The Request class</a>
+</li>
+<li><a href="class.responsewriter.html">The ResponseWriter class</a>
+</li>
+<li><a href="class.router.html">The Router class</a>
+</li>
+<li><a href="class.socket.html">The Socket class</a>
+</li>
+<li><a href="exception-classes.html">Exception classes</a>
+</li>
+</ul>
+</nav>
+<main class="content">
+<div class="breadcrumbs"><a href="stdlib.html">Standard library</a> › <a href="ref.strings.html">Strings</a> › <span>htmlspecialchars</span></div>
+<h1 class="refname"><code>htmlspecialchars</code></h1>
+<p class="refpurpose"><code>htmlspecialchars</code> — Escape text for HTML</p>
+<h2>Description</h2>
+<div class="synopsis"><code><span class="fn">htmlspecialchars</span>(<span class="type">string</span> <span class="param">text</span>): <span class="type">string</span></code></div>
+
+<p>Replaces <code>&amp;</code>, <code>&lt;</code>, <code>&gt;</code>, <code>&quot;</code>, and <code>'</code> with HTML entities, as PHP's <code>htmlspecialchars</code> does by default, so text from users can be put in an HTML page or attribute without being read as markup.</p>
+<h2>Parameters</h2>
+<dl class="parameters">
+<dt><code>text</code></dt><dd>The text to escape.</dd>
+</dl>
+<h2>Return values</h2><p>The escaped text.</p>
+<h2>Examples</h2>
+<div class="example"><p class="example-title"><strong>Example #1</strong> Escaping user input</p>
+<div class="code qiq"><pre><code><span class="type">string</span> name = <span class="string">&quot;&lt;b&gt;Tom&lt;/b&gt; &amp; &#x27;Jerry&#x27;&quot;</span>;
+<span class="kw">print</span>(<span class="string">&quot;&lt;p&gt;Hello, &quot;</span> + <span class="fn">htmlspecialchars</span>(name) + <span class="string">&quot;&lt;/p&gt;&quot;</span>);</code></pre></div>
+<div class="output"><div class="output-label">Output</div><pre>&lt;p&gt;Hello, &amp;lt;b&amp;gt;Tom&amp;lt;/b&amp;gt; &amp;amp; &amp;#039;Jerry&amp;#039;&lt;/p&gt;</pre></div>
+</div>
+<h2>See also</h2><p><a href="function.str-replace.html"><code>str_replace</code></a>, <a href="function.rawurlencode.html"><code>rawurlencode</code></a></p>
+<nav class="pager"><a class="prev" href="function.str-replace.html">« str_replace</a><a class="next" href="function.sprintf.html">sprintf »</a></nav>
+</main>
+</div>
+<script src="search.js"></script>
+</body>
+</html>

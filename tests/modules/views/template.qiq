@@ -1,0 +1,17 @@
+// Declarations only: imported files cannot contain top-level statements.
+interface Template {
+    function setVariable(string name, string var);
+    function getHtml(string template): string;
+}
+
+abstract class BaseView implements Template {
+    protected string title;
+
+    function __construct(string title) {
+        this->title = title;
+    }
+
+    function getTitle(): string {
+        return this->title;
+    }
+}

@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The Socket class - qiq Manual</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <button class="menu-toggle" aria-label="Show menu" onclick="document.body.classList.toggle('menu-open')">☰</button>
+  <a class="brand" href="introduction.html"><span class="logo">qiq</span><span class="brand-text">Manual</span></a>
+  <div class="search">
+    <input id="search" type="search" placeholder="Search the manual" autocomplete="off" aria-label="Search the manual">
+    <ul id="search-results" hidden></ul>
+  </div>
+</header>
+<div class="layout">
+<nav class="sidebar" aria-label="Manual">
+<h2>Getting started</h2><ul>
+<li><a href="introduction.html">Introduction</a>
+</li>
+<li><a href="installation.html">Installing and running</a>
+</li>
+</ul>
+<h2>Language reference</h2><ul>
+<li><a href="basic-syntax.html">Basic syntax</a>
+</li>
+<li><a href="types.html">Types</a>
+</li>
+<li><a href="variables.html">Variables</a>
+</li>
+<li><a href="operators.html">Operators</a>
+</li>
+<li><a href="control-structures.html">Control structures</a>
+</li>
+<li><a href="functions.html">Functions</a>
+</li>
+<li><a href="anonymous-functions.html">Anonymous functions</a>
+</li>
+<li><a href="strings.html">Strings and chars</a>
+</li>
+<li><a href="arrays.html">Arrays</a>
+</li>
+<li><a href="maps.html">Maps</a>
+</li>
+<li><a href="classes.html">Classes and objects</a>
+</li>
+<li><a href="static.html">Static members</a>
+</li>
+<li><a href="interfaces.html">Interfaces</a>
+</li>
+<li><a href="exceptions.html">Exceptions</a>
+</li>
+<li><a href="modules.html">Modules</a>
+</li>
+<li><a href="packages.html">Packages</a>
+</li>
+<li><a href="memory.html">Memory management</a>
+</li>
+<li><a href="printing.html">Printing</a>
+</li>
+</ul>
+<h2>Standard library</h2><ul>
+<li><a href="stdlib.html">Overview</a>
+</li>
+<li><a href="ref.general.html">General</a>
+</li>
+<li><a href="ref.strings.html">Strings</a>
+</li>
+<li><a href="ref.arrays.html">Arrays</a>
+</li>
+<li><a href="ref.maps.html">Maps</a>
+</li>
+<li><a href="ref.files.html">Files</a>
+</li>
+<li><a href="ref.datetime.html">Date and time</a>
+</li>
+<li><a href="ref.json.html">JSON</a>
+</li>
+<li><a href="ref.http.html">HTTP</a>
+</li>
+<li><a href="ref.http-server.html">HTTP server</a>
+</li>
+<li><a href="ref.program.html">Program</a>
+</li>
+<li><a href="ref.conversions.html">Conversions</a>
+</li>
+<li><a href="ref.output.html">Output</a>
+</li>
+<li><a href="class.file.html">The File class</a>
+</li>
+<li><a href="class.response.html">The Response class</a>
+</li>
+<li><a href="class.request.html">The Request class</a>
+</li>
+<li><a href="class.responsewriter.html">The ResponseWriter class</a>
+</li>
+<li><a href="class.router.html">The Router class</a>
+</li>
+<li><a href="class.socket.html" class="active">The Socket class</a>
+</li>
+<li><a href="exception-classes.html">Exception classes</a>
+</li>
+</ul>
+</nav>
+<main class="content">
+<div class="breadcrumbs"><a href="stdlib.html">Standard library</a> › <span>The Socket class</span></div>
+<h1>The Socket class</h1>
+<p>A <code>Socket</code> is a TCP connection to a server, optionally encrypted with TLS, for talking to services other than HTTP. It works like a <a href="class.file.html">File</a>: write text or bytes, and read lines or chunks. The <a href="ref.http.html">HTTP client</a> is written in qiq on top of it.</p><p class="import">Import it with <code>import Socket from "std/net";</code></p>
+<h2>Class synopsis</h2>
+<div class="synopsis"><code><span class="kw">final class</span> <span class="cls">Socket</span> {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">static function</span> <span class="fn">connect</span>(<span class="type">string</span> host, <span class="type">int</span> port, <span class="type">bool</span> tls = <span class="default">false</span>, <span class="type">int</span> timeout = <span class="default">30</span>): <span class="cls">Socket</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">write</span>(<span class="type">string</span> text): <span class="type">void</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">writeBytes</span>(<span class="type">byte[]</span> data): <span class="type">void</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">readLine</span>(): <span class="type">string</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">read</span>(<span class="type">int</span> length): <span class="type">byte[]</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">readExactly</span>(<span class="type">int</span> length): <span class="type">byte[]</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">readAll</span>(): <span class="type">byte[]</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">close</span>(): <span class="type">void</span><br>
+}</code></div>
+<table>
+<thead><tr><th>Method</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>Socket::connect(host, port, tls, timeout)</code></td><td>Connects to a host name or IP address (IPv4 or IPv6). With <code>tls</code>, encrypts the connection and checks the server's certificate and host name against the system's CA certificates (or <code>SSL_CERT_FILE</code> / <code>SSL_CERT_DIR</code>); TLS 1.2 and 1.3 are supported. Every connect, read, and write waits at most <code>timeout</code> seconds.</td></tr>
+<tr><td><code>write(text)</code>, <code>writeBytes(data)</code></td><td>Sends a string (as UTF-8) or bytes, all of it.</td></tr>
+<tr><td><code>readLine()</code></td><td>The next line without <code>\n</code> or <code>\r\n</code>, or <code>null</code> once the server has closed the connection. Bytes that aren't valid UTF-8 become U+FFFD, since network data can't be trusted to be well formed.</td></tr>
+<tr><td><code>read(length)</code></td><td>Up to <code>length</code> bytes, as soon as any arrive; an empty array once the connection is closed.</td></tr>
+<tr><td><code>readExactly(length)</code></td><td>Exactly <code>length</code> bytes; throws <code>NetworkException</code> if the connection closes first.</td></tr>
+<tr><td><code>readAll()</code></td><td>Everything until the server closes the connection.</td></tr>
+<tr><td><code>close()</code></td><td>Closes the connection (ending a TLS session properly). Closing twice does nothing. Freeing a <code>Socket</code> doesn't close it.</td></tr>
+</tbody>
+</table>
+<p>Failures throw <code>NetworkException</code>, a subclass of <code>IOException</code>, with messages such as <code>could not find host example.invalid</code>, <code>connection refused by localhost:9</code>, <code>timed out reading from api.example.com:443 after 30 seconds</code>, or <code>TLS certificate of expired.badssl.com:443 is not trusted: The certificate validity has expired</code>.</p>
+<h2>Example</h2>
+<pre class="code"><span class="kw">import</span> <span class="cls">Socket</span> <span class="kw">from</span> <span class="string">&quot;std/net&quot;</span>;
+
+<span class="cls">Socket</span> s = <span class="cls">Socket</span>::<span class="fn">connect</span>(<span class="lit">"example.com"</span>, <span class="lit">443</span>, tls: <span class="lit">true</span>);
+<span class="kw">try</span> {
+    s-&gt;<span class="fn">write</span>(<span class="lit">"HEAD / HTTP/1.1\r\nHost: example.com\r\nConnection: close\r\n\r\n"</span>);
+    <span class="kw">print</span>(s-&gt;<span class="fn">readLine</span>());      <span class="cmt">// HTTP/1.1 200 OK</span>
+} <span class="kw">finally</span> {
+    s-&gt;<span class="fn">close</span>();
+}</pre>
+<div class="note"><strong>Note:</strong> A program that uses <code>Socket</code> includes the TLS library (Mbed TLS), so its executable is about 750 KB rather than about 10 KB. Programs that don't use the network aren't affected.</div>
+
+<nav class="pager"><a class="prev" href="class.router.html">« The Router class</a><a class="next" href="exception-classes.html">Exception classes »</a></nav>
+</main>
+</div>
+<script src="search.js"></script>
+</body>
+</html>

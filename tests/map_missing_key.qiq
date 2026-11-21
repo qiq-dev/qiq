@@ -1,0 +1,2 @@
+map[string, int] counts = {"present" => 1};
+print(counts["missing"]);

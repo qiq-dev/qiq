@@ -1,0 +1,132 @@
+<!-- title: Static members -->
+<h1>Static members</h1>
+
+<h2>Static methods</h2>
+<p>A <code>static</code> method belongs to the class, not to an object. Call it with <code>ClassName::method(...)</code>, or <code>self::method(...)</code> inside the class.</p>
+
+```qiq
+class MathUtil {
+    static function clamp(int value, int low = 0, int high = 100): int {
+        if (value < low) {
+            return low;
+        }
+        if (value > high) {
+            return high;
+        }
+        return value;
+    }
+
+    static function percent(int part, int whole): int {
+        return self::clamp(part * 100 / whole);
+    }
+}
+print(MathUtil::clamp(150), MathUtil::percent(3, 4));
+```
+```output
+100 75
+```
+
+<ul>
+<li>A static method has no <code>this</code>; using it is an error. Instance methods can call static ones.</li>
+<li><code>::</code> is for static members and <code>-&gt;</code> for instance members; using the wrong one is an error that names the right one.</li>
+<li>Static methods are inherited, follow visibility rules, accept optional and named arguments, and can be <code>final</code>. They can't be abstract, constructors, or implement interface methods.</li>
+</ul>
+
+<p>A common use is a static factory, which can call a <code>private</code> constructor because it's inside the class:</p>
+
+```qiq
+class Temperature {
+    private double celsius;
+
+    private function __construct(double celsius) {
+        this->celsius = celsius;
+    }
+
+    static function fromFahrenheit(double value): Temperature {
+        return new Temperature((value - 32.0) * 5.0 / 9.0);
+    }
+
+    function celsius(): double {
+        return this->celsius;
+    }
+}
+print(Temperature::fromFahrenheit(212.0)->celsius());
+```
+```output
+100
+```
+
+<h2>Static properties</h2>
+<p>A <code>static</code> property holds one value for the class. It can have a literal initializer; without one it starts at zero, <code>false</code>, or <code>null</code>. Read and assign it with <code>ClassName::name</code>, <code>self::name</code>, <code>parent::name</code>, or <code>static::name</code>.</p>
+
+```qiq
+class Counter {
+    private static int count = 0;
+    public static string label = "hits";
+
+    static function increment(): int {
+        self::count = self::count + 1;
+        return self::count;
+    }
+}
+int first = Counter::increment();
+int second = Counter::increment();
+print(Counter::label, second);
+Counter::label = "visits";
+print(Counter::label);
+```
+```output
+hits 2
+visits
+```
+
+<ul>
+<li>Static properties are <code>private</code> by default, like instance properties.</li>
+<li>A subclass shares its parent's static property unless it redeclares it, which gives the subclass its own value. A redeclared static property must keep its type.</li>
+<li>Initializers must be literals, so arrays, maps, and objects start as <code>null</code> and are assigned later.</li>
+</ul>
+
+<h2>Late static binding</h2>
+<p><code>static::</code> refers to the class a call was made on, which may be a subclass of the class whose code is running; <code>self::</code> always refers to the class where the code is written. <code>static::method()</code>, <code>static::property</code>, and <code>new static(...)</code> use it, and <code>static</code> as a return type means "an instance of the class the call was made on":</p>
+
+```qiq
+class Model {
+    protected static string table = "models";
+
+    static function tableName(): string {
+        return static::table;
+    }
+
+    static function create(): static {
+        return new static();
+    }
+
+    function describe(): string {
+        return "a row in " + static::table;
+    }
+}
+
+class User extends Model {
+    protected static string table = "users";
+
+    function greet(): string {
+        return "hi";
+    }
+}
+
+print(Model::tableName(), User::tableName());
+User user = User::create();
+print(user->greet(), user->describe());
+```
+```output
+models users
+hi a row in users
+```
+
+<ul>
+<li>In a static method, the called class is the one named in the call (<code>User::create()</code>); in an instance method, it's the object's own class. <code>self::</code> and <code>parent::</code> pass the called class along, as in PHP.</li>
+<li><code>User::create()</code> above is typed as returning a <code>User</code>, so <code>user-&gt;greet()</code> compiles.</li>
+<li><code>static::</code> can call static methods only.</li>
+<li><code>new static(...)</code> requires every subclass to be constructible with the same arguments, which is checked at compile time. If the called class is abstract, it throws <code>RuntimeException</code>.</li>
+<li>A method declared <code>: static</code> can only be overridden by another <code>: static</code> method.</li>
+</ul>

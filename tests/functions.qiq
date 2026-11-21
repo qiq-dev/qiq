@@ -1,0 +1,31 @@
+function add(int left, int right): int {
+    return left + right;
+}
+
+function increase(double value): double {
+    return value + 0.5;
+}
+
+function identity_bool(bool value): bool {
+    return value;
+}
+
+function identity_string(string value): string {
+    return value;
+}
+
+function log(string message): void {
+    print(message);
+    return;
+}
+
+int answer = add(40, 2);
+double total = increase(3.25);
+bool ready = identity_bool(true);
+string label = identity_string("function result");
+
+print(answer);
+print(total);
+print(ready);
+print(label);
+log("void function called");
