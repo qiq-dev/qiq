@@ -22,7 +22,7 @@ import gmdate, date, time, microtime from "date";
 import exit from "program";
 import strtolower, strtoupper, substr, strpos, str_contains, str_starts_with, str_ends_with, explode, implode, trim, string_to_bytes, bytes_to_string, htmlspecialchars from "string";
 import urldecode, rawurldecode, rawurlencode, __http_hex from "http";
-import __socket_write, __socket_write_bytes, __socket_read_line, __socket_read_exactly, __socket_close, __socket_peer, __socket_set_timeout, __server_listen, __server_listen_unix, __server_close, __server_accept, __server_wait_request, __server_stopping, __server_cpu_count, __server_start, __server_file_length, __socket_send_file from "net";
+import __socket_write, __socket_write_more, __socket_write_bytes, __socket_read_line, __socket_read_exactly, __socket_close, __socket_peer, __socket_set_timeout, __server_listen, __server_listen_unix, __server_close, __server_accept, __server_wait_request, __server_stopping, __server_cpu_count, __server_start, __server_file_info, __socket_send_file from "net";
 
 // An HTTP request received by the server.
 class Request {
@@ -539,7 +539,10 @@ function http_file_server(string directory): function(Request, ResponseWriter): 
             }
         }
         string full = root + path;
-        if (is_dir(full)) {
+        // -2 for a directory, -1 for nothing there, -3 for a file that can't
+        // be read, otherwise the file's length.
+        int info = __server_file_info(full);
+        if (info == -2) {
             if (!str_ends_with(path, "/")) {
                 // Relative, so it works behind http_strip_prefix.
                 string[] names = explode("/", path);
@@ -550,27 +553,27 @@ function http_file_server(string directory): function(Request, ResponseWriter): 
                 w->redirect(target, 301);
                 return;
             }
-            if (is_file(full + "index.html")) {
-                __server_send_file(w, full + "index.html");
+            int index = __server_file_info(full + "index.html");
+            if (index >= 0 || index == -3) {
+                __server_send_file(w, full + "index.html", index);
                 return;
             }
             __server_send_listing(w, full, path);
             return;
         }
-        if (is_file(full)) {
-            __server_send_file(w, full);
+        if (info >= 0 || info == -3) {
+            __server_send_file(w, full, info);
             return;
         }
         w->error(404);
     };
 }
 
-// Replies with a file. It's sent straight from the file when the response is
-// sent, so serving a large file doesn't read it into memory.
-function __server_send_file(ResponseWriter w, string file): void {
-    int length = __server_file_length(file);
+// Replies with a file of `length` bytes (or -3 when it can't be read). It's
+// sent straight from the file when the response is sent, so serving a large
+// file doesn't read it into memory.
+function __server_send_file(ResponseWriter w, string file, int length): void {
     if (length < 0) {
-        // Not readable.
         w->error(403);
         return;
     }
@@ -619,41 +622,68 @@ function http_content_type(string name): string {
         return "application/octet-stream";
     }
     string extension = strtolower(substr(name, dot + 1));
-    map[string, string] types = {
-        "html" => "text/html; charset=utf-8",
-        "htm" => "text/html; charset=utf-8",
-        "css" => "text/css; charset=utf-8",
-        "js" => "text/javascript; charset=utf-8",
-        "mjs" => "text/javascript; charset=utf-8",
-        "json" => "application/json",
-        "txt" => "text/plain; charset=utf-8",
-        "md" => "text/markdown; charset=utf-8",
-        "csv" => "text/csv; charset=utf-8",
-        "xml" => "application/xml",
-        "svg" => "image/svg+xml",
-        "png" => "image/png",
-        "jpg" => "image/jpeg",
-        "jpeg" => "image/jpeg",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        "avif" => "image/avif",
-        "ico" => "image/x-icon",
-        "pdf" => "application/pdf",
-        "zip" => "application/zip",
-        "gz" => "application/gzip",
-        "wasm" => "application/wasm",
-        "woff" => "font/woff",
-        "woff2" => "font/woff2",
-        "ttf" => "font/ttf",
-        "otf" => "font/otf",
-        "mp3" => "audio/mpeg",
-        "wav" => "audio/wav",
-        "ogg" => "audio/ogg",
-        "mp4" => "video/mp4",
-        "webm" => "video/webm",
-        "qiq" => "text/plain; charset=utf-8"
-    };
-    return types[extension] ?? "application/octet-stream";
+    // A switch rather than a map literal, which built a 32-entry map on every
+    // call (a microsecond for each file served).
+    switch (extension) {
+        case "html", "htm":
+            return "text/html; charset=utf-8";
+        case "css":
+            return "text/css; charset=utf-8";
+        case "js", "mjs":
+            return "text/javascript; charset=utf-8";
+        case "json":
+            return "application/json";
+        case "txt", "qiq":
+            return "text/plain; charset=utf-8";
+        case "md":
+            return "text/markdown; charset=utf-8";
+        case "csv":
+            return "text/csv; charset=utf-8";
+        case "xml":
+            return "application/xml";
+        case "svg":
+            return "image/svg+xml";
+        case "png":
+            return "image/png";
+        case "jpg", "jpeg":
+            return "image/jpeg";
+        case "gif":
+            return "image/gif";
+        case "webp":
+            return "image/webp";
+        case "avif":
+            return "image/avif";
+        case "ico":
+            return "image/x-icon";
+        case "pdf":
+            return "application/pdf";
+        case "zip":
+            return "application/zip";
+        case "gz":
+            return "application/gzip";
+        case "wasm":
+            return "application/wasm";
+        case "woff":
+            return "font/woff";
+        case "woff2":
+            return "font/woff2";
+        case "ttf":
+            return "font/ttf";
+        case "otf":
+            return "font/otf";
+        case "mp3":
+            return "audio/mpeg";
+        case "wav":
+            return "audio/wav";
+        case "ogg":
+            return "audio/ogg";
+        case "mp4":
+            return "video/mp4";
+        case "webm":
+            return "video/webm";
+        default:
+            return "application/octet-stream";
+    }
 }
 
 // Wraps a handler to log each request to stderr, like php -S:
@@ -993,13 +1023,17 @@ function __server_send(int connection, string protocol, string method, ResponseW
     } else {
         head = head + "Connection: close\r\n";
     }
-    __socket_write(connection, head + "\r\n");
-    if (method != "HEAD" && !bodyless && length > 0) {
-        if (file != null) {
-            __socket_send_file(connection, file, length);
-        } else {
-            __socket_write_bytes(connection, body);
-        }
+    bool sendBody = method != "HEAD" && !bodyless && length > 0;
+    if (!sendBody) {
+        __socket_write(connection, head + "\r\n");
+        return;
+    }
+    // Held back to leave in one packet with the start of the body.
+    __socket_write_more(connection, head + "\r\n");
+    if (file != null) {
+        __socket_send_file(connection, file, length);
+    } else {
+        __socket_write_bytes(connection, body);
     }
 }
 

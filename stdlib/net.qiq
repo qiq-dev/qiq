@@ -4,6 +4,7 @@
 extern function __socket_connect(string host, int port, bool tls, int timeout): int;
 extern function __socket_write(int handle, string text): void;
 extern function __socket_write_bytes(int handle, byte[] data): void;
+extern function __socket_write_more(int handle, string text): void;
 extern function __socket_read_line(int handle): string;
 extern function __socket_read(int handle, int length): byte[];
 extern function __socket_read_exactly(int handle, int length): byte[];
@@ -21,7 +22,7 @@ extern function __server_wait_request(int handle, int listener, int timeout): bo
 extern function __server_stopping(): bool;
 extern function __server_cpu_count(): int;
 extern function __server_start(int workers): int;
-extern function __server_file_length(string path): int;
+extern function __server_file_info(string path): int;
 extern function __socket_send_file(int handle, string path, int length): void;
 
 // A connection to a server. Every connect, read, and write waits at most

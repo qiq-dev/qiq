@@ -390,7 +390,10 @@ QIQ_GUARDED(int64_t, qiq_stdlib___socket_connect, 0, (const char *host, int64_t 
 // ---------------------------------------------------------------------------
 // Writing
 
-static void qiq_send_all(QiqSocket *socket, const unsigned char *data, size_t length) {
+// Sends all of `data`. With `more`, the kernel holds a short write back
+// until the next one (MSG_MORE), so a response's headers and body leave in
+// the same packet rather than two.
+static void qiq_send_flagged(QiqSocket *socket, const unsigned char *data, size_t length, bool more) {
     size_t sent = 0;
     while (sent < length) {
         if (socket->tls) {
@@ -404,7 +407,7 @@ static void qiq_send_all(QiqSocket *socket, const unsigned char *data, size_t le
             qiq_tls_error(code, reason, sizeof reason);
             qiq_throwf(QIQ_NETWORK_EXCEPTION, "writing to %s failed: %s", socket->peer, reason);
         }
-        ssize_t written = send(socket->fd, data + sent, length - sent, MSG_NOSIGNAL);
+        ssize_t written = send(socket->fd, data + sent, length - sent, MSG_NOSIGNAL | (more ? MSG_MORE : 0));
         if (written > 0) {
             sent += (size_t)written;
         } else if (written < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
@@ -415,23 +418,34 @@ static void qiq_send_all(QiqSocket *socket, const unsigned char *data, size_t le
     }
 }
 
+static void qiq_send_all(QiqSocket *socket, const unsigned char *data, size_t length) {
+    qiq_send_flagged(socket, data, length, false);
+}
+
+// Like __socket_write, for text that more will follow straight away (a
+// response's headers before its body).
+QIQ_GUARDED_VOID(qiq_stdlib___socket_write_more, (int64_t handle, const char *text), (handle, text)) {
+    QiqSocket *socket = qiq_socket(handle);
+    if (text == NULL) qiq_throw(QIQ_RUNTIME_EXCEPTION, "cannot write a null string");
+    qiq_send_flagged(socket, (const unsigned char *)text, strlen(text), true);
+}
+
 QIQ_GUARDED_VOID(qiq_stdlib___socket_write, (int64_t handle, const char *text), (handle, text)) {
     QiqSocket *socket = qiq_socket(handle);
     if (text == NULL) qiq_throw(QIQ_RUNTIME_EXCEPTION, "cannot write a null string");
     qiq_send_all(socket, (const unsigned char *)text, strlen(text));
 }
 
-// The length of the regular file at `path` if it can be opened for reading,
-// otherwise -1. For http_file_server, which then streams the file with
-// __socket_send_file.
-int64_t qiq_stdlib___server_file_length(const char *path) {
-    if (path == NULL) return -1;
-    int fd = open(path, O_RDONLY | O_CLOEXEC);
-    if (fd < 0) return -1;
+// For http_file_server, in two system calls: the length of the regular file
+// at `path`, or -1 when there's no file or directory there, -2 for a
+// directory, and -3 for a file that can't be read. A readable file is then
+// streamed with __socket_send_file.
+int64_t qiq_stdlib___server_file_info(const char *path) {
     struct stat info;
-    int64_t length = fstat(fd, &info) == 0 && S_ISREG(info.st_mode) ? (int64_t)info.st_size : -1;
-    close(fd);
-    return length;
+    if (path == NULL || stat(path, &info) != 0) return -1;
+    if (S_ISDIR(info.st_mode)) return -2;
+    if (!S_ISREG(info.st_mode)) return -1;
+    return access(path, R_OK) == 0 ? (int64_t)info.st_size : -3;
 }
 
 // Sends the first `length` bytes of the file at `path`, straight from the

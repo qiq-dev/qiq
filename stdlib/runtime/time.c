@@ -122,8 +122,7 @@ typedef struct {
     size_t capacity;
 } QiqBuffer;
 
-static void qiq_append(QiqBuffer *buffer, const char *text) {
-    size_t add = strlen(text);
+static void qiq_append_bytes(QiqBuffer *buffer, const char *text, size_t add) {
     if (buffer->length + add + 1 > buffer->capacity) {
         size_t capacity = buffer->capacity ? buffer->capacity : 64;
         while (buffer->length + add + 1 > capacity) capacity *= 2;
@@ -132,14 +131,29 @@ static void qiq_append(QiqBuffer *buffer, const char *text) {
         buffer->data = grown;
         buffer->capacity = capacity;
     }
-    memcpy(buffer->data + buffer->length, text, add + 1);
+    memcpy(buffer->data + buffer->length, text, add);
     buffer->length += add;
+    buffer->data[buffer->length] = '\0';
 }
 
-static void qiq_appendf(QiqBuffer *buffer, const char *format, long long value) {
-    char text[32];
-    snprintf(text, sizeof text, format, value);
-    qiq_append(buffer, text);
+static void qiq_append(QiqBuffer *buffer, const char *text) {
+    qiq_append_bytes(buffer, text, strlen(text));
+}
+
+// `value` in decimal, with zeros in front to make at least `digits` digits.
+// Written directly rather than with snprintf, which takes about 250 ns a
+// call in musl: date("D, d M Y H:i:s") made eleven calls.
+static void qiq_append_number(QiqBuffer *buffer, long long value, int digits) {
+    char text[QIQ_INT_TEXT_SIZE];
+    int length = qiq_format_int(text, value);
+    const char *number = text;
+    if (value < 0) {
+        qiq_append_bytes(buffer, "-", 1);
+        number++;
+        length--;
+    }
+    for (int padding = digits - length; padding > 0; padding--) qiq_append_bytes(buffer, "0", 1);
+    qiq_append_bytes(buffer, number, (size_t)length);
 }
 
 static bool qiq_is_leap(long long year) {
@@ -161,7 +175,7 @@ static void qiq_append_offset(QiqBuffer *buffer, long offset, bool colon) {
 }
 
 static void qiq_append_year(QiqBuffer *buffer, long long year) {
-    qiq_appendf(buffer, year < 0 ? "-%04lld" : "%04lld", year < 0 ? -year : year);
+    qiq_append_number(buffer, year, 4);
 }
 
 static void qiq_format(QiqBuffer *out, const char *format, int64_t timestamp, const struct tm *tm, bool utc) {
@@ -173,11 +187,11 @@ static void qiq_format(QiqBuffer *out, const char *format, int64_t timestamp, co
     for (const char *c = format; *c; c++) {
         switch (*c) {
         // Day
-        case 'd': qiq_appendf(out, "%02lld", tm->tm_mday); break;
-        case 'D': snprintf(text, sizeof text, "%.3s", day_names[tm->tm_wday]); qiq_append(out, text); break;
-        case 'j': qiq_appendf(out, "%lld", tm->tm_mday); break;
+        case 'd': qiq_append_number(out, tm->tm_mday, 2); break;
+        case 'D': qiq_append_bytes(out, day_names[tm->tm_wday], 3); break;
+        case 'j': qiq_append_number(out, tm->tm_mday, 0); break;
         case 'l': qiq_append(out, day_names[tm->tm_wday]); break;
-        case 'N': qiq_appendf(out, "%lld", tm->tm_wday == 0 ? 7 : tm->tm_wday); break;
+        case 'N': qiq_append_number(out, tm->tm_wday == 0 ? 7 : tm->tm_wday, 0); break;
         case 'S': {
             int day = tm->tm_mday;
             const char *suffix = "th";
@@ -187,35 +201,35 @@ static void qiq_format(QiqBuffer *out, const char *format, int64_t timestamp, co
             qiq_append(out, suffix);
             break;
         }
-        case 'w': qiq_appendf(out, "%lld", tm->tm_wday); break;
-        case 'z': qiq_appendf(out, "%lld", tm->tm_yday); break;
+        case 'w': qiq_append_number(out, tm->tm_wday, 0); break;
+        case 'z': qiq_append_number(out, tm->tm_yday, 0); break;
         // ISO 8601 week and week-numbering year
         case 'W': strftime(text, sizeof text, "%V", tm); qiq_append(out, text); break;
         case 'o': strftime(text, sizeof text, "%G", tm); qiq_append(out, text); break;
         // Month
         case 'F': qiq_append(out, month_names[tm->tm_mon]); break;
-        case 'm': qiq_appendf(out, "%02lld", tm->tm_mon + 1); break;
-        case 'M': snprintf(text, sizeof text, "%.3s", month_names[tm->tm_mon]); qiq_append(out, text); break;
-        case 'n': qiq_appendf(out, "%lld", tm->tm_mon + 1); break;
-        case 't': qiq_appendf(out, "%lld", qiq_days_in_month(year, tm->tm_mon + 1)); break;
+        case 'm': qiq_append_number(out, tm->tm_mon + 1, 2); break;
+        case 'M': qiq_append_bytes(out, month_names[tm->tm_mon], 3); break;
+        case 'n': qiq_append_number(out, tm->tm_mon + 1, 0); break;
+        case 't': qiq_append_number(out, qiq_days_in_month(year, tm->tm_mon + 1), 0); break;
         // Year
         case 'L': qiq_append(out, qiq_is_leap(year) ? "1" : "0"); break;
         case 'Y': qiq_append_year(out, year); break;
-        case 'y': qiq_appendf(out, "%02lld", (year < 0 ? -year : year) % 100); break;
+        case 'y': qiq_append_number(out, (year < 0 ? -year : year) % 100, 2); break;
         // Time
         case 'a': qiq_append(out, tm->tm_hour < 12 ? "am" : "pm"); break;
         case 'A': qiq_append(out, tm->tm_hour < 12 ? "AM" : "PM"); break;
         case 'B': {
             long long seconds = ((timestamp + 3600) % 86400 + 86400) % 86400;
-            qiq_appendf(out, "%03lld", seconds * 10 / 864);
+            qiq_append_number(out, seconds * 10 / 864, 3);
             break;
         }
-        case 'g': qiq_appendf(out, "%lld", hour12); break;
-        case 'G': qiq_appendf(out, "%lld", tm->tm_hour); break;
-        case 'h': qiq_appendf(out, "%02lld", hour12); break;
-        case 'H': qiq_appendf(out, "%02lld", tm->tm_hour); break;
-        case 'i': qiq_appendf(out, "%02lld", tm->tm_min); break;
-        case 's': qiq_appendf(out, "%02lld", tm->tm_sec); break;
+        case 'g': qiq_append_number(out, hour12, 0); break;
+        case 'G': qiq_append_number(out, tm->tm_hour, 0); break;
+        case 'h': qiq_append_number(out, hour12, 2); break;
+        case 'H': qiq_append_number(out, tm->tm_hour, 2); break;
+        case 'i': qiq_append_number(out, tm->tm_min, 2); break;
+        case 's': qiq_append_number(out, tm->tm_sec, 2); break;
         case 'u': qiq_append(out, "000000"); break;
         case 'v': qiq_append(out, "000"); break;
         // Timezone
@@ -228,11 +242,11 @@ static void qiq_format(QiqBuffer *out, const char *format, int64_t timestamp, co
             else qiq_append_offset(out, offset, true);
             break;
         case 'T': qiq_append(out, utc ? "GMT" : (tm->tm_zone ? tm->tm_zone : "")); break;
-        case 'Z': qiq_appendf(out, "%lld", offset); break;
+        case 'Z': qiq_append_number(out, offset, 0); break;
         // Full date/time
         case 'c': qiq_format(out, "Y-m-d\\TH:i:sP", timestamp, tm, utc); break;
         case 'r': qiq_format(out, "D, d M Y H:i:s O", timestamp, tm, utc); break;
-        case 'U': qiq_appendf(out, "%lld", timestamp); break;
+        case 'U': qiq_append_number(out, timestamp, 0); break;
         case '\\':
             if (c[1] != '\0') c++;
             /* fall through */
@@ -240,8 +254,7 @@ static void qiq_format(QiqBuffer *out, const char *format, int64_t timestamp, co
             // Copy the character, or all bytes of a UTF-8 character.
             size_t width = 1;
             while ((c[width] & 0xc0) == 0x80) width++;
-            snprintf(text, sizeof text, "%.*s", (int)width, c);
-            qiq_append(out, text);
+            qiq_append_bytes(out, c, width);
             c += width - 1;
         }
         }
