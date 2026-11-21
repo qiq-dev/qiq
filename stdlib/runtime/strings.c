@@ -108,6 +108,16 @@ static size_t qiq_ascii_prefix(const unsigned char *text) {
     return (size_t)(cursor - text);
 }
 
+// The length of `text` in bytes, validating it as UTF-8 on the way.
+static size_t qiq_validated_length(const char *text) {
+    const unsigned char *cursor = (const unsigned char *)text;
+    for (;;) {
+        cursor += qiq_ascii_prefix(cursor);
+        if (*cursor == 0) return (size_t)(cursor - (const unsigned char *)text);
+        cursor += qiq_utf8_char_width(cursor);
+    }
+}
+
 // Number of characters in `text`, validating it as UTF-8.
 static int64_t qiq_char_count(const char *text) {
     const unsigned char *cursor = (const unsigned char *)text;
@@ -469,32 +479,59 @@ QIQ_GUARDED(char *, qiq_stdlib_trim, NULL, (const char *text, const char *charac
 // Splits `text` at each `separator` (PHP semantics). A positive `limit`
 // returns at most that many pieces, the last holding the rest of the text; a
 // negative `limit` drops that many pieces from the end; 0 counts as 1.
+// In musl's libc.a, but declared only with _GNU_SOURCE.
+void *memmem(const void *haystack, size_t haystack_length, const void *needle, size_t needle_length);
+
+// The first `separator` in [start, end), or NULL: memchr for a one-byte
+// separator (the common ",", " ", "\n"), memmem, which takes linear time
+// whatever the separator, for longer ones.
+static const char *qiq_find_separator(const char *start, const char *end, const char *separator, size_t separator_length) {
+    if (separator_length == 1) return memchr(start, separator[0], (size_t)(end - start));
+    return memmem(start, (size_t)(end - start), separator, separator_length);
+}
+
 QIQ_GUARDED(void *, qiq_stdlib_explode, NULL, (const char *separator, const char *text, int64_t limit), (separator, text, limit)) {
     qiq_require_string(separator);
     qiq_require_string(text);
-    qiq_char_count(separator);
-    qiq_char_count(text);
-    size_t separator_length = strlen(separator);
+    size_t separator_length = qiq_validated_length(separator);
+    size_t text_length = qiq_validated_length(text);
     if (separator_length == 0) qiq_throw(QIQ_INVALID_ARGUMENT_EXCEPTION, "explode separator must not be empty");
-    int64_t total = 1;
-    for (const char *at = strstr(text, separator); at != NULL; at = strstr(at + separator_length, separator)) {
-        total++;
-    }
-    int64_t count = total;
     if (limit == 0) limit = 1;
-    if (limit > 0 && limit < total) count = limit;
-    if (limit < 0) count = total + limit > 0 ? total + limit : 0;
+    // One search through the text, noting where each piece ends; the pieces
+    // are copied out once their number, and so the array's length, is known.
+    // (Searching twice, once to count them, made a call per piece each time.)
+    // With a positive limit, the search stops at the last piece, which keeps
+    // the rest of the text.
+    const char *end = text + text_length;
+    size_t capacity = 16;
+    size_t found = 0;
+    const char **ends = malloc(capacity * sizeof *ends);
+    if (ends == NULL) qiq_fatal("out of memory");
+    for (const char *at = text;;) {
+        if (limit > 0 && (int64_t)found == limit - 1) break;
+        const char *next = qiq_find_separator(at, end, separator, separator_length);
+        if (next == NULL) break;
+        if (found == capacity) {
+            capacity *= 2;
+            const char **grown = realloc(ends, capacity * sizeof *ends);
+            if (grown == NULL) qiq_fatal("out of memory");
+            ends = grown;
+        }
+        ends[found++] = next;
+        at = next + separator_length;
+    }
+    // The pieces: one before each separator found, then the rest.
+    int64_t total = (int64_t)found + 1;
+    int64_t count = limit < 0 ? (total + limit > 0 ? total + limit : 0) : total;
     void *pieces = qiq_array_create(count, sizeof(char *), 1);
     char **data = QIQ_ARRAY_DATA(pieces);
     const char *start = text;
     for (int64_t index = 0; index < count; index++) {
-        // With a positive limit, the last piece keeps the rest of the text.
-        bool rest = limit > 0 && index == count - 1;
-        const char *end = rest ? NULL : strstr(start, separator);
-        size_t length = end == NULL ? strlen(start) : (size_t)(end - start);
-        data[index] = qiq_copy_bytes(start, length);
-        start = end == NULL ? start + length : end + separator_length;
+        const char *piece_end = (size_t)index < found ? ends[index] : end;
+        data[index] = qiq_copy_bytes(start, (size_t)(piece_end - start));
+        start = piece_end + separator_length;
     }
+    free(ends);
     return pieces;
 }
 
