@@ -272,7 +272,7 @@ static void qiq_encode_value(QiqEncoder *encoder, const char *descriptor, uint64
     char number[64];
     switch (*descriptor) {
     case 'i':
-        snprintf(number, sizeof number, "%lld", (long long)(int64_t)payload);
+        qiq_format_int(number, (int64_t)payload);
         qiq_buffer_text(&encoder->out, number);
         return;
     case 'y':
@@ -353,10 +353,14 @@ static void qiq_encode_value(QiqEncoder *encoder, const char *descriptor, uint64
             case 'c':
                 qiq_encode_string(&encoder->out, (const char *)(uintptr_t)key);
                 break;
-            case 'i':
-                snprintf(number, sizeof number, "\"%lld\"", (long long)(int64_t)key);
+            case 'i': {
+                int length = qiq_format_int(number + 1, (int64_t)key);
+                number[0] = '"';
+                number[length + 1] = '"';
+                number[length + 2] = '\0';
                 qiq_buffer_text(&encoder->out, number);
                 break;
+            }
             case 'd': {
                 double value;
                 memcpy(&value, &key, sizeof value);

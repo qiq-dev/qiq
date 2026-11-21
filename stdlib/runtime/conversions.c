@@ -66,8 +66,8 @@ static char *qiq_copy_formatted(const char *formatted, int length) {
 }
 
 char *qiq_int_to_string(int64_t value) {
-    char buffer[32];
-    return qiq_copy_formatted(buffer, snprintf(buffer, sizeof buffer, "%lld", (long long)value));
+    char buffer[QIQ_INT_TEXT_SIZE];
+    return qiq_copy_formatted(buffer, qiq_format_int(buffer, value));
 }
 
 // Formats like print: %g, so 1.5 is "1.5" and 2.0 is "2".

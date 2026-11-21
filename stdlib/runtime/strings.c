@@ -588,7 +588,8 @@ static const char *qiq_argument_string(const QiqFormatArguments *arguments, int6
         return buffer;
     }
     default:
-        snprintf(buffer, size, "%lld", (long long)qiq_argument_long(arguments, index));
+        // Every caller's buffer holds at least QIQ_INT_TEXT_SIZE bytes.
+        qiq_format_int(buffer, qiq_argument_long(arguments, index));
         return buffer;
     }
 }
@@ -799,7 +800,9 @@ QIQ_GUARDED(char *, qiq_sprintf, NULL, (const char *format, const char *types, c
         }
         case 'd': {
             int64_t value = qiq_argument_long(&arguments, argument);
-            snprintf(number, sizeof number, value >= 0 && always_sign ? "+%lld" : "%lld", (long long)value);
+            int sign = value >= 0 && always_sign;
+            number[0] = '+';
+            qiq_format_int(number + sign, value);
             qiq_append_padded(&output, number, width, -1, padding, padding_length, left, value < 0 || always_sign);
             break;
         }

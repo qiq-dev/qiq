@@ -36,6 +36,12 @@ _Noreturn void qiq_throwf(QiqExceptionKind kind, const char *format, ...);
 // running out of memory.
 _Noreturn void qiq_fatal(const char *message);
 
+// Writes `value` in decimal and a NUL to `buffer`, which must hold at least
+// QIQ_INT_TEXT_SIZE bytes, and returns the number of digits and sign written.
+// Several times faster than musl's snprintf("%lld").
+#define QIQ_INT_TEXT_SIZE 21
+int qiq_format_int(char *buffer, int64_t value);
+
 // ---------------------------------------------------------------------------
 // Memory (memory.c). Every value a qiq program can hold a reference to (a
 // string, char, array, map, or object) has a QiqHeader just before the

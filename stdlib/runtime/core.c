@@ -7,6 +7,37 @@
 
 #include "qiq_runtime.h"
 
+int qiq_format_int(char *buffer, int64_t value) {
+    static const char pairs[201] =
+        "00010203040506070809101112131415161718192021222324252627282930313233343536373839"
+        "40414243444546474849505152535455565758596061626364656667686970717273747576777879"
+        "8081828384858687888990919293949596979899";
+    // Digits are written backwards from the end of `digits`. Negating as
+    // unsigned also covers INT64_MIN, whose magnitude has no int64_t.
+    char digits[20];
+    char *end = digits + sizeof digits;
+    char *start = end;
+    uint64_t magnitude = value < 0 ? 0 - (uint64_t)value : (uint64_t)value;
+    while (magnitude >= 100) {
+        unsigned pair = (unsigned)(magnitude % 100) * 2;
+        magnitude /= 100;
+        *--start = pairs[pair + 1];
+        *--start = pairs[pair];
+    }
+    if (magnitude >= 10) {
+        *--start = pairs[magnitude * 2 + 1];
+        *--start = pairs[magnitude * 2];
+    } else {
+        *--start = (char)('0' + magnitude);
+    }
+    int length = 0;
+    if (value < 0) buffer[length++] = '-';
+    memcpy(buffer + length, start, (size_t)(end - start));
+    length += (int)(end - start);
+    buffer[length] = '\0';
+    return length;
+}
+
 // The exception being propagated, or NULL. Compiled code checks it after
 // every call that can throw.
 void *qiq_pending_exception = NULL;
