@@ -28,8 +28,8 @@ int i = 0;
 while (i < 100000) {
     // Each round's array and strings are freed before the next round.
     string[] words = explode(" ", "round " + to_string(i) + " of the loop");
-    total = total + len(longest(words));
-    i = i + 1;
+    total += len(longest(words));
+    i++;
 }
 print(total);
 ```

@@ -66,6 +66,11 @@ enum TokenKind {
     FatArrow,
     Plus,
     Minus,
+    /// `++` and `--`, which are statements: `count++;`.
+    PlusPlus,
+    MinusMinus,
+    /// `+=`, `-=`, `*=`, `/=`, `%=`, `&=`, `|=`, `^=`, `<<=`, `>>=`.
+    AssignOp(BinaryOp),
     Bang,
     Star,
     StarStar,
@@ -341,6 +346,16 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
                     TokenKind::BangEqual
                 }
                 '!' => TokenKind::Bang,
+                '<' if chars.get(cursor) == Some(&'<') && chars.get(cursor + 1) == Some(&'=') => {
+                    cursor += 2;
+                    column += 2;
+                    TokenKind::AssignOp(BinaryOp::ShiftLeft)
+                }
+                '>' if chars.get(cursor) == Some(&'>') && chars.get(cursor + 1) == Some(&'=') => {
+                    cursor += 2;
+                    column += 2;
+                    TokenKind::AssignOp(BinaryOp::ShiftRight)
+                }
                 '<' if chars.get(cursor) == Some(&'<') => {
                     cursor += 1;
                     column += 1;
@@ -378,6 +393,21 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
                     column += 1;
                     TokenKind::QuestionQuestion
                 }
+                // `op=`: compound assignment.
+                '+' | '-' | '*' | '/' | '%' | '&' | '|' | '^' if chars.get(cursor) == Some(&'=') => {
+                    cursor += 1;
+                    column += 1;
+                    TokenKind::AssignOp(match current {
+                        '+' => BinaryOp::Add,
+                        '-' => BinaryOp::Subtract,
+                        '*' => BinaryOp::Multiply,
+                        '/' => BinaryOp::Divide,
+                        '%' => BinaryOp::Modulo,
+                        '&' => BinaryOp::BitAnd,
+                        '|' => BinaryOp::BitOr,
+                        _ => BinaryOp::BitXor,
+                    })
+                }
                 '&' => TokenKind::Ampersand,
                 '|' => TokenKind::Pipe,
                 '^' => TokenKind::Caret,
@@ -386,6 +416,16 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
                     cursor += 1;
                     column += 1;
                     TokenKind::Arrow
+                }
+                '+' if chars.get(cursor) == Some(&'+') => {
+                    cursor += 1;
+                    column += 1;
+                    TokenKind::PlusPlus
+                }
+                '-' if chars.get(cursor) == Some(&'-') => {
+                    cursor += 1;
+                    column += 1;
+                    TokenKind::MinusMinus
                 }
                 '+' => TokenKind::Plus,
                 '-' => TokenKind::Minus,
@@ -775,6 +815,9 @@ struct Module {
 #[derive(Debug, Clone)]
 enum Expr {
     Number(i64),
+    /// The 1 that `x++` and `x--` add or subtract, in the type of `x` (an
+    /// int or a double); only ever the right side of a Binary.
+    One,
     Decimal(f64),
     Boolean(bool),
     Null,
@@ -1009,7 +1052,12 @@ struct Parser {
     /// Top-level functions, classes, and interfaces declared `private`:
     /// importable only within the same module (qiq.mod).
     private_names: HashSet<String>,
+    /// Numbers the hidden variables that hold the parts of a compound
+    /// assignment's target (see parse_update).
+    next_hidden: usize,
 }
+
+const INCREMENT_IS_A_STATEMENT: &str = "'++' and '--' are statements in qiq: write `i++;` on its own, then use i";
 
 impl Parser {
     fn array_of(&mut self, element: ValueType) -> ValueType {
@@ -1103,7 +1151,7 @@ impl Parser {
             } else if matches!(self.current().kind, TokenKind::Function) && !self.at_function_type() {
                 functions.push(self.parse_function()?);
             } else {
-                statements.push(self.parse_statement()?);
+                statements.extend(self.parse_statement()?);
             }
         }
         Ok((functions, statements))
@@ -1268,7 +1316,7 @@ impl Parser {
         } else {
             self.expect(TokenKind::LeftBrace, "expected '{' before function body")?;
             while !matches!(self.current().kind, TokenKind::RightBrace | TokenKind::End) {
-                body.push(self.parse_statement()?);
+                body.extend(self.parse_statement()?);
             }
             self.expect(TokenKind::RightBrace, "expected '}' after function body")?;
         }
@@ -1569,13 +1617,86 @@ impl Parser {
         Ok(())
     }
 
-    fn parse_statement(&mut self) -> Result<Statement, String> {
+    /// One statement as written, as the statements it compiles to: usually
+    /// one, but a compound assignment can first save parts of its target in
+    /// hidden variables (see parse_update).
+    fn parse_statement(&mut self) -> Result<Vec<Statement>, String> {
         let (line, column) = (self.current().line, self.current().column);
-        let kind = self.parse_statement_kind()?;
-        Ok(Statement { kind, line, column })
+        let mut kinds = Vec::new();
+        if matches!(self.current().kind, TokenKind::PlusPlus | TokenKind::MinusMinus) {
+            // `++count;`: the same as `count++;`.
+            let op = if matches!(self.current().kind, TokenKind::PlusPlus) { BinaryOp::Add } else { BinaryOp::Subtract };
+            self.advance();
+            let target = self.parse_expression()?;
+            self.expect(TokenKind::Semicolon, "expected ';' after the incremented value")?;
+            self.parse_update(target, op, Expr::One, (line, column), &mut kinds)?;
+        } else {
+            let kind = self.parse_statement_kind(&mut kinds)?;
+            kinds.push(kind);
+        }
+        Ok(kinds.into_iter().map(|kind| Statement { kind, line, column }).collect())
     }
 
-    fn parse_statement_kind(&mut self) -> Result<StatementKind, String> {
+    /// `target op= value` (and `target++`, with Expr::One) as a plain
+    /// assignment, `target = target op value`, so it's checked and compiled
+    /// like one. Each part of the target is evaluated once: parts that could
+    /// run code (`items[next()]`) are saved in hidden variables first, and so
+    /// are all of them when `value` could, so that the target is read, then
+    /// `value` evaluated, then the result stored. The statements that save
+    /// parts go into `before`; the result is the assignment.
+    fn update_target(&mut self, target: Expr, op: BinaryOp, value: Expr, at: (usize, usize), before: &mut Vec<StatementKind>) -> Result<StatementKind, String> {
+        let force = !is_pure(&value);
+        let increments = matches!(value, Expr::One);
+        let hoist = |this: &mut Self, part: Expr, before: &mut Vec<StatementKind>| -> Expr {
+            let literal = matches!(part, Expr::Number(_) | Expr::Decimal(_) | Expr::Boolean(_) | Expr::Null | Expr::Text(_) | Expr::Character(_));
+            if literal || (is_pure(&part) && !force) {
+                return part;
+            }
+            this.next_hidden += 1;
+            // Not a name the program can write.
+            let name = format!("#{}", this.next_hidden);
+            before.push(StatementKind::Assign(name.clone(), part));
+            Expr::Variable(name)
+        };
+        let combined = |current: Expr| Expr::Binary(op, Box::new(current), Box::new(value));
+        match target {
+            Expr::Variable(name) => Ok(StatementKind::Assign(name.clone(), combined(Expr::Variable(name)))),
+            Expr::Index(container, key) => {
+                let container = hoist(self, *container, before);
+                let key = hoist(self, *key, before);
+                let current = Expr::Index(Box::new(container.clone()), Box::new(key.clone()));
+                Ok(StatementKind::AssignIndex(container, key, combined(current)))
+            }
+            Expr::Member(object, property_name) => {
+                let object = hoist(self, *object, before);
+                let current = Expr::Member(Box::new(object.clone()), property_name.clone());
+                Ok(StatementKind::AssignMember(object, property_name, combined(current)))
+            }
+            Expr::StaticProperty(target, property_name) => {
+                let current = Expr::StaticProperty(target.clone(), property_name.clone());
+                Ok(StatementKind::AssignStatic(target, property_name, combined(current)))
+            }
+            _ => Err(format!(
+                "{}:{}: {}",
+                at.0,
+                at.1,
+                if increments {
+                    "only variables, indexed elements, or properties can be incremented or decremented"
+                } else {
+                    "only variables, indexed elements, or properties can be assigned"
+                }
+            )),
+        }
+    }
+
+    /// parse_update's work, pushing every statement into `kinds`.
+    fn parse_update(&mut self, target: Expr, op: BinaryOp, value: Expr, at: (usize, usize), kinds: &mut Vec<StatementKind>) -> Result<(), String> {
+        let assignment = self.update_target(target, op, value, at, kinds)?;
+        kinds.push(assignment);
+        Ok(())
+    }
+
+    fn parse_statement_kind(&mut self, before: &mut Vec<StatementKind>) -> Result<StatementKind, String> {
         if self.at_function_type() || self.at_grouped_type_declaration() {
             // A variable of function type: function(int): int twice = ...;
             let value_type = self.parse_value_type()?;
@@ -1664,10 +1785,31 @@ impl Parser {
                 Err(self.error(&format!("type '{type_name}' is not declared or imported{}", stdlib_hint(type_name))))
             }
             TokenKind::Identifier(_) | TokenKind::Parent | TokenKind::Static | TokenKind::LeftParen => {
+                let at = (self.current().line, self.current().column);
                 let expression = self.parse_expression()?;
+                if let TokenKind::AssignOp(op) = self.current().kind {
+                    // `total += price;`
+                    self.advance();
+                    let value = self.parse_expression()?;
+                    if matches!(self.current().kind, TokenKind::PlusPlus | TokenKind::MinusMinus) {
+                        return Err(self.error(INCREMENT_IS_A_STATEMENT));
+                    }
+                    self.expect(TokenKind::Semicolon, "expected ';' after assignment")?;
+                    return self.update_target(expression, op, value, at, before);
+                }
+                if matches!(self.current().kind, TokenKind::PlusPlus | TokenKind::MinusMinus) {
+                    // `count++;`
+                    let op = if matches!(self.current().kind, TokenKind::PlusPlus) { BinaryOp::Add } else { BinaryOp::Subtract };
+                    self.advance();
+                    self.expect(TokenKind::Semicolon, "expected ';' after '++' or '--'")?;
+                    return self.update_target(expression, op, Expr::One, at, before);
+                }
                 if matches!(self.current().kind, TokenKind::Equals) {
                     self.advance();
                     let value = self.parse_expression()?;
+                    if matches!(self.current().kind, TokenKind::PlusPlus | TokenKind::MinusMinus) {
+                        return Err(self.error(INCREMENT_IS_A_STATEMENT));
+                    }
                     self.expect(TokenKind::Semicolon, "expected ';' after assignment")?;
                     if let Expr::Variable(name) = expression {
                         Ok(StatementKind::Assign(name, value))
@@ -1699,7 +1841,7 @@ impl Parser {
             self.advance();
             // `else if (...) { ... }` chains: the if is the else branch.
             if matches!(self.current().kind, TokenKind::If) {
-                vec![self.parse_statement()?]
+                self.parse_statement()?
             } else {
                 self.parse_statement_block("expected '{' before else body")?
             }
@@ -1776,6 +1918,9 @@ impl Parser {
         let name = self.expect_identifier("expected variable name")?;
         self.expect(TokenKind::Equals, "expected '=' after variable name")?;
         let value = self.parse_expression()?;
+        if matches!(self.current().kind, TokenKind::PlusPlus | TokenKind::MinusMinus) {
+            return Err(self.error(INCREMENT_IS_A_STATEMENT));
+        }
         self.expect(TokenKind::Semicolon, "expected ';' after declaration")?;
         Ok(StatementKind::Declare(value_type, name, value))
     }
@@ -1815,7 +1960,7 @@ impl Parser {
                 self.current().kind,
                 TokenKind::Case | TokenKind::Default | TokenKind::RightBrace | TokenKind::End
             ) {
-                body.push(self.parse_statement()?);
+                body.extend(self.parse_statement()?);
             }
             match values {
                 Some(values) => {
@@ -1874,7 +2019,7 @@ impl Parser {
         self.expect(TokenKind::LeftBrace, message)?;
         let mut statements = Vec::new();
         while !matches!(self.current().kind, TokenKind::RightBrace | TokenKind::End) {
-            statements.push(self.parse_statement()?);
+            statements.extend(self.parse_statement()?);
         }
         self.expect(TokenKind::RightBrace, "expected '}' after block")?;
         Ok(statements)
@@ -2023,6 +2168,9 @@ impl Parser {
     }
 
     fn parse_unary(&mut self) -> Result<Expr, String> {
+        if matches!(self.current().kind, TokenKind::PlusPlus | TokenKind::MinusMinus) {
+            return Err(self.error(INCREMENT_IS_A_STATEMENT));
+        }
         if matches!(self.current().kind, TokenKind::Tilde) {
             self.advance();
             let operand = self.parse_unary()?;
@@ -2275,6 +2423,12 @@ impl Parser {
     /// an expression.
     fn parse_postfix(&mut self, mut expression: Expr) -> Result<Expr, String> {
         loop {
+            if matches!(self.current().kind, TokenKind::PlusPlus | TokenKind::MinusMinus)
+                && !matches!(self.tokens.get(self.cursor + 1).map(|token| &token.kind), Some(TokenKind::Semicolon))
+            {
+                // `print(i++)`, `a[i++]`: only `i++;` on its own is allowed.
+                return Err(self.error(INCREMENT_IS_A_STATEMENT));
+            }
             if matches!(self.current().kind, TokenKind::LeftParen) {
                 // Calling a function value: makeAdder(2)(3), (object->callback)(x).
                 self.advance();
@@ -7184,6 +7338,7 @@ impl Emitter {
         body: &mut String,
     ) -> Result<Value, String> {
         match expression {
+            Expr::One => Err("internal error: '++' outside an increment".to_string()),
             Expr::Number(value) => Ok(Value {
                 value_type: ValueType::Int,
                 operand: value.to_string(),
@@ -7782,7 +7937,16 @@ impl Emitter {
                 } else {
                     self.emit_expression(left, variables, body)?
                 };
-                let right = self.emit_borrowed(right, None, variables, body)?;
+                let right = if matches!(**right, Expr::One) {
+                    // `x++` and `x--`: 1 in x's type.
+                    match left.value_type {
+                        ValueType::Int => Value { value_type: ValueType::Int, operand: "1".to_string(), slot: None },
+                        ValueType::Double => Value { value_type: ValueType::Double, operand: format!("{:.17e}", 1.0f64), slot: None },
+                        other => return Err(format!("'++' and '--' work on int and double values, found {}", self.type_name(other))),
+                    }
+                } else {
+                    self.emit_borrowed(right, None, variables, body)?
+                };
                 let is_text = |value: &Value| matches!(value.value_type, ValueType::String | ValueType::Char);
                 if *operator == BinaryOp::Add && is_text(&left) && is_text(&right) {
                     // Concatenation: any mix of strings and chars produces a string.
@@ -8254,7 +8418,7 @@ fn sprintf_arguments_required(format: &str) -> Result<usize, String> {
 /// at most throw). See emit_borrowed.
 fn is_pure(expression: &Expr) -> bool {
     match expression {
-        Expr::Number(_) | Expr::Decimal(_) | Expr::Boolean(_) | Expr::Null | Expr::Text(_) | Expr::Character(_) | Expr::Variable(_) => true,
+        Expr::Number(_) | Expr::Decimal(_) | Expr::Boolean(_) | Expr::Null | Expr::Text(_) | Expr::Character(_) | Expr::Variable(_) | Expr::One => true,
         Expr::Index(container, key) => is_pure(container) && is_pure(key),
         Expr::Member(object, _) => is_pure(object),
         _ => false,
@@ -8417,7 +8581,7 @@ fn expression_names(expression: &Expr, used: &mut std::collections::BTreeSet<Str
         }
     };
     match expression {
-        Expr::Number(_) | Expr::Decimal(_) | Expr::Boolean(_) | Expr::Null | Expr::Text(_) | Expr::Character(_) => {}
+        Expr::Number(_) | Expr::Decimal(_) | Expr::Boolean(_) | Expr::Null | Expr::Text(_) | Expr::Character(_) | Expr::One => {}
         Expr::Variable(name) => {
             used.insert(name.clone());
         }
@@ -9063,6 +9227,7 @@ impl<'a> Loader<'a> {
             current_class: None,
             current_parent: None,
             private_names: HashSet::new(),
+            next_hidden: 0,
         };
         let parsed = parser.parse_module();
         let private_names = std::mem::take(&mut parser.private_names);
@@ -10466,6 +10631,42 @@ mod tests {
         }
         // A function named fn still works: only `fn(...) =>` is an arrow function.
         assert!(compile_source("function fn(int x): int { return x; } int y = fn(2);").is_ok());
+    }
+
+    #[test]
+    fn increments_and_compound_assignments_are_assignments() {
+        // `x++` and `x op= v` compile exactly like the assignment written out.
+        for (short, long) in [
+            ("int i = 0; i++;", "int i = 0; i = i + 1;"),
+            ("int i = 0; --i;", "int i = 0; i = i - 1;"),
+            ("double d = 0.5; d++;", "double d = 0.5; d = d + 1.0;"),
+            ("int i = 3; i <<= 2;", "int i = 3; i = i << 2;"),
+            ("string s = \"a\"; s += \"b\";", "string s = \"a\"; s = s + \"b\";"),
+            ("int[] a = [1]; a[0] *= 3;", "int[] a = [1]; a[0] = a[0] * 3;"),
+            ("map[string, int] m = {}; m[\"k\"]++;", "map[string, int] m = {}; m[\"k\"] = m[\"k\"] + 1;"),
+        ] {
+            assert_eq!(main_ir(&compile_source(short).unwrap()), main_ir(&compile_source(long).unwrap()), "{short}");
+        }
+        // A target part that could run code is evaluated once.
+        let ir = compile_source("function f(): int { return 0; } int[] a = [1]; a[f()] += 1; a[f()]++;").unwrap();
+        assert_eq!(main_ir(&ir).matches("call i64 @f(").count(), 2, "{ir}");
+        for (source, error) in [
+            ("int i = 0; print(i++);", "'++' and '--' are statements in qiq"),
+            ("int i = 0; int[] a = [1]; a[i++] = 5;", "'++' and '--' are statements in qiq"),
+            ("int i = 0; int n = i++;", "'++' and '--' are statements in qiq"),
+            ("int i = 0; int n = ++i;", "'++' and '--' are statements in qiq"),
+            ("int i = 0; i += i++;", "'++' and '--' are statements in qiq"),
+            ("string s = \"a\"; s++;", "'++' and '--' work on int and double values, found string"),
+            ("byte y = 1; y--;", "'++' and '--' work on int and double values, found byte"),
+            ("function f(): int { return 1; } f()++;", "1:33: only variables, indexed elements, or properties can be incremented or decremented"),
+            ("int n = 1; n += 1.5;", "'+' requires two ints or two doubles"),
+            ("string s = \"a\"; s -= \"b\";", "'-' requires two ints or two doubles; found string and string"),
+        ] {
+            let message = compile_source(source).unwrap_err();
+            assert!(message.contains(error), "{source}: {message}");
+        }
+        // `5 - -3` and `x - -1` still subtract a negative number.
+        assert!(compile_source("int x = 5 - -3; x = x - -1;").is_ok());
     }
 
     #[test]

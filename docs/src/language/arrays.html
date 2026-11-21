@@ -82,7 +82,7 @@ function squares(int count): int[] {
     int i = 0;
     while (i < count) {
         values[i] = i * i;
-        i = i + 1;
+        i++;
     }
     return values;
 }
@@ -99,7 +99,7 @@ print(squares(5));
 int[] scores = [90, 72, 85];
 int total = 0;
 foreach (scores as score) {
-    total = total + score;
+    total += score;
 }
 print(len(scores), total / len(scores));
 ```

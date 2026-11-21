@@ -63,7 +63,7 @@ Node list = new Node(1, new Node(2, new Node(3)));
 int total = 0;
 Node current = list;
 while (current != null) {
-    total = total + current->value;
+    total += current->value;
     current = current->next;
 }
 print(total);
@@ -73,6 +73,38 @@ print(total);
 ```
 
 <p><code>foreach</code> loop variables, caught exceptions, and <code>this</code> can't be reassigned.</p>
+
+<h2>Updating a value</h2>
+<p><code>count++;</code> adds 1 to an <code>int</code> or <code>double</code> and <code>count--;</code> subtracts 1. A compound assignment combines a value with the one already there: <code>total += price;</code> is the same as <code>total = total + price;</code>. Because <code>+</code> joins strings, <code>text += "!";</code> appends.</p>
+<table>
+<thead><tr><th>Statement</th><th>Same as</th></tr></thead>
+<tbody>
+<tr><td><code>x++;</code>, <code>++x;</code></td><td><code>x = x + 1;</code></td></tr>
+<tr><td><code>x--;</code>, <code>--x;</code></td><td><code>x = x - 1;</code></td></tr>
+<tr><td><code>x += v;</code>, <code>x -= v;</code>, <code>x *= v;</code>, <code>x /= v;</code>, <code>x %= v;</code></td><td><code>x = x + v;</code> and so on</td></tr>
+<tr><td><code>x &amp;= v;</code>, <code>x |= v;</code>, <code>x ^= v;</code>, <code>x &lt;&lt;= v;</code>, <code>x &gt;&gt;= v;</code></td><td><code>x = x &amp; v;</code> and so on</td></tr>
+</tbody>
+</table>
+
+```qiq
+int[] scores = [70, 85];
+scores[0] += 5;
+map[string, int] seen = {"ada" => 1};
+seen["ada"]++;
+string greeting = "Hello";
+greeting += ", world";
+print(scores, seen, greeting);
+```
+```output
+[75, 85] {"ada" => 2} Hello, world
+```
+
+<ul>
+<li>They work on anything that can be assigned: variables, array elements, map entries, properties, and static properties. The types allowed and the errors are those of the assignment written out, so <code>stock["kiwis"]++;</code> throws <code>KeyNotFoundException</code> when there's no <code>"kiwis"</code> key, as reading <code>stock["kiwis"]</code> would. To count, write <code>counts[word] = (counts[word] ?? 0) + 1;</code>.</li>
+<li>What's being updated is worked out once: <code>items[next()] += 1;</code> calls <code>next()</code> once. Its current value is read, then the right side is evaluated, then the result is stored.</li>
+<li>They are statements, not expressions, so <code>print(i++)</code>, <code>a[i++] = 0</code>, and <code>n = ++i</code> are errors. Write <code>i++;</code> on its own, then use <code>i</code>. As a statement, <code>i++</code> and <code>++i</code> are the same.</li>
+</ul>
+<div class="note"><strong>Note:</strong> PHP's <code>++</code> and <code>--</code> can be used inside expressions, where <code>$i++</code> and <code>++$i</code> give different values; qiq allows them only as statements, which is where they're clear. PHP also treats a missing array key as 0 or <code>""</code> in <code>$counts[$word]++</code>, with a warning; qiq throws instead.</div>
 
 <h2>null</h2>
 <p>A string, char, array, map, or object variable can hold <code>null</code>, meaning no value: assign it with <code>name = null;</code> or declare <code>Node head = null;</code>. Properties, array elements, map values, arguments, and return values of those types can be <code>null</code> too. Test for it with <code>== null</code>; using a null value, such as calling a method on it, throws <code>RuntimeException</code>. Numbers and bools can't be <code>null</code>.</p>

@@ -1,0 +1,124 @@
+// ++, --, and compound assignments (+=, -=, ...), which are statements.
+
+int i = 0;
+i++;
+i++;
+++i;
+i--;
+print(i);
+double d = 1.5;
+d++;
+--d;
+d++;
+print(d);
+
+// Every compound assignment behaves like x = x op value.
+int n = 10;
+n += 5;
+n -= 3;
+n *= 4;
+n /= 6;
+n %= 5;
+print(n);
+int bits = 12;
+bits &= 10;
+bits |= 1;
+bits ^= 4;
+bits <<= 3;
+bits >>= 1;
+print(bits);
+double ratio = 3.0;
+ratio /= 2.0;
+ratio *= ratio;
+print(ratio);
+string text = "qiq";
+text += " is";
+text += ' ';
+text += "quick";
+print(text);
+
+// Targets: elements, map entries, properties, static properties.
+int[] counts = [0, 0, 0];
+counts[1]++;
+counts[1] += 10;
+counts[2]--;
+int[][] grid = [[1, 2], [3, 4]];
+grid[1][0] *= 10;
+print(counts, grid);
+map[string, int] stock = {"apples" => 5};
+stock["apples"]++;
+stock["apples"] -= 2;
+map[string, int[]] lists = {"a" => [1, 2]};
+lists["a"][0] += 100;
+print(stock, lists);
+
+class Counter {
+    public int hits;
+    public static int total;
+    public double average;
+    function hit(): void {
+        this->hits++;
+        this->average += 0.5;
+        Counter::total += 2;
+        self::total++;
+    }
+}
+Counter counter = new Counter();
+counter->hit();
+counter->hit();
+counter->hits += 10;
+print(counter->hits, Counter::total, counter->average);
+
+// The target is evaluated once.
+int calls = 0;
+function(): int next = function(): int {
+    calls++;
+    return calls - 1;
+};
+int[] slots = [0, 0, 0];
+slots[next()] += 5;
+slots[next()]++;
+print(slots, calls);
+Counter[] counters = [new Counter()];
+function pick(Counter[] all): Counter {
+    print("picked");
+    return all[0];
+}
+pick(counters)->hits++;
+pick(counters)->hits *= 7;
+print(counters[0]->hits);
+
+// The target is read before the value is evaluated, and stored after.
+int index = 0;
+int[] values = [1, 2, 3];
+function(): int bump = function(): int {
+    index++;
+    return 100;
+};
+values[index] += bump();
+print(values, index);
+
+// Inside loops, the same statement runs every time round.
+int total = 0;
+foreach (range(1, 5) as k) {
+    total += k;
+    slots[k % 3]++;
+}
+print(total, slots);
+
+// Errors are the same as for the assignment written out.
+try {
+    stock["kiwis"]++;
+} catch (KeyNotFoundException e) {
+    print("missing key:", e->getMessage());
+}
+try {
+    counts[5] += 1;
+} catch (OutOfRangeException e) {
+    print("out of range");
+}
+try {
+    n /= 0;
+} catch (DivisionByZeroException e) {
+    print("division by zero");
+}
