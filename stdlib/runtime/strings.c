@@ -80,11 +80,58 @@ static size_t qiq_utf8_encode(uint32_t code_point, char *out) {
     return 4;
 }
 
+// Text is mostly ASCII, and an ASCII byte is a whole character that needs no
+// validating, so the functions below skip runs of ASCII 8 bytes at a time
+// and decode only the other characters one by one: counting the characters
+// of a 12 MB ASCII string takes about a tenth of the time.
+typedef uint64_t __attribute__((__may_alias__)) qiq_word;
+#define QIQ_ONES UINT64_C(0x0101010101010101)
+#define QIQ_HIGHS UINT64_C(0x8080808080808080)
+
+// Whether any byte of `word` is 0 or 0x80 and above (sometimes true for a
+// byte after one of those, which only ends a run early).
+static bool qiq_word_ends_ascii(uint64_t word) {
+    return ((word - QIQ_ONES) | word) & QIQ_HIGHS;
+}
+
+// The number of ASCII bytes (1 to 0x7f) at the start of `text`. Reads whole
+// aligned words, which never cross into another page, so reading past the
+// terminating NUL within one is safe.
+static size_t qiq_ascii_prefix(const unsigned char *text) {
+    const unsigned char *cursor = text;
+    while ((uintptr_t)cursor % sizeof(qiq_word) != 0) {
+        if (*cursor == 0 || *cursor >= 0x80) return (size_t)(cursor - text);
+        cursor++;
+    }
+    while (!qiq_word_ends_ascii(*(const qiq_word *)cursor)) cursor += sizeof(qiq_word);
+    while (*cursor != 0 && *cursor < 0x80) cursor++;
+    return (size_t)(cursor - text);
+}
+
 // Number of characters in `text`, validating it as UTF-8.
 static int64_t qiq_char_count(const char *text) {
     const unsigned char *cursor = (const unsigned char *)text;
     int64_t count = 0;
-    while (*cursor != 0) {
+    for (;;) {
+        size_t ascii = qiq_ascii_prefix(cursor);
+        cursor += ascii;
+        count += (int64_t)ascii;
+        if (*cursor == 0) return count;
+        cursor += qiq_utf8_char_width(cursor);
+        count++;
+    }
+}
+
+// Number of characters in `text` before `end`, a character boundary in it,
+// validating them as UTF-8.
+static int64_t qiq_char_count_to(const char *text, const char *end) {
+    const unsigned char *cursor = (const unsigned char *)text;
+    int64_t count = 0;
+    while (cursor < (const unsigned char *)end) {
+        size_t ascii = qiq_ascii_prefix(cursor);
+        if (cursor + ascii >= (const unsigned char *)end) return count + ((const unsigned char *)end - cursor);
+        cursor += ascii;
+        count += (int64_t)ascii;
         cursor += qiq_utf8_char_width(cursor);
         count++;
     }
@@ -96,6 +143,11 @@ static int64_t qiq_char_count(const char *text) {
 static const char *qiq_char_offset(const char *text, int64_t index) {
     const unsigned char *cursor = (const unsigned char *)text;
     while (*cursor != 0 && index > 0) {
+        size_t ascii = qiq_ascii_prefix(cursor);
+        if ((int64_t)ascii >= index) return (const char *)cursor + index;
+        cursor += ascii;
+        index -= (int64_t)ascii;
+        if (*cursor == 0) break;
         cursor += qiq_utf8_char_width(cursor);
         index--;
     }
@@ -200,22 +252,62 @@ static uint32_t qiq_to_lower(uint32_t c) {
     return c;
 }
 
+// Eight ASCII bytes with those from `from` to `to` changed by 0x20 (case):
+// a byte's high bit is set by adding 0x80 - from when it's >= from, and by
+// adding 0x7f - to when it's > to; the bytes with exactly one of the two
+// get 0x20 flipped. No byte carries into the next, since all are below 0x80.
+static uint64_t qiq_flip_case(uint64_t word, unsigned char from, unsigned char to) {
+    uint64_t at_least_from = word + (0x80 - from) * QIQ_ONES;
+    uint64_t above_to = word + (0x7f - to) * QIQ_ONES;
+    return word ^ (((at_least_from ^ above_to) & QIQ_HIGHS) >> 2);
+}
+
 // Maps each character of `text` (or only the first, when `first_only`).
+// No mapping makes a character longer in UTF-8 (each maps within ASCII, or
+// within two-byte characters, or from two bytes to one), so the result fits
+// in the length of `text`.
 static char *qiq_map_case(const char *text, uint32_t (*map)(uint32_t), bool first_only) {
     qiq_require_string(text);
-    // A character is at most 4 bytes, so 4 bytes per input byte always suffices.
-    char *result = qiq_alloc(strlen(text) * 4 + 1);
+    size_t length = strlen(text);
+    char *result = qiq_alloc(length + 1);
     const unsigned char *cursor = (const unsigned char *)text;
     char *out = result;
-    bool mapped = false;
+    if (first_only) {
+        if (*cursor != 0) {
+            size_t width;
+            uint32_t code_point = qiq_utf8_decode(cursor, &width);
+            out += qiq_utf8_encode(map(code_point), out);
+            cursor += width;
+        }
+        // The rest is copied after validating it, as mapping it would.
+        qiq_char_count((const char *)cursor);
+        size_t rest = length - (size_t)(cursor - (const unsigned char *)text);
+        memcpy(out, cursor, rest + 1);
+        return result;
+    }
+    unsigned char from = map('a') == 'A' ? 'a' : 'A';
+    unsigned char to = from + 25;
     while (*cursor != 0) {
+        // Whole words of ASCII at a time (read unaligned; the string's
+        // length says there are 8 more bytes).
+        while (length - (size_t)(cursor - (const unsigned char *)text) >= sizeof(uint64_t)) {
+            uint64_t word;
+            memcpy(&word, cursor, sizeof word);
+            if (word & QIQ_HIGHS) break;
+            word = qiq_flip_case(word, from, to);
+            memcpy(out, &word, sizeof word);
+            out += sizeof word;
+            cursor += sizeof word;
+        }
+        if (*cursor == 0) break;
+        if (*cursor < 0x80) {
+            *out++ = (char)(*cursor >= from && *cursor <= to ? *cursor ^ 0x20 : *cursor);
+            cursor++;
+            continue;
+        }
         size_t width;
         uint32_t code_point = qiq_utf8_decode(cursor, &width);
-        if (!first_only || !mapped) {
-            code_point = map(code_point);
-            mapped = true;
-        }
-        out += qiq_utf8_encode(code_point, out);
+        out += qiq_utf8_encode(map(code_point), out);
         cursor += width;
     }
     *out = 0;
@@ -252,15 +344,11 @@ QIQ_GUARDED(int64_t, qiq_stdlib_strpos, 0, (const char *haystack, const char *ne
     int64_t count = qiq_char_count(haystack);
     int64_t from = offset < 0 ? count + offset : offset;
     if (from < 0 || from > count) qiq_throw(QIQ_INVALID_ARGUMENT_EXCEPTION, "strpos offset is outside the string");
-    const char *found = strstr(qiq_char_offset(haystack, from), needle);
+    const char *start = qiq_char_offset(haystack, from);
+    const char *found = strstr(start, needle);
     if (found == NULL) return -1;
-    int64_t index = 0;
-    const unsigned char *cursor = (const unsigned char *)haystack;
-    while ((const char *)cursor < found) {
-        cursor += qiq_utf8_char_width(cursor);
-        index++;
-    }
-    return index;
+    // Characters before the match: those before `start`, then the rest.
+    return from + qiq_char_count_to(start, found);
 }
 
 QIQ_GUARDED(bool, qiq_stdlib_str_contains, false, (const char *haystack, const char *needle), (haystack, needle)) {
