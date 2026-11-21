@@ -748,7 +748,7 @@ function __server_connection(int connection, int listener, function(Request, Res
                 }
             }
             served = served + 1;
-            keepAlive = __server_request(connection, line, peer, handler, trustProxy);
+            keepAlive = __server_request(connection, line, peer, handler, trustProxy, served == 1000);
         }
     } catch (NetworkException e) {
         // The client went away or was too slow: nothing to answer.
@@ -758,8 +758,10 @@ function __server_connection(int connection, int listener, function(Request, Res
 }
 
 // Reads the rest of a request whose first line is `line`, handles it, and
-// sends the response. Returns whether to keep the connection open.
-function __server_request(int connection, string line, string peer, function(Request, ResponseWriter): void handler, bool trustProxy): bool {
+// sends the response. Returns whether to keep the connection open. On the
+// connection's `last` request the response says "Connection: close", so the
+// client doesn't send another request on a connection about to close.
+function __server_request(int connection, string line, string peer, function(Request, ResponseWriter): void handler, bool trustProxy, bool last): bool {
     string[] words = explode(" ", line);
     if (len(words) != 3 || (words[2] != "HTTP/1.1" && words[2] != "HTTP/1.0") || words[0] == "") {
         __server_reply_error(connection, 400, "HTTP/1.1");
@@ -796,6 +798,9 @@ function __server_request(int connection, string line, string peer, function(Req
     bool keepAlive = !str_contains(connectionHeader, "close");
     if (protocol == "HTTP/1.0") {
         keepAlive = str_contains(connectionHeader, "keep-alive");
+    }
+    if (last) {
+        keepAlive = false;
     }
 
     // The target: "/path?query", or "http://host/path?query".
@@ -887,8 +892,9 @@ function __server_request(int connection, string line, string peer, function(Req
             __server_apply_proxy(request);
         }
     } catch (InvalidUtf8Exception e) {
+        // The error reply says "Connection: close".
         __server_reply_error(connection, 400, protocol);
-        return keepAlive;
+        return false;
     }
     ResponseWriter writer = new ResponseWriter();
     try {
