@@ -1,6 +1,6 @@
 // Hashing with std/crypto, checked against PHP's md5, sha1, hash, and
 // hash_hmac (which print the same values).
-import md5, sha1, hash, hash_hmac, hash_bytes, bin2hex from "std/crypto";
+import md5, sha1, hash, hash_hmac, hash_bytes, bin2hex, base64_encode, base64_encode_bytes, base64_decode, base64_decode_bytes from "std/crypto";
 
 string[] texts = ["", "abc", "The quick brown fox jumps over the lazy dog", "héllo, 世界 😀"];
 foreach (texts as text) {
@@ -23,6 +23,48 @@ foreach (range(0, 255) as i) {
 print(bin2hex(hash_bytes("sha256", all)), len(hash_bytes("sha512", all)), len(hash_bytes("md5", [])));
 print(bin2hex(hash_bytes("sha1", string_to_bytes("abc"))) == sha1("abc"));
 print(bin2hex([]), bin2hex([0, 1, 15, 16, 171, 255]));
+
+// Base64: text of every length up to 9, multi-byte text, and binary data.
+string sample = "";
+foreach (range(0, 9) as i) {
+    print(base64_encode(sample), base64_decode(base64_encode(sample)) == sample);
+    sample += to_string(i);
+}
+print(base64_encode("héllo, 世界 😀"), base64_decode("aMOpbGxvLCDkuJbnlYwg8J+YgA=="));
+print(base64_encode_bytes(all));
+foreach (range(0, 7) as n) {
+    byte[] prefix = [];
+    int i = 0;
+    while (i < n) {
+        array_push(prefix, all[i]);
+        i++;
+    }
+    print(n, base64_encode_bytes(prefix), base64_decode_bytes(base64_encode_bytes(prefix)) == prefix);
+}
+print(base64_decode_bytes(base64_encode_bytes(all)) == all);
+// Lines wrapped at 76 characters, the URL-safe alphabet, and no padding.
+string wrapped = "";
+string encoded = base64_encode_bytes(all);
+foreach (range(0, len(encoded) - 1) as i) {
+    wrapped += substr(encoded, i, 1);
+    if (i % 76 == 75) {
+        wrapped += "\r\n";
+    }
+}
+print(base64_decode_bytes(wrapped) == all, base64_decode_bytes(" +/8= ") == base64_decode_bytes("-_8"), bin2hex(base64_decode_bytes("-_8")));
+print(base64_decode("aGk"), base64_decode("aGk="), base64_decode(""), len(base64_decode_bytes("")));
+foreach (["a", "aGk==", "aG=k", "aGk=x", "a===", "aGk!", "aGké", "QQ="] as bad) {
+    try {
+        print(len(base64_decode_bytes(bad)));
+    } catch (InvalidArgumentException e) {
+        print(e->getMessage());
+    }
+}
+try {
+    print(base64_decode("/w=="));
+} catch (InvalidUtf8Exception e) {
+    print(e->getMessage());
+}
 
 // Errors.
 try {

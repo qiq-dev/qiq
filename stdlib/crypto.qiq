@@ -1,4 +1,4 @@
-// Hashing: message digests and HMACs, implemented in C
+// Hashing and encoding: message digests, HMACs, hex, and base64, implemented in C
 // (stdlib/runtime/crypto.c) with Mbed TLS.
 //
 //   import sha1, hash, hash_hmac from "std/crypto";
@@ -29,3 +29,21 @@ extern function hash_bytes(string algorithm, byte[] data): byte[];
 
 // Bytes as lowercase hex, two digits per byte: bin2hex([1, 171]) is "01ab".
 extern function bin2hex(byte[] data): string;
+
+// Base64 (RFC 4648), as PHP's base64_encode writes it: the standard
+// alphabet with '=' padding. Decoding also accepts the URL-safe alphabet
+// ('-' and '_', as in JWTs), skips whitespace, and doesn't require the
+// padding; anything else throws InvalidArgumentException.
+
+// `text`'s UTF-8 bytes in base64: base64_encode("hi") is "aGk=".
+extern function base64_encode(string text): string;
+
+// Bytes in base64, for binary data.
+extern function base64_encode_bytes(byte[] data): string;
+
+// The text that `text` encodes. Throws InvalidUtf8Exception when it decodes
+// to bytes that aren't UTF-8 text; use base64_decode_bytes for those.
+extern function base64_decode(string text): string;
+
+// The bytes that `text` encodes.
+extern function base64_decode_bytes(string text): byte[];

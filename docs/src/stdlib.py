@@ -27,7 +27,7 @@ OVERVIEW = (
     "<tr><td><code>std/net</code></td><td>The <a href=\"class.socket.html\">Socket</a> class</td></tr>"
     "<tr><td><code>std/http</code></td><td>The <a href=\"ref.http.html\">HTTP client</a> and URL encoding</td></tr>"
     "<tr><td><code>std/http/server</code></td><td>The <a href=\"ref.http-server.html\">HTTP server</a></td></tr>"
-    "<tr><td><code>std/crypto</code></td><td><a href=\"ref.crypto.html\">Hashing</a>: MD5, SHA-1, SHA-2, and HMAC</td></tr>"
+    "<tr><td><code>std/crypto</code></td><td><a href=\"ref.crypto.html\">Hashing and encoding</a>: MD5, SHA-1, SHA-2, HMAC, hex, and base64</td></tr>"
     "</tbody></table>\n"
     "<pre class=\"code\">import File, file_get_contents from \"std/file\";\nimport date from \"std/time\";</pre>\n"
     "<p>Names from these modules are free for your own code when you don't import them: a program can declare its "
@@ -1913,11 +1913,12 @@ UNKNOWN_ALGORITHM = "<code>InvalidArgumentException</code> for an unknown algori
 
 CRYPTO = {
     "slug": "crypto",
-    "title": "Hashing",
+    "title": "Hashing and encoding",
     "intro": (
-        "Message digests and HMACs, from <code>std/crypto</code>, with PHP's names and results: <code>sha1(\"abc\")</code> "
-        "gives the same hex as in PHP. Text is hashed as its UTF-8 bytes. <code>hash_bytes</code> hashes binary data, such "
-        "as a file read with <code>file_get_bytes</code>, and returns the raw digest; <code>bin2hex</code> writes bytes as hex. "
+        "Message digests, HMACs, hex, and base64, from <code>std/crypto</code>, with PHP's names and results: <code>sha1(\"abc\")</code> "
+        "and <code>base64_encode(\"abc\")</code> give what they give in PHP. Text is hashed and encoded as its UTF-8 bytes. "
+        "Because a qiq string must be UTF-8 text, binary data, such as a file read with <code>file_get_bytes</code>, goes "
+        "through the <code>_bytes</code> functions, which take or return a <code>byte[]</code>. "
         "The hashing is done by Mbed TLS, which every qiq program already includes for HTTPS."
     ),
     "details": """<h2>Choosing an algorithm</h2>
@@ -2029,7 +2030,63 @@ CRYPTO = {
             "return_description": "The hex text; <code>\"\"</code> for no bytes.",
             "errors": ["<code>RuntimeException</code> if <code>data</code> is <code>null</code>."],
             "examples": [{"title": "Basic use", "code": 'print(bin2hex([1, 171, 255]));', "output": "01abff"}],
-            "see_also": ["hash_bytes", "string_to_bytes"],
+            "see_also": ["hash_bytes", "string_to_bytes", "base64_encode_bytes"],
+        },
+        {
+            "name": "base64_encode",
+            "purpose": "Encode text as base64",
+            "params": [param("text", "string", "The text, encoded as its UTF-8 bytes.")],
+            "returns": "string",
+            "description": "Returns <code>text</code> in base64 (RFC 4648), with the standard alphabet and <code>=</code> padding, like PHP's <code>base64_encode</code>.",
+            "return_description": "The base64 text: 4 characters for every 3 bytes, rounded up.",
+            "errors": [NULL_STRING],
+            "examples": [{"title": "Basic use", "code": 'print(base64_encode("user:secret"));\nprint(base64_encode("héllo"));', "output": "dXNlcjpzZWNyZXQ=\naMOpbGxv"}],
+            "notes": ["For an HTTP Basic <code>Authorization</code> header: <code>\"Basic \" + base64_encode(user + \":\" + password)</code>."],
+            "see_also": ["base64_decode", "base64_encode_bytes"],
+        },
+        {
+            "name": "base64_encode_bytes",
+            "purpose": "Encode bytes as base64",
+            "params": [param("data", "byte[]", "The bytes.")],
+            "returns": "string",
+            "description": "Returns <code>data</code> in base64, as <code>base64_encode</code> does for text. Use it for binary data such as images, keys, and digests.",
+            "return_description": "The base64 text.",
+            "errors": ["<code>RuntimeException</code> if <code>data</code> is <code>null</code>."],
+            "examples": [{"title": "Encoding bytes", "code": 'print(base64_encode_bytes([0, 255, 16]));\nprint(base64_encode_bytes(hash_bytes("md5", string_to_bytes("abc"))));', "output": "AP8Q\nkAFQmDzST7DWlj99KOF/cg=="}],
+            "see_also": ["base64_decode_bytes", "base64_encode", "hash_bytes"],
+        },
+        {
+            "name": "base64_decode",
+            "purpose": "Decode base64 into text",
+            "params": [param("text", "string", "The base64 text.")],
+            "returns": "string",
+            "description": "Returns the text that <code>text</code> encodes. The standard and the URL-safe alphabets are both accepted (<code>+</code> or <code>-</code>, <code>/</code> or <code>_</code>), whitespace and line breaks are skipped, and the <code>=</code> padding may be left out. The bytes it decodes to must be UTF-8 text.",
+            "return_description": "The decoded text.",
+            "errors": [
+                "<code>InvalidArgumentException</code> for anything else: a character that isn't base64, <code>=</code> in the wrong place, or text that ends partway through a byte. The message gives the position.",
+                "<code>InvalidUtf8Exception</code> if the decoded bytes aren't UTF-8 text (or contain a NUL byte); use <a href=\"function.base64-decode-bytes.html\">base64_decode_bytes</a> for binary data.",
+                NULL_STRING,
+            ],
+            "examples": [
+                {
+                    "title": "Decoding, and rejecting what isn't base64",
+                    "code": 'print(base64_decode("dXNlcjpzZWNyZXQ="), base64_decode("aGk"));\ntry {\n    print(base64_decode("aGk!"));\n} catch (InvalidArgumentException e) {\n    print(e->getMessage());\n}',
+                    "output": "user:secret hi\nbase64_decode: a character that isn't base64 at position 3",
+                }
+            ],
+            "notes": ["PHP's <code>base64_decode</code> drops characters it can't read unless <code>strict</code> is set; qiq throws instead, so corrupted data is noticed."],
+            "see_also": ["base64_encode", "base64_decode_bytes"],
+        },
+        {
+            "name": "base64_decode_bytes",
+            "purpose": "Decode base64 into bytes",
+            "params": [param("text", "string", "The base64 text.")],
+            "returns": "byte[]",
+            "description": "Returns the bytes that <code>text</code> encodes, accepting what <code>base64_decode</code> accepts. Use it for binary data, and for the parts of a JWT, which use the URL-safe alphabet without padding.",
+            "return_description": "The decoded bytes.",
+            "errors": ["<code>InvalidArgumentException</code> as for <code>base64_decode</code>.", NULL_STRING],
+            "examples": [{"title": "Decoding bytes", "code": 'print(base64_decode_bytes("AP8Q"), base64_decode_bytes("-_8"));', "output": "[0, 255, 16] [251, 255]"}],
+            "see_also": ["base64_encode_bytes", "base64_decode", "bin2hex"],
         },
     ],
 }

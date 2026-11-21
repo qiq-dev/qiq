@@ -10554,6 +10554,8 @@ mod tests {
         assert_eq!(compile_source("import __socket_close from \"std/net\";").unwrap_err(), "1:8: 'std/net' does not declare '__socket_close'");
         // std/crypto: hashing, with its names free when it isn't imported.
         let crypto = compile_source("import sha1, hash_hmac, hash_bytes, bin2hex from \"std/crypto\"; string a = sha1(\"x\"); string b = hash_hmac(\"sha256\", \"m\", \"k\"); string c = bin2hex(hash_bytes(\"md5\", [1]));").unwrap();
+        let base64 = compile_source("import base64_encode, base64_decode_bytes from \"std/crypto\"; byte[] b = base64_decode_bytes(base64_encode(\"x\"));").unwrap();
+        assert!(base64.contains("@qiq_stdlib_base64_encode(") && base64.contains("@qiq_stdlib_base64_decode_bytes("), "{base64}");
         for function in ["qiq_stdlib_sha1", "qiq_stdlib_hash_hmac", "qiq_stdlib_hash_bytes", "qiq_stdlib_bin2hex"] {
             assert!(crypto.contains(&format!("@{function}(")), "{function}: {crypto}");
         }
