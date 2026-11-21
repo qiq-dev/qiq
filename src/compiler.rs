@@ -9317,6 +9317,7 @@ const STDLIB_MODULES: &[(&str, Option<&str>, &str)] = &[
     ("net.qiq", Some("std/net"), include_str!("../stdlib/net.qiq")),
     ("http.qiq", Some("std/http"), include_str!("../stdlib/http.qiq")),
     ("server.qiq", Some("std/http/server"), include_str!("../stdlib/server.qiq")),
+    ("crypto.qiq", Some("std/crypto"), include_str!("../stdlib/crypto.qiq")),
 ];
 
 /// The prefix of standard library import paths.
@@ -10551,6 +10552,16 @@ mod tests {
             "1:1: type 'Socket' is not declared or imported; it's in the standard library: import Socket from \"std/net\";"
         );
         assert_eq!(compile_source("import __socket_close from \"std/net\";").unwrap_err(), "1:8: 'std/net' does not declare '__socket_close'");
+        // std/crypto: hashing, with its names free when it isn't imported.
+        let crypto = compile_source("import sha1, hash_hmac, hash_bytes, bin2hex from \"std/crypto\"; string a = sha1(\"x\"); string b = hash_hmac(\"sha256\", \"m\", \"k\"); string c = bin2hex(hash_bytes(\"md5\", [1]));").unwrap();
+        for function in ["qiq_stdlib_sha1", "qiq_stdlib_hash_hmac", "qiq_stdlib_hash_bytes", "qiq_stdlib_bin2hex"] {
+            assert!(crypto.contains(&format!("@{function}(")), "{function}: {crypto}");
+        }
+        assert!(compile_source("function hash(string s): int { return len(s); } int n = hash(\"x\");").is_ok());
+        assert_eq!(
+            compile_source("print(md5(\"x\"));").unwrap_err(),
+            "1:1: function 'md5' is not declared; it's in the standard library: import md5 from \"std/crypto\";"
+        );
         assert!(compile_source("import x from \"std/nothing\";").unwrap_err().contains("the standard library has no module \"std/nothing\""));
         // The prelude (strings, exceptions, built-ins) needs no import.
         assert!(compile_source("print(strtoupper(\"a\"), len(\"ab\")); throw new InvalidArgumentException(\"x\");").is_ok());

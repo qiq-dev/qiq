@@ -27,6 +27,7 @@ OVERVIEW = (
     "<tr><td><code>std/net</code></td><td>The <a href=\"class.socket.html\">Socket</a> class</td></tr>"
     "<tr><td><code>std/http</code></td><td>The <a href=\"ref.http.html\">HTTP client</a> and URL encoding</td></tr>"
     "<tr><td><code>std/http/server</code></td><td>The <a href=\"ref.http-server.html\">HTTP server</a></td></tr>"
+    "<tr><td><code>std/crypto</code></td><td><a href=\"ref.crypto.html\">Hashing</a>: MD5, SHA-1, SHA-2, and HMAC</td></tr>"
     "</tbody></table>\n"
     "<pre class=\"code\">import File, file_get_contents from \"std/file\";\nimport date from \"std/time\";</pre>\n"
     "<p>Names from these modules are free for your own code when you don't import them: a program can declare its "
@@ -1907,7 +1908,133 @@ RESPONSEWRITER_CLASS = '<h1>The ResponseWriter class</h1>\n<p>Builds the respons
 
 ROUTER_CLASS = '<h1>The Router class</h1>\n<p>Sends each request to a handler chosen by its method and path, like Go\'s <code>http.ServeMux</code> (with the patterns of Go 1.22).</p>\n<h2>Class synopsis</h2>\n<div class="synopsis"><code><span class="kw">final class</span> <span class="cls">Router</span> {<br>\n&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">handle</span>(<span class="type">string</span> pattern, <span class="kw">function</span>(<span class="cls">Request</span>, <span class="cls">ResponseWriter</span>): <span class="type">void</span> handler): <span class="type">void</span><br>\n&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">notFound</span>(<span class="kw">function</span>(<span class="cls">Request</span>, <span class="cls">ResponseWriter</span>): <span class="type">void</span> handler): <span class="type">void</span><br>\n&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">serve</span>(<span class="cls">Request</span> r, <span class="cls">ResponseWriter</span> w): <span class="type">void</span><br>\n&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">handler</span>(): <span class="kw">function</span>(<span class="cls">Request</span>, <span class="cls">ResponseWriter</span>): <span class="type">void</span><br>\n}</code></div>\n<h2>Patterns</h2>\n<p>A pattern is an optional method and a path: <code>[METHOD ]/path</code>.</p>\n<table>\n<thead><tr><th>Pattern</th><th>Matches</th></tr></thead>\n<tbody>\n<tr><td><code>/about</code></td><td>Only <code>/about</code>, with any method</td></tr>\n<tr><td><code>GET /about</code></td><td>Only <code>/about</code>, with <code>GET</code> or <code>HEAD</code></td></tr>\n<tr><td><code>/static/</code></td><td><code>/static/</code> and every path below it; <code>/static</code> is redirected to <code>/static/</code></td></tr>\n<tr><td><code>/</code></td><td>Every path: what no other pattern matches</td></tr>\n<tr><td><code>/{$}</code></td><td>Only <code>/</code> itself</td></tr>\n<tr><td><code>/items/{id}</code></td><td><code>/items/7</code>, with <code>r-&gt;pathValue("id")</code> = <code>7</code>; a wildcard matches one non-empty segment, decoded</td></tr>\n<tr><td><code>/files/{path...}</code></td><td><code>/files/a/b.txt</code>, with <code>path</code> = <code>a/b.txt</code>; only as the last segment</td></tr>\n</tbody>\n</table>\n<p>When several patterns match, the most specific wins: at the first segment where they differ, a fixed name beats <code>{name}</code>, which beats <code>{name...}</code> or a trailing <code>/</code>; then the longer pattern wins, then the one with a method. So <code>/items/new</code> beats <code>/items/{id}</code>, whatever the order they were added in. A path that only matches patterns for other methods gets <code>405 Method Not Allowed</code> with an <code>Allow</code> header; one that matches nothing gets <code>404 Not Found</code>, or the <code>notFound</code> handler.</p>\n<p><code>handle</code> throws <code>InvalidArgumentException</code> for a malformed pattern or one that duplicates an earlier pattern.</p>\n<table>\n<thead><tr><th>Method</th><th>Description</th></tr></thead>\n<tbody>\n<tr><td><code>handle(pattern, handler)</code></td><td>Adds a route</td></tr>\n<tr><td><code>notFound(handler)</code></td><td>Sets the handler for requests that match no pattern</td></tr>\n<tr><td><code>serve(r, w)</code></td><td>Handles a request: finds the route, sets <code>r-&gt;params</code>, and calls its handler. Useful in tests, with a <code>Request</code> built by hand.</td></tr>\n<tr><td><code>handler()</code></td><td>The router as a handler, for <a href="function.http-serve.html">http_serve</a> and middleware such as <a href="function.http-log.html">http_log</a></td></tr>\n</tbody>\n</table>\n<h2>Example</h2>\n<pre class="code">Router router = new Router();\nrouter-&gt;handle("GET /{$}", fn(Request r, ResponseWriter w) =&gt; w-&gt;write("home\\n"));\nrouter-&gt;handle("GET /items/{id}", fn(Request r, ResponseWriter w) =&gt; w-&gt;write("item " + r-&gt;pathValue("id") + "\\n"));\nrouter-&gt;handle("GET /items/new", fn(Request r, ResponseWriter w) =&gt; w-&gt;write("new item form\\n"));\nrouter-&gt;handle("DELETE /items/{id}", function(Request r, ResponseWriter w): void {\n    w-&gt;status(204);\n});\n\n// Without a server: build a request and call serve().\nRequest request = new Request("GET", "/items/42", "", "HTTP/1.1", {"host" =&gt; "example.com"}, [], "127.0.0.1:5000");\nResponseWriter writer = new ResponseWriter();\nrouter-&gt;serve(request, writer);\nprint(writer-&gt;statusCode(), bytes_to_string(writer-&gt;bytes()));   // 200 item 42\n\nhttp_serve(":8080", router-&gt;handler());</pre>\n'
 
-CATEGORIES = [GENERAL, STRINGS, ARRAYS, MAPS, FILES, DATES, JSON, HTTP, HTTP_SERVER, PROGRAM, CONVERSIONS, OUTPUT]
+ALGORITHMS = "<code>\"md5\"</code>, <code>\"sha1\"</code>, <code>\"sha224\"</code>, <code>\"sha256\"</code>, <code>\"sha384\"</code>, or <code>\"sha512\"</code>, in any case"
+UNKNOWN_ALGORITHM = "<code>InvalidArgumentException</code> for an unknown algorithm."
+
+CRYPTO = {
+    "slug": "crypto",
+    "title": "Hashing",
+    "intro": (
+        "Message digests and HMACs, from <code>std/crypto</code>, with PHP's names and results: <code>sha1(\"abc\")</code> "
+        "gives the same hex as in PHP. Text is hashed as its UTF-8 bytes. <code>hash_bytes</code> hashes binary data, such "
+        "as a file read with <code>file_get_bytes</code>, and returns the raw digest; <code>bin2hex</code> writes bytes as hex. "
+        "The hashing is done by Mbed TLS, which every qiq program already includes for HTTPS."
+    ),
+    "details": """<h2>Choosing an algorithm</h2>
+<table>
+<thead><tr><th>Algorithm</th><th>Digest</th><th>Use</th></tr></thead>
+<tbody>
+<tr><td><code>md5</code></td><td>16 bytes, 32 hex digits</td><td>Checksums, cache keys, and formats that require it. Not for security: collisions can be made on purpose.</td></tr>
+<tr><td><code>sha1</code></td><td>20 bytes, 40 hex digits</td><td>The same, and Git object names. Not for security either.</td></tr>
+<tr><td><code>sha224</code>, <code>sha256</code></td><td>28 and 32 bytes</td><td>The usual choice for integrity checks and signatures (with <code>hash_hmac</code>).</td></tr>
+<tr><td><code>sha384</code>, <code>sha512</code></td><td>48 and 64 bytes</td><td>The same, with longer digests.</td></tr>
+</tbody>
+</table>
+<div class="note"><strong>Note:</strong> None of these is a way to store passwords: they're fast, which makes guessing quick. qiq doesn't have <code>password_hash</code> yet.</div>""",
+    "functions": [
+        {
+            "name": "md5",
+            "purpose": "Compute a string's MD5 digest",
+            "params": [param("text", "string", "The text to hash, as its UTF-8 bytes.")],
+            "returns": "string",
+            "description": "Returns the MD5 digest of <code>text</code> as 32 lowercase hex digits, like PHP's <code>md5</code>. The same as <code>hash(\"md5\", text)</code>.",
+            "return_description": "The digest, in hex.",
+            "errors": [NULL_STRING],
+            "examples": [{"title": "Basic use", "code": 'print(md5("abc"));', "output": "900150983cd24fb0d6963f7d28e17f72"}],
+            "notes": ["MD5 isn't safe where someone could try to make two inputs with the same digest; use <code>hash(\"sha256\", text)</code> there."],
+            "see_also": ["sha1", "hash", "hash_bytes"],
+        },
+        {
+            "name": "sha1",
+            "purpose": "Compute a string's SHA-1 digest",
+            "params": [param("text", "string", "The text to hash, as its UTF-8 bytes.")],
+            "returns": "string",
+            "description": "Returns the SHA-1 digest of <code>text</code> as 40 lowercase hex digits, like PHP's <code>sha1</code>. The same as <code>hash(\"sha1\", text)</code>.",
+            "return_description": "The digest, in hex.",
+            "errors": [NULL_STRING],
+            "examples": [{"title": "Basic use", "code": 'print(sha1("abc"));', "output": "a9993e364706816aba3e25717850c26c9cd0d89d"}],
+            "notes": ["Like MD5, SHA-1 is broken for security uses; prefer SHA-256 for anything new."],
+            "see_also": ["md5", "hash", "hash_hmac"],
+        },
+        {
+            "name": "hash",
+            "purpose": "Compute a string's digest with a chosen algorithm",
+            "params": [
+                param("algorithm", "string", "The algorithm: " + ALGORITHMS + "."),
+                param("text", "string", "The text to hash, as its UTF-8 bytes."),
+            ],
+            "returns": "string",
+            "description": "Returns the digest of <code>text</code> as lowercase hex, like PHP's <code>hash</code>.",
+            "return_description": "The digest, in hex: twice as many digits as the digest has bytes.",
+            "errors": [UNKNOWN_ALGORITHM, NULL_STRING],
+            "examples": [
+                {
+                    "title": "SHA-256",
+                    "code": 'print(hash("sha256", "abc"));\nprint(len(hash("sha512", "abc")));',
+                    "output": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad\n128",
+                }
+            ],
+            "notes": ["To hash binary data, use <a href=\"function.hash-bytes.html\">hash_bytes</a>."],
+            "see_also": ["hash_hmac", "hash_bytes", "md5", "sha1"],
+        },
+        {
+            "name": "hash_hmac",
+            "purpose": "Compute an HMAC",
+            "params": [
+                param("algorithm", "string", "The algorithm: " + ALGORITHMS + "."),
+                param("text", "string", "The message."),
+                param("key", "string", "The secret key."),
+            ],
+            "returns": "string",
+            "description": "Returns the HMAC of <code>text</code> with <code>key</code> as lowercase hex, like PHP's <code>hash_hmac</code>, with the arguments in the same order. An HMAC shows that a message came from someone who knows the key and wasn't changed on the way, which is how webhooks and many APIs sign requests.",
+            "return_description": "The HMAC, in hex.",
+            "errors": [UNKNOWN_ALGORITHM, NULL_STRING],
+            "examples": [
+                {
+                    "title": "Signing a message",
+                    "code": 'print(hash_hmac("sha256", "what do ya want for nothing?", "Jefe"));',
+                    "output": "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843",
+                }
+            ],
+            "notes": ["To check a signature, compute it again and compare it with <code>==</code>."],
+            "see_also": ["hash", "sha1"],
+        },
+        {
+            "name": "hash_bytes",
+            "purpose": "Compute the raw digest of bytes",
+            "params": [
+                param("algorithm", "string", "The algorithm: " + ALGORITHMS + "."),
+                param("data", "byte[]", "The bytes to hash."),
+            ],
+            "returns": "byte[]",
+            "description": "Returns the digest of <code>data</code> as bytes, like PHP's <code>hash</code> with <code>binary</code> set. Use it for data that isn't text, such as a file read with <code>file_get_bytes</code>, and where a raw digest is needed; <a href=\"function.bin2hex.html\">bin2hex</a> turns it into hex.",
+            "return_description": "The digest: 16 bytes for MD5, 20 for SHA-1, 28, 32, 48, or 64 for SHA-2.",
+            "errors": [UNKNOWN_ALGORITHM, "<code>RuntimeException</code> if <code>data</code> is <code>null</code>."],
+            "examples": [
+                {
+                    "title": "Hashing bytes",
+                    "code": 'byte[] digest = hash_bytes("md5", string_to_bytes("abc"));\nprint(len(digest), bin2hex(digest));',
+                    "output": "16 900150983cd24fb0d6963f7d28e17f72",
+                }
+            ],
+            "notes": ["A file's checksum: <code>bin2hex(hash_bytes(\"sha256\", file_get_bytes(path)))</code>."],
+            "see_also": ["hash", "bin2hex"],
+        },
+        {
+            "name": "bin2hex",
+            "purpose": "Write bytes as hex",
+            "params": [param("data", "byte[]", "The bytes.")],
+            "returns": "string",
+            "description": "Returns <code>data</code> as lowercase hex, two digits per byte, like PHP's <code>bin2hex</code>.",
+            "return_description": "The hex text; <code>\"\"</code> for no bytes.",
+            "errors": ["<code>RuntimeException</code> if <code>data</code> is <code>null</code>."],
+            "examples": [{"title": "Basic use", "code": 'print(bin2hex([1, 171, 255]));', "output": "01abff"}],
+            "see_also": ["hash_bytes", "string_to_bytes"],
+        },
+    ],
+}
+
+CATEGORIES = [GENERAL, STRINGS, ARRAYS, MAPS, FILES, DATES, JSON, HTTP, HTTP_SERVER, CRYPTO, PROGRAM, CONVERSIONS, OUTPUT]
 
 FILE_CLASS = """<h1>The File class</h1>
 <p>A <code>File</code> reads or writes a file a piece at a time: a line, or a chunk of bytes. Use it for files too large to load at once, for files you build up gradually, and for standard input and output. To read or write a whole file in one call, the <a href="ref.files.html">file functions</a> are simpler.</p>

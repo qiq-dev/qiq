@@ -37,6 +37,7 @@ const RUNTIME_SOURCES: &[&str] = &[
     "json.c",
     "program.c",
     "net.c",
+    "crypto.c",
 ];
 /// LLVM components qiq uses: reading IR, linking modules, optimizing, and
 /// emitting x86-64 object code (plus what inkwell references).

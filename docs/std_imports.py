@@ -13,6 +13,7 @@ MODULES = [
     ("net.qiq", "std/net"),
     ("http.qiq", "std/http"),
     ("server.qiq", "std/http/server"),
+    ("crypto.qiq", "std/crypto"),
 ]
 DECL = re.compile(r"^\s*(?:(?:extern|final|abstract)\s+)*(function|class|interface)\s+([A-Za-z_]\w*)")
 

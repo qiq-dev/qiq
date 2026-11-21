@@ -1,0 +1,38 @@
+// Hashing with std/crypto, checked against PHP's md5, sha1, hash, and
+// hash_hmac (which print the same values).
+import md5, sha1, hash, hash_hmac, hash_bytes, bin2hex from "std/crypto";
+
+string[] texts = ["", "abc", "The quick brown fox jumps over the lazy dog", "héllo, 世界 😀"];
+foreach (texts as text) {
+    print(md5(text), sha1(text));
+    foreach (["md5", "sha1", "sha224", "sha256", "sha384", "sha512"] as algorithm) {
+        print(algorithm, hash(algorithm, text));
+    }
+}
+print(hash("SHA256", "abc") == hash("sha256", "abc"));
+
+// HMAC: RFC 4231 test case 2, and an empty key.
+print(hash_hmac("sha256", "what do ya want for nothing?", "Jefe"));
+print(hash_hmac("sha1", "message", ""), hash_hmac("md5", "", "key"));
+
+// Raw digests of binary data, and bytes as hex.
+byte[] all = new byte[256];
+foreach (range(0, 255) as i) {
+    all[i] = to_byte(i);
+}
+print(bin2hex(hash_bytes("sha256", all)), len(hash_bytes("sha512", all)), len(hash_bytes("md5", [])));
+print(bin2hex(hash_bytes("sha1", string_to_bytes("abc"))) == sha1("abc"));
+print(bin2hex([]), bin2hex([0, 1, 15, 16, 171, 255]));
+
+// Errors.
+try {
+    print(hash("sha3", "abc"));
+} catch (InvalidArgumentException e) {
+    print(e->getMessage());
+}
+try {
+    string missing = null;
+    print(sha1(missing));
+} catch (RuntimeException e) {
+    print(e->getMessage());
+}

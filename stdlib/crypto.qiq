@@ -1,0 +1,31 @@
+// Hashing: message digests and HMACs, implemented in C
+// (stdlib/runtime/crypto.c) with Mbed TLS.
+//
+//   import sha1, hash, hash_hmac from "std/crypto";
+//
+// Algorithms are named as in PHP, in any case: "md5", "sha1", "sha224",
+// "sha256", "sha384", "sha512". An unknown one throws
+// InvalidArgumentException. Digests come back as lowercase hex, except from
+// hash_bytes. MD5 and SHA-1 are fine for checksums and cache keys, but not
+// for passwords or signatures that must resist attack.
+
+// The MD5 digest of `text`'s UTF-8 bytes, in hex: md5("abc") is
+// "900150983cd24fb0d6963f7d28e17f72".
+extern function md5(string text): string;
+
+// The SHA-1 digest of `text`, in hex.
+extern function sha1(string text): string;
+
+// The digest of `text` with `algorithm`, in hex: hash("sha256", text).
+extern function hash(string algorithm, string text): string;
+
+// The HMAC of `text` with `key` (PHP's argument order), in hex: for signing
+// messages, such as webhooks and API requests.
+extern function hash_hmac(string algorithm, string text, string key): string;
+
+// The digest of `data` with `algorithm`, as raw bytes: for binary data, such
+// as hash_bytes("sha256", file_get_bytes(path)).
+extern function hash_bytes(string algorithm, byte[] data): byte[];
+
+// Bytes as lowercase hex, two digits per byte: bin2hex([1, 171]) is "01ab".
+extern function bin2hex(byte[] data): string;
