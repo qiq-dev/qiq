@@ -68,27 +68,73 @@ static bool qiq_debugging(void) {
     return qiq_debug;
 }
 
+// A cache of freed small blocks in front of malloc. musl's malloc takes a
+// few hundred nanoseconds to allocate and free a block when few others are
+// live, which is what a loop that makes a temporary string does each time
+// round; reusing a block from these lists takes a few. Blocks of up to
+// QIQ_SMALL_MAX bytes (header included) are rounded up to 4 less than a
+// multiple of 16, which fills musl's chunks exactly: it keeps 4 bytes of its
+// own beside each block, in 16-byte units. The
+// multiple, the block's size class, is kept in the header's flags so the
+// block can go back on its class's list when freed. Class 0 marks a block
+// that goes back to free(): a large one, or a string adopted from a block
+// the caller allocated. Each list keeps at most QIQ_CACHE_BYTES; blocks
+// beyond that are freed. The runtime has no threads (http_serve forks), so
+// the lists need no lock.
+#define QIQ_SMALL_MAX 252
+#define QIQ_CLASSES ((QIQ_SMALL_MAX + 4) / 16)
+#define QIQ_CACHE_BYTES (256 * 1024)
+#define QIQ_CLASS_SHIFT 24
+#define QIQ_CLASS_MASK (0xffu << QIQ_CLASS_SHIFT)
+
+static QiqHeader *qiq_cached[QIQ_CLASSES + 1];
+static size_t qiq_cached_count[QIQ_CLASSES + 1];
+
+// The size class of a block of `bytes` bytes, or 0 for one too large to
+// cache. Blocks of class `c` are QIQ_CLASS_BYTES(c) bytes long.
+#define QIQ_CLASS_BYTES(class) ((size_t)(class) * 16 - 4)
+static uint32_t qiq_size_class(size_t bytes) {
+    return bytes <= QIQ_SMALL_MAX ? (uint32_t)((bytes + 4 + 15) / 16) : 0;
+}
+
+// A block of `bytes` bytes, zero-filled when `zero` is true, whose header
+// records its size class.
+static QiqHeader *qiq_block(size_t bytes, bool zero) {
+    uint32_t class = qiq_size_class(bytes);
+    QiqHeader *header;
+    if (class == 0) {
+        header = zero ? calloc(1, bytes) : malloc(bytes);
+    } else if (qiq_cached[class] != NULL) {
+        header = qiq_cached[class];
+        qiq_cached[class] = (QiqHeader *)(intptr_t)header->references;
+        qiq_cached_count[class]--;
+        if (zero) memset(header, 0, QIQ_CLASS_BYTES(class));
+    } else {
+        header = zero ? calloc(1, QIQ_CLASS_BYTES(class)) : malloc(QIQ_CLASS_BYTES(class));
+    }
+    if (header == NULL) qiq_fatal("out of memory");
+    header->flags = class << QIQ_CLASS_SHIFT;
+    return header;
+}
+
 void *qiq_allocate(size_t size, uint32_t kind, uint32_t flags) {
     // Every reference the program holds is counted at an allocation, so
     // it's a safe point to look for cycles.
     if (qiq_root_count >= qiq_root_threshold) qiq_collect_cycles();
     if (size > SIZE_MAX - sizeof(QiqHeader)) qiq_fatal("out of memory");
-    QiqHeader *header = calloc(1, sizeof(QiqHeader) + size);
-    if (header == NULL) qiq_fatal("out of memory");
+    QiqHeader *header = qiq_block(sizeof(QiqHeader) + size, true);
     header->references = 1;
     header->kind = kind;
-    header->flags = flags;
+    header->flags |= flags;
     if (qiq_debugging()) qiq_allocated++;
     return header + 1;
 }
 
 char *qiq_string_new(size_t length) {
-    if (length == SIZE_MAX) qiq_fatal("out of memory");
-    QiqHeader *header = malloc(sizeof(QiqHeader) + length + 1);
-    if (header == NULL) qiq_fatal("out of memory");
+    if (length >= SIZE_MAX - sizeof(QiqHeader)) qiq_fatal("out of memory");
+    QiqHeader *header = qiq_block(sizeof(QiqHeader) + length + 1, false);
     header->references = 1;
     header->kind = QIQ_KIND_STRING;
-    header->flags = 0;
     if (qiq_debugging()) qiq_allocated++;
     char *text = (char *)(header + 1);
     text[length] = '\0';
@@ -135,7 +181,16 @@ static void qiq_free_header(QiqHeader *header) {
         header->references = QIQ_FREED_REFERENCES;
         return;
     }
-    free(header);
+    uint32_t class = (header->flags & QIQ_CLASS_MASK) >> QIQ_CLASS_SHIFT;
+    if (class == 0 || qiq_cached_count[class] * QIQ_CLASS_BYTES(class) >= QIQ_CACHE_BYTES) {
+        free(header);
+        return;
+    }
+    // A cleared kind makes a stray use of the block fail qiq_checked_header.
+    header->kind = 0;
+    header->references = (int64_t)(intptr_t)qiq_cached[class];
+    qiq_cached[class] = header;
+    qiq_cached_count[class]++;
 }
 
 static void qiq_possible_root(QiqHeader *header) {

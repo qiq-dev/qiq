@@ -1,8 +1,9 @@
 //! Prepares everything qiq embeds so that compiling qiq programs needs no
 //! other tools:
 //!
-//! - musl libc, built from `vendor/musl-1.2.5.tar.gz`, which compiled programs
-//!   link against statically;
+//! - musl libc, built from `vendor/musl-1.2.5.tar.gz` with qiq's memcpy
+//!   (`vendor/musl-x86_64-memcpy.c`), which compiled programs link against
+//!   statically;
 //! - Mbed TLS, built from `vendor/mbedtls-3.6.8.tar.bz2` (sha256
 //!   bc54b818e87f49c0b3281dd85d24adaede0e63b4e822e3fbd49c005a38b9595b) as a
 //!   static library that programs using HTTPS link against;
@@ -20,6 +21,8 @@ use std::process::Command;
 
 const MUSL: &str = "musl-1.2.5";
 const MBEDTLS: &str = "mbedtls-3.6.8";
+/// Replaces musl's x86-64 assembly memcpy, which is slow for short copies.
+const MUSL_MEMCPY: &str = "vendor/musl-x86_64-memcpy.c";
 const RUNTIME_SOURCES: &[&str] = &[
     "core.c",
     "memory.c",
@@ -72,15 +75,32 @@ fn output(command: &mut Command) -> String {
     String::from_utf8(result.stdout).unwrap().trim().to_string()
 }
 
-/// Builds musl into `out/musl` once; later builds reuse it.
+/// Builds musl into `out/musl` once; later builds reuse it until
+/// MUSL_MEMCPY changes. The build replaces musl's x86-64 assembly memcpy
+/// with MUSL_MEMCPY and drops its assembly memmove (which is built on that
+/// memcpy and copies overlapping bytes backwards one at a time), so musl
+/// uses its generic C memmove.
 fn build_musl(out: &Path, clang: &str) -> PathBuf {
     let prefix = out.join("musl");
-    if prefix.join("lib/libc.a").exists() {
+    let memcpy = std::fs::read_to_string(MUSL_MEMCPY).unwrap_or_else(|error| panic!("could not read {MUSL_MEMCPY}: {error}"));
+    // Records which memcpy the installed musl was built with.
+    let stamp = prefix.join("qiq-memcpy.c");
+    if prefix.join("lib/libc.a").exists() && std::fs::read_to_string(&stamp).ok().as_deref() == Some(memcpy.as_str()) {
         return prefix;
+    }
+    let source = out.join(MUSL);
+    for stale in [&source, &prefix] {
+        if stale.exists() {
+            std::fs::remove_dir_all(stale).unwrap_or_else(|error| panic!("could not remove {}: {error}", stale.display()));
+        }
     }
     let tarball = Path::new("vendor").join(format!("{MUSL}.tar.gz"));
     run(Command::new("tar").arg("xzf").arg(&tarball).arg("-C").arg(out));
-    let source = out.join(MUSL);
+    let string = source.join("src/string/x86_64");
+    for assembly in ["memcpy.s", "memmove.s"] {
+        std::fs::remove_file(string.join(assembly)).unwrap_or_else(|error| panic!("could not remove musl's {assembly}: {error}"));
+    }
+    std::fs::write(string.join("memcpy.c"), &memcpy).unwrap_or_else(|error| panic!("could not write memcpy.c: {error}"));
     run(Command::new("./configure")
         .current_dir(&source)
         .arg(format!("--prefix={}", prefix.display()))
@@ -89,6 +109,7 @@ fn build_musl(out: &Path, clang: &str) -> PathBuf {
     let jobs = env::var("NUM_JOBS").unwrap_or_else(|_| "4".to_string());
     run(Command::new("make").current_dir(&source).arg(format!("-j{jobs}")));
     run(Command::new("make").current_dir(&source).arg("install"));
+    std::fs::write(&stamp, &memcpy).unwrap_or_else(|error| panic!("could not write {}: {error}", stamp.display()));
     prefix
 }
 
@@ -159,6 +180,7 @@ fn main() {
     let llvm_config = tool("LLVM_CONFIG", "llvm-config-18");
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rerun-if-changed=vendor/{MUSL}.tar.gz");
+    println!("cargo:rerun-if-changed={MUSL_MEMCPY}");
     println!("cargo:rerun-if-changed=vendor/{MBEDTLS}.tar.bz2");
     println!("cargo:rerun-if-changed=stdlib/runtime");
 

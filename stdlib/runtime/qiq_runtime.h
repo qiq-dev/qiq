@@ -81,6 +81,8 @@ typedef struct {
 #define QIQ_WHITE (2u << 8)          // garbage, unless found to be reachable
 #define QIQ_PURPLE (3u << 8)         // a possible root of a garbage cycle
 #define QIQ_BUFFERED (1u << 10)      // in the list of possible roots
+// Bits 24 to 31 hold the block's size class for memory.c's cache of freed
+// blocks; flags must otherwise stay below them.
 
 // A zero-filled value of `size` bytes with one reference.
 void *qiq_allocate(size_t size, uint32_t kind, uint32_t flags);
