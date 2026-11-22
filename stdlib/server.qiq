@@ -430,7 +430,7 @@ function __router_more_specific(__Route a, __Route b): bool {
     if (len(b->segments) < shorter) {
         shorter = len(b->segments);
     }
-    foreach (range(0, shorter - 1) as i) {
+    foreach (range(shorter) as i) {
         int rankA = __router_rank(a->segments[i]);
         int rankB = __router_rank(b->segments[i]);
         if (rankA != rankB) {

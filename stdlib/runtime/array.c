@@ -253,6 +253,16 @@ QIQ_GUARDED(void *, qiq_range_int, NULL, (int64_t start, int64_t end, int64_t st
     return array;
 }
 
+// range(count): 0 up to count - 1, or no elements when count <= 0.
+QIQ_GUARDED(void *, qiq_range_count, NULL, (int64_t count), (count)) {
+    if (count < 0) count = 0;
+    qiq_check_range_size(count);
+    void *array = qiq_array_create(count, 8, 0);
+    int64_t *data = QIQ_ARRAY_DATA(array);
+    for (int64_t index = 0; index < count; index++) data[index] = index;
+    return array;
+}
+
 // Doubles: element i is start + i * step, stopping at the end, as in PHP.
 QIQ_GUARDED(void *, qiq_range_double, NULL, (double start, double end, double step, bool has_step),
             (start, end, step, has_step)) {

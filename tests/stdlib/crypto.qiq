@@ -45,7 +45,7 @@ print(base64_decode_bytes(base64_encode_bytes(all)) == all);
 // Lines wrapped at 76 characters, the URL-safe alphabet, and no padding.
 string wrapped = "";
 string encoded = base64_encode_bytes(all);
-foreach (range(0, len(encoded) - 1) as i) {
+foreach (range(len(encoded)) as i) {
     wrapped += substr(encoded, i, 1);
     if (i % 76 == 75) {
         wrapped += "\r\n";

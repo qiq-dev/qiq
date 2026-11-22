@@ -1298,26 +1298,32 @@ ARRAYS = {
     "functions": [
         {
             "name": "range",
-            "purpose": "An array of numbers or characters from start to end",
+            "purpose": "A count from 0, or numbers or characters from start to end",
             "params": [
-                param("start", "int|double|char", "The first value."),
+                param("start", "int|double|char", "The first value. Given alone, as <code>range(count)</code>, it's a count instead: see below."),
                 param("end", "int|double|char", "The last value, which is included if the steps land on it."),
                 param("step", "int|double", "The distance between values: positive, and for chars an int.", "1"),
             ],
             "returns": "int[]|double[]|char[]",
-            "description": """<p>Returns the values from <code>start</code> to <code>end</code>, as PHP's <code>range</code> does:</p>
+            "description": """<p><code>range(count)</code>, with one int, returns <code>0</code> up to <code>count - 1</code>: <code>range(3)</code> is <code>[0, 1, 2]</code>, and <code>range(0)</code> and a negative count give <code>[]</code>. It's the loop <code>for (i = 0; i &lt; count; i++)</code> of other languages: <code>foreach (range(len(items)) as i)</code> goes through the indexes of <code>items</code>, and does nothing when it's empty. (PHP's <code>range</code> has no one-argument form.)</p>
+<p>With two or three arguments, it returns the values from <code>start</code> to <code>end</code>, as PHP's <code>range</code> does:</p>
 <ul>
 <li>The result is <code>int[]</code> for ints, <code>double[]</code> if any argument is a double, and <code>char[]</code> for two chars, which count by Unicode code point (<code>range('a', 'e')</code>, <code>range('α', 'ε')</code>).</li>
-<li>The end is included: <code>range(1, 3)</code> is <code>[1, 2, 3]</code>. When <code>end</code> is less than <code>start</code>, the values count down: <code>range(3, 1)</code> is <code>[3, 2, 1]</code>.</li>
+<li>The end is included: <code>range(1, 3)</code> is <code>[1, 2, 3]</code>. When <code>end</code> is less than <code>start</code>, the values count down: <code>range(3, 1)</code> is <code>[3, 2, 1]</code>. So <code>range(0, n - 1)</code> isn't empty when <code>n</code> is 0: it's <code>[0, -1]</code>. Use <code>range(n)</code>.</li>
 <li>For doubles, value <var>i</var> is <code>start + i * step</code>, stopping at <code>end</code>, so rounding can leave the end out: <code>range(0.0, 0.3, 0.1)</code> has three values.</li>
 </ul>
 <p>In <code>foreach (range(...) as i)</code> over ints, no array is built: the loop just counts.</p>""",
             "return_description": "The values, as a new array.",
             "errors": [
                 "<code>InvalidArgumentException</code> if the step is 0, negative for an increasing range, or larger than the distance from <code>start</code> to <code>end</code> (unless they're equal), or if a range used as an array would have more than 2<sup>31</sup> elements.",
-                "Arguments of other types, or a char mixed with a number, are compile errors.",
+                "Arguments of other types, a char mixed with a number, or a count that isn't an int, are compile errors.",
             ],
             "examples": [
+                {
+                    "title": "Counting from 0",
+                    "code": 'string[] queue = ["build", "test"];\nforeach (range(len(queue)) as i) {\n    print(i, queue[i]);\n}\nstring[] empty = [];\nprint(range(3), range(len(empty)));',
+                    "output": "0 build\n1 test\n[0, 1, 2] []",
+                },
                 {
                     "title": "Ints, doubles, and chars",
                     "code": "print(range(1, 5), range(10, 0, 4));\nprint(range(0, 1, 0.25), range('a', 'e', 2));",
@@ -1329,7 +1335,7 @@ ARRAYS = {
                     "output": "5050",
                 },
             ],
-            "notes": ["qiq has no C-style <code>for</code> loop; <code>foreach</code> over <code>range</code> covers counting loops."],
+            "notes": ["qiq has no C-style <code>for</code> loop; <code>foreach</code> over <code>range(n)</code> or <code>range(start, end)</code> covers counting loops."],
             "see_also": ["array_push", "len"],
         },
         {

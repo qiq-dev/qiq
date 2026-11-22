@@ -3124,7 +3124,7 @@ impl Emitter {
             ir.push_str(&self.emit_dispatch_table(*owner, method_name, Some(supplied)));
         }
         ir.push_str(
-            "\ndeclare i32 @printf(ptr, ...)\ndeclare i32 @strcmp(ptr, ptr)\ndeclare ptr @calloc(i64, i64)\ndeclare ptr @qiq_map_new(i32, i32)\ndeclare void @qiq_retain(ptr)\ndeclare void @qiq_release(ptr)\ndeclare ptr @qiq_object_new(i64, i64)\ndeclare void @qiq_map_set(ptr, i64, i64)\ndeclare i64 @qiq_map_get(ptr, i64)\ndeclare i64 @qiq_map_iteration_end(ptr)\ndeclare i64 @qiq_map_version(ptr)\ndeclare zeroext i1 @qiq_map_entry_live(ptr, i64, i64)\ndeclare zeroext i1 @qiq_map_find(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_map_has(ptr, i64)\ndeclare void @qiq_map_remove(ptr, i64)\ndeclare ptr @qiq_map_keys(ptr, i64, i32)\ndeclare ptr @qiq_map_values(ptr, i64, i32)\ndeclare zeroext i1 @qiq_map_contains_value(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_values_equal(ptr, ptr, ptr)\ndeclare i64 @qiq_map_key_at(ptr, i64)\ndeclare i64 @qiq_map_value_at(ptr, i64)\ndeclare i64 @qiq_string_len(ptr)\ndeclare ptr @qiq_sprintf(ptr, ptr, ptr, i64)\ndeclare ptr @qiq_json_encode(ptr, i64, i1 zeroext)\ndeclare i64 @qiq_json_decode(ptr, ptr)\ndeclare i32 @qiq_string_equality(ptr, ptr)\ndeclare i32 @qiq_string_compare(ptr, ptr)\ndeclare ptr @qiq_string_char_at(ptr, i64)\ndeclare ptr @qiq_string_concat(ptr, ptr)\ndeclare i64 @qiq_int_divide(i64, i64)\ndeclare i64 @qiq_int_modulo(i64, i64)\ndeclare i64 @qiq_int_power(i64, i64)\ndeclare i64 @qiq_int_shift_left(i64, i64)\ndeclare i64 @qiq_int_shift_right(i64, i64)\ndeclare double @llvm.pow.f64(double, double)\ndeclare void @qiq_uncaught(ptr, ptr)\ndeclare ptr @qiq_array_new(i64, i64, i32)\ndeclare void @qiq_set_arguments(i32, ptr)\ndeclare void @qiq_check_callable(ptr)\ndeclare void @qiq_array_push(ptr, i64, i64)\ndeclare i64 @qiq_range_plan(i64, i64, i64, i1 zeroext, ptr)\ndeclare ptr @qiq_range_int(i64, i64, i64, i1 zeroext)\ndeclare ptr @qiq_range_double(double, double, double, i1 zeroext)\ndeclare ptr @qiq_range_char(ptr, ptr, i64, i1 zeroext)\ndeclare i64 @qiq_array_pop(ptr, i64)\ndeclare i64 @qiq_array_shift(ptr, i64)\ndeclare void @qiq_array_insert(ptr, i64, i64, i64)\ndeclare ptr @qiq_array_splice(ptr, i64, i64, i64, i1 zeroext, ptr)\ndeclare i64 @qiq_array_length(ptr)\ndeclare i64 @qiq_len_string(ptr)\ndeclare i64 @qiq_len_array(ptr)\ndeclare i64 @qiq_len_map(ptr)\ndeclare void @qiq_array_check_index(ptr, i64)\ndeclare void @qiq_print_value(ptr, i64)\ndeclare void @qiq_print_space()\ndeclare void @qiq_print_newline()\ndeclare i64 @qiq_double_to_int(double)\ndeclare zeroext i8 @qiq_int_to_byte(i64)\ndeclare i64 @qiq_string_to_int(ptr)\ndeclare double @qiq_string_to_double(ptr)\ndeclare ptr @qiq_int_to_string(i64)\ndeclare ptr @qiq_double_to_string(double)\n",
+            "\ndeclare i32 @printf(ptr, ...)\ndeclare i32 @strcmp(ptr, ptr)\ndeclare ptr @calloc(i64, i64)\ndeclare ptr @qiq_map_new(i32, i32)\ndeclare void @qiq_retain(ptr)\ndeclare void @qiq_release(ptr)\ndeclare ptr @qiq_object_new(i64, i64)\ndeclare void @qiq_map_set(ptr, i64, i64)\ndeclare i64 @qiq_map_get(ptr, i64)\ndeclare i64 @qiq_map_iteration_end(ptr)\ndeclare i64 @qiq_map_version(ptr)\ndeclare zeroext i1 @qiq_map_entry_live(ptr, i64, i64)\ndeclare zeroext i1 @qiq_map_find(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_map_has(ptr, i64)\ndeclare void @qiq_map_remove(ptr, i64)\ndeclare ptr @qiq_map_keys(ptr, i64, i32)\ndeclare ptr @qiq_map_values(ptr, i64, i32)\ndeclare zeroext i1 @qiq_map_contains_value(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_values_equal(ptr, ptr, ptr)\ndeclare i64 @qiq_map_key_at(ptr, i64)\ndeclare i64 @qiq_map_value_at(ptr, i64)\ndeclare i64 @qiq_string_len(ptr)\ndeclare ptr @qiq_sprintf(ptr, ptr, ptr, i64)\ndeclare ptr @qiq_json_encode(ptr, i64, i1 zeroext)\ndeclare i64 @qiq_json_decode(ptr, ptr)\ndeclare i32 @qiq_string_equality(ptr, ptr)\ndeclare i32 @qiq_string_compare(ptr, ptr)\ndeclare ptr @qiq_string_char_at(ptr, i64)\ndeclare ptr @qiq_string_concat(ptr, ptr)\ndeclare i64 @qiq_int_divide(i64, i64)\ndeclare i64 @qiq_int_modulo(i64, i64)\ndeclare i64 @qiq_int_power(i64, i64)\ndeclare i64 @qiq_int_shift_left(i64, i64)\ndeclare i64 @qiq_int_shift_right(i64, i64)\ndeclare double @llvm.pow.f64(double, double)\ndeclare void @qiq_uncaught(ptr, ptr)\ndeclare ptr @qiq_array_new(i64, i64, i32)\ndeclare void @qiq_set_arguments(i32, ptr)\ndeclare void @qiq_check_callable(ptr)\ndeclare void @qiq_array_push(ptr, i64, i64)\ndeclare i64 @qiq_range_plan(i64, i64, i64, i1 zeroext, ptr)\ndeclare ptr @qiq_range_int(i64, i64, i64, i1 zeroext)\ndeclare ptr @qiq_range_count(i64)\ndeclare ptr @qiq_range_double(double, double, double, i1 zeroext)\ndeclare ptr @qiq_range_char(ptr, ptr, i64, i1 zeroext)\ndeclare i64 @qiq_array_pop(ptr, i64)\ndeclare i64 @qiq_array_shift(ptr, i64)\ndeclare void @qiq_array_insert(ptr, i64, i64, i64)\ndeclare ptr @qiq_array_splice(ptr, i64, i64, i64, i1 zeroext, ptr)\ndeclare i64 @qiq_array_length(ptr)\ndeclare i64 @qiq_len_string(ptr)\ndeclare i64 @qiq_len_array(ptr)\ndeclare i64 @qiq_len_map(ptr)\ndeclare void @qiq_array_check_index(ptr, i64)\ndeclare void @qiq_print_value(ptr, i64)\ndeclare void @qiq_print_space()\ndeclare void @qiq_print_newline()\ndeclare i64 @qiq_double_to_int(double)\ndeclare zeroext i8 @qiq_int_to_byte(i64)\ndeclare i64 @qiq_string_to_int(ptr)\ndeclare double @qiq_string_to_double(ptr)\ndeclare ptr @qiq_int_to_string(i64)\ndeclare ptr @qiq_double_to_string(double)\n",
         );
         ir.push_str(&extern_declarations);
         ir.push('\n');
@@ -4142,7 +4142,8 @@ impl Emitter {
                             Some(step) => (step.operand.clone(), "true"),
                             None => ("1".to_string(), "false"),
                         };
-                        let start = values[0].operand.clone();
+                        let counting = values.len() == 1;
+                        let start = if counting { "0".to_string() } else { values[0].operand.clone() };
                         let label_id = self.next_label;
                         self.next_label += 1;
                         let step_slot = format!("%range.step{label_id}");
@@ -4151,11 +4152,20 @@ impl Emitter {
                             "  {step_slot} = alloca i64, align 8\n  {slot} = alloca i64, align 8\n"
                         ));
                         let count = self.new_register();
-                        body.push_str(&format!(
-                            "  {count} = call i64 @qiq_range_plan(i64 {start}, i64 {}, i64 {step}, i1 zeroext {has_step}, ptr {step_slot})\n",
-                            values[1].operand
-                        ));
-                        self.emit_exception_check(&mut body);
+                        if counting {
+                            // range(count): count times from 0, or not at all.
+                            let positive = self.new_register();
+                            body.push_str(&format!(
+                                "  {positive} = icmp sgt i64 {count_value}, 0\n  {count} = select i1 {positive}, i64 {count_value}, i64 0\n  store i64 1, ptr {step_slot}, align 8\n",
+                                count_value = values[0].operand
+                            ));
+                        } else {
+                            body.push_str(&format!(
+                                "  {count} = call i64 @qiq_range_plan(i64 {start}, i64 {}, i64 {step}, i1 zeroext {has_step}, ptr {step_slot})\n",
+                                values[1].operand
+                            ));
+                            self.emit_exception_check(&mut body);
+                        }
                         let signed_step = self.new_register();
                         let index_at_test = self.new_register();
                         let condition = self.new_register();
@@ -5688,7 +5698,8 @@ impl Emitter {
 
     /// `range(start, end, step)`'s arguments: their element type (int,
     /// double, or char) and their values, ints converted to doubles when
-    /// any of them is a double.
+    /// any of them is a double. `range(count)` has one value, an int: it
+    /// counts from 0 up to count - 1, and gives nothing when count <= 0.
     fn emit_range_arguments(
         &mut self,
         arguments: &[Expr],
@@ -5698,12 +5709,21 @@ impl Emitter {
         if arguments.iter().any(|argument| matches!(argument, Expr::NamedArgument(..))) {
             return Err("range takes no named arguments".to_string());
         }
-        if !(2..=3).contains(&arguments.len()) {
-            return Err(format!("range expects 2 or 3 arguments (start, end, and an optional step), found {}", arguments.len()));
+        if !(1..=3).contains(&arguments.len()) {
+            return Err(format!(
+                "range expects a count, or start, end, and an optional step; found {} arguments",
+                arguments.len()
+            ));
         }
         let mut values = Vec::new();
         for argument in arguments {
             values.push(self.emit_expression(argument, variables, body)?);
+        }
+        if let [count] = values.as_slice() {
+            if count.value_type != ValueType::Int {
+                return Err(format!("range(count) counts from 0 up to count - 1 and needs an int, found {}", self.type_name(count.value_type)));
+            }
+            return Ok((ValueType::Int, values));
         }
         let types: Vec<ValueType> = values.iter().map(|value| value.value_type).collect();
         if types[0] == ValueType::Char || types[1] == ValueType::Char {
@@ -5739,6 +5759,13 @@ impl Emitter {
 
     /// `range(...)` as an array: `int[]`, `double[]`, or `char[]`.
     fn emit_range_array(&mut self, kind: ValueType, values: &[Value], body: &mut String) -> Result<Value, String> {
+        if let [count] = values {
+            let array = self.new_register();
+            body.push_str(&format!("  {array} = call ptr @qiq_range_count(i64 {})\n", count.operand));
+            self.emit_exception_check(body);
+            let array_type = self.array_of(ValueType::Int);
+            return Ok(self.own(Value { value_type: array_type, operand: array, slot: None }));
+        }
         let (step, has_step) = match values.get(2) {
             Some(step) => (step.operand.clone(), "true"),
             None if kind == ValueType::Double => ("1.0".to_string(), "false"),
@@ -10536,10 +10563,17 @@ mod tests {
         let ir = compile_source("foreach (range(0.0, 1.0, 0.5) as d) { print(d); } foreach (range('a', 'c') as c) { print(c); } int[] xs = range(5, 1);").unwrap();
         assert!(ir.contains("call ptr @qiq_range_double(double ") && ir.contains("call ptr @qiq_range_char(ptr "), "{ir}");
         assert!(ir.contains("call ptr @qiq_range_int(i64 5, i64 1, i64 1, i1 zeroext false)"), "{ir}");
+        // range(count) counts max(count, 0) times from 0, without the checks
+        // a range between two numbers needs, or an array.
+        let counting = main_ir(&compile_source("int n = 3; foreach (range(n) as i) { print(i); }").unwrap()).to_string();
+        assert!(counting.contains("icmp sgt i64") && counting.contains("select i1"), "{counting}");
+        assert!(!counting.contains("@qiq_range_plan") && !counting.contains("@qiq_range_count") && !counting.contains("@qiq_array_new"), "{counting}");
+        assert!(compile_source("int[] xs = range(4);").unwrap().contains("call ptr @qiq_range_count(i64 4)"));
         // Ints mixed with doubles make a double range.
         assert!(compile_source("double[] d = range(0, 1, 0.25);").unwrap().contains("sitofp i64 0 to double"));
         for (source, error) in [
-            ("int[] r = range(1);", "range expects 2 or 3 arguments"),
+            ("int[] r = range();", "range expects a count, or start, end, and an optional step; found 0 arguments"),
+            ("int[] r = range(2.5);", "range(count) counts from 0 up to count - 1 and needs an int, found double"),
             ("char[] r = range('a', 5);", "range of chars needs two chars, found char and int"),
             ("int[] r = range(\"a\", \"b\");", "range expects ints, doubles, or two chars, found string"),
             ("int[] r = range(0, 1, 0.5);", "cannot initialize int[] variable 'r' with double[]"),

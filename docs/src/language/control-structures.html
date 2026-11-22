@@ -81,32 +81,33 @@ ada 36
 <p>Strings iterate by Unicode character, not by byte. Maps iterate in the order their keys were added. The loop variables are new variables for each iteration and can't be reassigned.</p>
 
 <h3>Counting with range</h3>
-<p>qiq has no C-style <code>for</code> loop. To repeat something a number of times, or count through numbers, loop over <a href="function.range.html"><code>range(start, end, step)</code></a>. The end is included, as in PHP, and the step defaults to <code>1</code>:</p>
+<p>qiq has no C-style <code>for</code> loop. To do something <code>n</code> times, loop over <a href="function.range.html"><code>range(n)</code></a>, which counts from 0 up to <code>n - 1</code>, and not at all when <code>n</code> is 0 (or less), like <code>for (i = 0; i &lt; n; i++)</code>. To count between two numbers, use <code>range(start, end, step)</code>: the end is included, as in PHP, and the step defaults to <code>1</code>.</p>
 
 ```qiq
+string[] names = ["Ada", "Lin"];
+foreach (range(len(names)) as i) {
+    print(i, names[i]);
+}
 foreach (range(1, 3) as n) {
     print("round", n);
 }
 foreach (range(10, 0, 5) as index => value) {
     print(index, value);
 }
-string[] names = ["Ada", "Lin"];
-foreach (range(0, len(names) - 1) as i) {
-    print(i, names[i]);
-}
 ```
 ```output
+0 Ada
+1 Lin
 round 1
 round 2
 round 3
 0 10
 1 5
 2 0
-0 Ada
-1 Lin
 ```
 
-<p>A <code>foreach</code> over a range of ints doesn't build an array: it compiles to a counting loop, so <code>range(1, 1000000000)</code> costs nothing extra. When <code>end</code> is less than <code>start</code>, the range counts down. For an empty array, <code>range(0, len(names) - 1)</code> would count down from 0 to -1, so loop over the array itself, or check its length first.</p>
+<p>A <code>foreach</code> over a range of ints doesn't build an array: it compiles to a counting loop, so <code>range(1000000000)</code> costs nothing extra. <code>continue</code> moves on to the next number, which a counter in a <code>while</code> loop has to remember to do itself.</p>
+<div class="note"><strong>Note:</strong> When <code>end</code> is less than <code>start</code>, <code>range(start, end)</code> counts down, as in PHP. So for an empty array, <code>range(0, len(names) - 1)</code> is <code>range(0, -1)</code>, which runs twice, with 0 and -1. Count through indexes with <code>range(len(names))</code>, or use <code>foreach (names as i =&gt; name)</code>.</div>
 
 <h2 id="switch">switch</h2>
 <p><code>switch</code> compares a value with each case in order and runs the first match. Cases don't fall through, so no <code>break</code> is needed; list several values in one case with commas. <code>default</code> runs when nothing matches.</p>
