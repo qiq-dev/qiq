@@ -1,0 +1,21 @@
+// __toString: objects converting to text in print, +, to_string, and sprintf.
+interface Labelled { function __toString(): string; }
+class Money implements Labelled {
+    public int cents;
+    function __construct(int cents) { this->cents = cents; }
+    function __toString(): string { return sprintf("€%d.%02d", this->cents / 100, this->cents % 100); }
+}
+class Tip extends Money {
+    function __toString(): string { return "tip of " + to_string(this->cents) + "c"; }
+}
+class Plain { }
+Money price = new Money(1250);
+Money tip = new Tip(300);
+Labelled labelled = new Money(5);
+print(price);
+print(price, tip, labelled);
+print("price: " + price, tip + " (thanks)", 'x' + price);
+print(to_string(price), to_string(tip), sprintf("[%s] [%10s]", price, tip));
+print(new Plain(), [price]);
+string line = "total " + price + " plus " + tip;
+print(line, len(line));

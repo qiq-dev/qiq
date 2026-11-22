@@ -63,6 +63,8 @@ enum TokenKind {
     OrOr,
     /// `??`
     QuestionQuestion,
+    /// `?->`
+    NullsafeArrow,
     FatArrow,
     Plus,
     Minus,
@@ -387,6 +389,11 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
                     cursor += 1;
                     column += 1;
                     TokenKind::OrOr
+                }
+                '?' if chars.get(cursor) == Some(&'-') && chars.get(cursor + 1) == Some(&'>') => {
+                    cursor += 2;
+                    column += 2;
+                    TokenKind::NullsafeArrow
                 }
                 '?' if chars.get(cursor) == Some(&'?') => {
                     cursor += 1;
@@ -750,6 +757,21 @@ struct Property {
     /// created, before the constructor runs; and where it's written.
     default: Option<Expr>,
     default_at: (usize, usize),
+    /// `readonly`: set only by its class's constructor.
+    readonly: bool,
+}
+
+/// A constructor parameter declared with a visibility or `readonly`
+/// (`function __construct(public int x)`): it's also a property, set from
+/// the argument before the constructor's body runs.
+#[derive(Debug, Clone)]
+struct PromotedParameter {
+    name: String,
+    value_type: ValueType,
+    visibility: Visibility,
+    readonly: bool,
+    line: usize,
+    column: usize,
 }
 
 /// `const [type] NAME = value;` in a class or interface: a value fixed at
@@ -840,6 +862,10 @@ enum Expr {
     /// The value of an expression known to be an object of class `u32`
     /// (made by the parser after an instanceof check).
     Downcast(Box<Expr>, u32),
+    /// `object?->rest`: null if `object` is null, otherwise `rest` (the
+    /// member, call, and anything after them in the chain), evaluated with
+    /// the hidden variable named by the String standing for the object.
+    Nullsafe(Box<Expr>, String, Box<Expr>),
     Number(i64),
     /// The 1 that `x++` and `x--` add or subtract, in the type of `x` (an
     /// int or a double); only ever the right side of a Binary.
@@ -1081,6 +1107,8 @@ struct Parser {
     /// Numbers the hidden variables that hold the parts of a compound
     /// assignment's target (see parse_update).
     next_hidden: usize,
+    /// The promoted parameters of the constructor just parsed.
+    promoted: Vec<PromotedParameter>,
 }
 
 const INCREMENT_IS_A_STATEMENT: &str = "'++' and '--' are statements in qiq: write `i++;` on its own, then use i";
@@ -1304,10 +1332,51 @@ impl Parser {
         let name_for_symbol = self.qualified_symbol(&name, "qiq.");
         self.expect(TokenKind::LeftParen, "expected '(' after function name")?;
         let mut parameters = Vec::new();
+        self.promoted.clear();
+        let is_constructor = owner_class.is_some() && name == "__construct";
         if !matches!(self.current().kind, TokenKind::RightParen) {
             loop {
+                // `public`, `protected`, `private`, and `readonly` make a
+                // constructor parameter a property too.
+                let (modifier_line, modifier_column) = (self.current().line, self.current().column);
+                let mut promoted_visibility = None;
+                let mut promoted_readonly = false;
+                loop {
+                    match &self.current().kind {
+                        TokenKind::Public | TokenKind::Protected | TokenKind::Private if promoted_visibility.is_none() => {
+                            promoted_visibility = Some(match self.current().kind {
+                                TokenKind::Public => Visibility::Public,
+                                TokenKind::Protected => Visibility::Protected,
+                                _ => Visibility::Private,
+                            });
+                        }
+                        TokenKind::Identifier(word) if word == "readonly" && !promoted_readonly => promoted_readonly = true,
+                        _ => break,
+                    }
+                    self.advance();
+                }
+                let promotes = promoted_visibility.is_some() || promoted_readonly;
+                if promotes && !is_constructor {
+                    return Err(format!(
+                        "{modifier_line}:{modifier_column}: only a constructor's parameters can be properties too (with public, protected, private, or readonly)"
+                    ));
+                }
+                if promotes && is_abstract {
+                    return Err(format!("{modifier_line}:{modifier_column}: an abstract constructor's parameters can't be properties"));
+                }
                 let value_type = self.parse_value_type()?;
+                let (parameter_line, parameter_column) = (self.current().line, self.current().column);
                 let parameter_name = self.expect_identifier("expected parameter name")?;
+                if promotes {
+                    self.promoted.push(PromotedParameter {
+                        name: parameter_name.clone(),
+                        value_type,
+                        visibility: promoted_visibility.unwrap_or(Visibility::Public),
+                        readonly: promoted_readonly,
+                        line: parameter_line,
+                        column: parameter_column,
+                    });
+                }
                 let default = if matches!(self.current().kind, TokenKind::Equals) {
                     self.advance();
                     Some(self.parse_parameter_default(value_type, &parameter_name)?)
@@ -1426,9 +1495,11 @@ impl Parser {
             let mut is_abstract_method = false;
             let mut is_final_method = false;
             let mut is_static_method = false;
+            let mut is_readonly = false;
             let mut explicit_visibility = None;
             loop {
-                let repeated = match self.current().kind {
+                let repeated = match &self.current().kind {
+                    TokenKind::Identifier(word) if word == "readonly" => std::mem::replace(&mut is_readonly, true),
                     TokenKind::Abstract => std::mem::replace(&mut is_abstract_method, true),
                     TokenKind::Final => std::mem::replace(&mut is_final_method, true),
                     TokenKind::Static => std::mem::replace(&mut is_static_method, true),
@@ -1446,6 +1517,9 @@ impl Parser {
                     return Err(self.error("a member modifier is repeated (or given two visibilities)"));
                 }
                 self.advance();
+            }
+            if is_readonly && (matches!(self.current().kind, TokenKind::Function) || matches!(&self.current().kind, TokenKind::Identifier(word) if word == "const")) {
+                return Err(self.error("readonly can only modify a property"));
             }
             if matches!(&self.current().kind, TokenKind::Identifier(word) if word == "const") {
                 if is_static_method || is_abstract_method || is_final_method {
@@ -1502,6 +1576,38 @@ impl Parser {
                 }
                 method.is_final = is_final_method;
                 method.is_static = is_static_method;
+                // Promoted parameters: properties, set first thing.
+                let promoted = std::mem::take(&mut self.promoted);
+                for (index, parameter) in promoted.iter().enumerate() {
+                    if properties.iter().any(|property: &Property| property.name == parameter.name)
+                        || static_properties.iter().any(|property: &StaticProperty| property.name == parameter.name)
+                    {
+                        return Err(format!(
+                            "{}:{}: property '{}' is already declared",
+                            parameter.line, parameter.column, parameter.name
+                        ));
+                    }
+                    properties.push(Property {
+                        name: parameter.name.clone(),
+                        value_type: parameter.value_type,
+                        visibility: parameter.visibility,
+                        default: None,
+                        default_at: (parameter.line, parameter.column),
+                        readonly: parameter.readonly,
+                    });
+                    method.body.insert(
+                        index,
+                        Statement {
+                            kind: StatementKind::AssignMember(
+                                Expr::Variable("this".to_string()),
+                                parameter.name.clone(),
+                                Expr::Variable(parameter.name.clone()),
+                            ),
+                            line: parameter.line,
+                            column: parameter.column,
+                        },
+                    );
+                }
                 methods.push(method);
             } else {
                 self.reject_fn_keyword()?;
@@ -1521,6 +1627,9 @@ impl Parser {
                     || (is_static_method && constants.iter().any(|constant| constant.name == property_name))
                 {
                     return Err(self.error(&format!("property '{property_name}' is already declared")));
+                }
+                if is_readonly && is_static_method {
+                    return Err(self.error("a static property can't be readonly"));
                 }
                 if is_static_method {
                     let default = if matches!(self.current().kind, TokenKind::Equals) {
@@ -1542,6 +1651,9 @@ impl Parser {
                 // the program is compiled (see check_constant_value).
                 let default_at = (self.current().line, self.current().column);
                 let default = if matches!(self.current().kind, TokenKind::Equals) {
+                    if is_readonly {
+                        return Err(self.error("a readonly property can't have a default: set it in the constructor"));
+                    }
                     self.advance();
                     Some(self.parse_expression()?)
                 } else {
@@ -1554,6 +1666,7 @@ impl Parser {
                     visibility: explicit_visibility.unwrap_or(Visibility::Private),
                     default,
                     default_at,
+                    readonly: is_readonly,
                 });
             }
         }
@@ -1877,6 +1990,11 @@ impl Parser {
             TokenKind::Identifier(_) | TokenKind::Parent | TokenKind::Static | TokenKind::LeftParen => {
                 let at = (self.current().line, self.current().column);
                 let expression = self.parse_expression()?;
+                if matches!(expression, Expr::Nullsafe(..))
+                    && matches!(self.current().kind, TokenKind::AssignOp(_) | TokenKind::Equals | TokenKind::PlusPlus | TokenKind::MinusMinus)
+                {
+                    return Err(format!("{}:{}: can't assign through '?->': check for null with if, then assign", at.0, at.1));
+                }
                 if let TokenKind::AssignOp(op) = self.current().kind {
                     // `total += price;`
                     self.advance();
@@ -2681,6 +2799,23 @@ impl Parser {
                 } else {
                     expression = Expr::Member(Box::new(expression), member);
                 }
+            } else if matches!(self.current().kind, TokenKind::NullsafeArrow) {
+                // `object?->member...`: the rest of the chain runs only when
+                // the object isn't null, on a hidden variable standing for it.
+                self.advance();
+                self.next_hidden += 1;
+                let placeholder = format!("#{}", self.next_hidden);
+                let member = self.expect_identifier("expected a property or method name after '?->'")?;
+                let first = if matches!(self.current().kind, TokenKind::LeftParen) {
+                    self.advance();
+                    let arguments = self.parse_arguments()?;
+                    self.expect(TokenKind::RightParen, "expected ')' after method arguments")?;
+                    Expr::MethodCall(Box::new(Expr::Variable(placeholder.clone())), member, arguments)
+                } else {
+                    Expr::Member(Box::new(Expr::Variable(placeholder.clone())), member)
+                };
+                let rest = self.parse_postfix(first)?;
+                return Ok(Expr::Nullsafe(Box::new(expression), placeholder, Box::new(rest)));
             } else {
                 break;
             }
@@ -3823,9 +3958,25 @@ impl Emitter {
                         ValueType::Class(class_id) => class_id,
                         _ => return Err("property assignment requires a class instance".to_string()),
                     };
+                    self.emit_null_check(&object, object_expression, &format!("cannot assign property '{property_name}' of null"), &mut body);
                     let (property_index, property_type, visibility, owner_class) =
                         self.find_property(class_id, property_name)?;
                     self.check_visibility(visibility, owner_class, property_name)?;
+                    let readonly = self.classes[owner_class as usize]
+                        .properties
+                        .iter()
+                        .any(|property| property.name == *property_name && property.readonly);
+                    if readonly {
+                        let in_constructor = self.current_method.as_deref() == Some("__construct")
+                            && self.current_class == Some(owner_class)
+                            && matches!(object_expression, Expr::Variable(name) if name == "this");
+                        if !in_constructor {
+                            return Err(format!(
+                                "property '{property_name}' is readonly: only {}'s constructor can set it, as this->{property_name}",
+                                self.classes[owner_class as usize].name
+                            ));
+                        }
+                    }
                     let value =
                         self.emit_expecting(value_expression, Some(property_type), &variables, &mut body)?;
                     if !self.is_assignable(property_type, value.value_type) {
@@ -3860,6 +4011,21 @@ impl Emitter {
                         if value.value_type == ValueType::Void {
                             return Err("cannot print the result of a void function".to_string());
                         }
+                        // An object with __toString prints as its text, or as
+                        // "null" when it's null: `object?->__toString() ?? "null"`.
+                        let value = match value.value_type {
+                            ValueType::Class(class_id) if self.find_method(class_id, "__toString").is_ok() => {
+                                let mut scope = variables.clone();
+                                scope.insert("#printed".to_string(), Value { slot: None, ..value.clone() });
+                                let call = Expr::Nullsafe(
+                                    Box::new(Expr::Variable("#printed".to_string())),
+                                    "#printed.object".to_string(),
+                                    Box::new(Expr::MethodCall(Box::new(Expr::Variable("#printed.object".to_string())), "__toString".to_string(), Vec::new())),
+                                );
+                                self.emit_coalesce(&call, &Expr::Text("null".to_string()), &scope, &mut body)?
+                            }
+                            _ => value,
+                        };
                         values.push(value);
                     }
                     let scalar = |value: &Value| {
@@ -3895,7 +4061,15 @@ impl Emitter {
                 StatementKind::Expression(expression) => {
                     // A call can stand alone; any result it returns is discarded
                     // (and freed at the end of the statement).
-                    let is_call = matches!(expression, Expr::Call(..) | Expr::MethodCall(..) | Expr::StaticCall(..) | Expr::CallValue(..));
+                    fn ends_in_call(expression: &Expr) -> bool {
+                        match expression {
+                            Expr::Call(..) | Expr::MethodCall(..) | Expr::StaticCall(..) | Expr::CallValue(..) => true,
+                            // `logger?->log(message);`
+                            Expr::Nullsafe(_, _, rest) => ends_in_call(rest),
+                            _ => false,
+                        }
+                    }
+                    let is_call = ends_in_call(expression);
                     if !is_call {
                         return Err("only a function call can be used as a statement".to_string());
                     }
@@ -4816,6 +4990,142 @@ impl Emitter {
         })
     }
 
+    /// Throws RuntimeException with `message` if `object` is null, before it's
+    /// used: reading or assigning a property, or calling a method, on null
+    /// would otherwise read address 0 and crash. `this` is never null.
+    fn emit_null_check(&mut self, object: &Value, expression: &Expr, message: &str, body: &mut String) {
+        if matches!(expression, Expr::Variable(name) if name == "this") || matches!(expression, Expr::NewObject(..) | Expr::NewStatic(..)) {
+            return;
+        }
+        let id = self.next_label;
+        self.next_label += 1;
+        let is_null = self.new_register();
+        let text = self.string_literal(message.as_bytes());
+        body.push_str(&format!(
+            "  {is_null} = icmp eq ptr {}, null\n  br i1 {is_null}, label %null{id}, label %notnull{id}, !prof !{{!\"branch_weights\", i32 1, i32 1048575}}\nnull{id}:\n  call void @qiq_raise(i32 0, ptr {text})\n",
+            object.operand
+        ));
+        self.emit_exception_check(body);
+        body.push_str(&format!("  br label %notnull{id}\nnotnull{id}:\n"));
+    }
+
+    /// `object?->rest`, and `object?->rest ?? default` (with `default`): if
+    /// the object is null, null, or the default; otherwise `rest` on it (and,
+    /// with a default, the default when `rest` is null too). Both paths store
+    /// the result's payload in a stack slot, read where they meet. The rest
+    /// of the chain gets a scope of its own, so its temporaries are released
+    /// on its path. A result that can't be null (a number or bool) needs a
+    /// default.
+    fn emit_nullsafe(
+        &mut self,
+        expression: &Expr,
+        default: Option<&Expr>,
+        variables: &HashMap<String, Value>,
+        body: &mut String,
+    ) -> Result<Value, String> {
+        let Expr::Nullsafe(object_expression, placeholder, rest) = expression else { unreachable!() };
+        let object = self.emit_expression(object_expression, variables, body)?;
+        if !matches!(object.value_type, ValueType::Class(_)) {
+            return Err(format!("'?->' needs an object, found {}", self.type_name(object.value_type)));
+        }
+        let id = self.next_label;
+        self.next_label += 1;
+        let slot = format!("%nullsafe.slot{id}");
+        self.entry_allocas.push_str(&format!("  {slot} = alloca i64, align 8\n"));
+        let is_null = self.new_register();
+        body.push_str(&format!(
+            "  {is_null} = icmp eq ptr {}, null\n  br i1 {is_null}, label %nullsafe.null{id}, label %nullsafe.object{id}\nnullsafe.object{id}:\n",
+            object.operand
+        ));
+        // The rest of the chain, on the object.
+        let mut scope = variables.clone();
+        scope.insert(placeholder.clone(), Value { slot: None, ..object.clone() });
+        self.open_scope();
+        // `a?->b?->c ?? d`: the default also covers a null further along.
+        let value = match (default, &**rest) {
+            (Some(_), Expr::Nullsafe(..)) => self.emit_nullsafe(rest, default, &scope, body)?,
+            _ => self.emit_expression(rest, &scope, body)?,
+        };
+        let value_type = value.value_type;
+        // A void method's call has the type null.
+        if matches!(value_type, ValueType::Void | ValueType::Null) {
+            // `logger?->log(message);`: nothing to give back; skipped when null.
+            if default.is_some() {
+                return Err("'??' needs a value, but the method after '?->' returns void".to_string());
+            }
+            self.close_scope(body);
+            body.push_str(&format!("  br label %nullsafe.end{id}\nnullsafe.null{id}:\n  br label %nullsafe.end{id}\nnullsafe.end{id}:\n"));
+            return Ok(Value { value_type: ValueType::Null, operand: "null".to_string(), slot: None });
+        }
+        if !is_reference(value_type) && default.is_none() {
+            return Err(format!(
+                "'?->' gives null when the object is null, and a value of type {} can't be null: add a default with ??, as in `x?->count ?? 0`",
+                self.type_name(value_type)
+            ));
+        }
+        if is_reference(value_type) {
+            self.take(&value, body);
+        }
+        let encoded = self.encode_payload(&value, body)?;
+        self.close_scope(body);
+        if default.is_some() && is_reference(value_type) {
+            // `?? default` also covers a null result.
+            let missing = self.new_register();
+            body.push_str(&format!(
+                "  {missing} = icmp eq i64 {encoded}, 0\n  store i64 {encoded}, ptr {slot}, align 8\n  br i1 {missing}, label %nullsafe.null{id}, label %nullsafe.end{id}\n"
+            ));
+        } else {
+            body.push_str(&format!("  store i64 {encoded}, ptr {slot}, align 8\n  br label %nullsafe.end{id}\n"));
+        }
+        // The object was null: null, or the default.
+        body.push_str(&format!("nullsafe.null{id}:\n"));
+        match default {
+            None => body.push_str(&format!("  store i64 0, ptr {slot}, align 8\n")),
+            Some(default) => {
+                self.open_scope();
+                let fallback = self.emit_expecting(default, Some(value_type), variables, body)?;
+                if !self.is_assignable(value_type, fallback.value_type) {
+                    return Err(format!(
+                        "'??' after '?->' needs a default of type {}, found {}",
+                        self.type_name(value_type),
+                        self.type_name(fallback.value_type)
+                    ));
+                }
+                if is_reference(value_type) {
+                    self.take(&fallback, body);
+                }
+                let encoded = if fallback.value_type == ValueType::Null { "0".to_string() } else { self.encode_payload(&fallback, body)? };
+                self.close_scope(body);
+                body.push_str(&format!("  store i64 {encoded}, ptr {slot}, align 8\n"));
+            }
+        }
+        body.push_str(&format!("  br label %nullsafe.end{id}\nnullsafe.end{id}:\n"));
+        let bits = self.new_register();
+        body.push_str(&format!("  {bits} = load i64, ptr {slot}, align 8\n"));
+        let result = self.decode_payload(value_type, &bits, body)?;
+        Ok(if is_reference(value_type) { self.own(result) } else { result })
+    }
+
+    /// An object as text, for print, `+`, to_string, and sprintf: the result
+    /// of its `__toString()` (dispatched like any call, so a subclass's own
+    /// version runs), or None if `value` isn't an object whose class (or
+    /// interface) has one.
+    fn emit_to_string_call(
+        &mut self,
+        value: &Value,
+        variables: &HashMap<String, Value>,
+        body: &mut String,
+    ) -> Result<Option<Value>, String> {
+        let ValueType::Class(class_id) = value.value_type else { return Ok(None) };
+        if self.find_method(class_id, "__toString").is_err() {
+            return Ok(None);
+        }
+        let mut scope = variables.clone();
+        scope.insert("#stringified".to_string(), Value { slot: None, ..value.clone() });
+        let call = Expr::MethodCall(Box::new(Expr::Variable("#stringified".to_string())), "__toString".to_string(), Vec::new());
+        self.emit_expression(&call, &scope, body).map(Some)
+    }
+
     /// `==` and `!=` on two arrays or two maps of the same type: equal when
     /// they hold equal elements in the same order, or the same keys with
     /// equal values in any order (qiq_values_equal in map.c). Their elements
@@ -5050,7 +5360,7 @@ impl Emitter {
         }
         let class_id = self.add_synthetic_class(
             "{cell}",
-            vec![Property { name: "value".to_string(), value_type, visibility: Visibility::Private, default: None, default_at: (0, 0) }],
+            vec![Property { name: "value".to_string(), value_type, visibility: Visibility::Private, default: None, default_at: (0, 0), readonly: false }],
         );
         self.cell_classes.push((value_type, class_id));
         class_id
@@ -5091,7 +5401,7 @@ impl Emitter {
         let cell = self.new_register();
         let at = self.new_register();
         body.push_str(&format!(
-            "  {cell} = call ptr @qiq_object_new(i64 {}, i64 {class_id})\n  {at} = getelementptr inbounds i64, ptr {cell}, i64 {OBJECT_HEADER_FIELDS}\n  store i64 {bits}, ptr {at}, align 8\n",
+            "  {cell} = call nonnull ptr @qiq_object_new(i64 {}, i64 {class_id})\n  {at} = getelementptr inbounds i64, ptr {cell}, i64 {OBJECT_HEADER_FIELDS}\n  store i64 {bits}, ptr {at}, align 8\n",
             OBJECT_HEADER_FIELDS + 1
         ));
         let slot = self.owned_slot();
@@ -5543,6 +5853,21 @@ impl Emitter {
                 })();
                 checked.map_err(|error| self.in_module(class.module, error))?;
             }
+            if let Some(method) = class.methods.iter().find(|method| method.name == "__toString") {
+                let wrong = method.visibility != Visibility::Public
+                    || method.is_static
+                    || !method.parameters.is_empty()
+                    || method.return_type != ValueType::String;
+                if wrong {
+                    return Err(self.in_module(
+                        class.module,
+                        format!(
+                            "{}:{}: __toString must be declared `public function __toString(): string`, with no parameters",
+                            method.line, method.column
+                        ),
+                    ));
+                }
+            }
             for property in &class.properties {
                 if let Some(default) = &property.default {
                     let at = format!("{}:{}: ", property.default_at.0, property.default_at.1);
@@ -5930,6 +6255,15 @@ impl Emitter {
             | ("to_byte", ValueType::Byte)
             | ("to_string", ValueType::String) => return Ok(value),
             ("to_string", ValueType::Char) => return Ok(result(ValueType::String, value.operand)),
+            ("to_string", ValueType::Class(_)) => {
+                return match self.emit_to_string_call(&value, variables, body)? {
+                    Some(text) => Ok(text),
+                    None => Err(format!(
+                        "to_string of a {} needs the class to declare `public function __toString(): string`",
+                        self.type_name(value.value_type)
+                    )),
+                };
+            }
             ("to_int", ValueType::Byte) => result(ValueType::Int, instruction(self, format!("zext i8 {operand} to i64"), false, body)),
             ("to_int", ValueType::Bool) => result(ValueType::Int, instruction(self, format!("zext i1 {operand} to i64"), false, body)),
             ("to_int", ValueType::Double) => result(
@@ -6018,6 +6352,7 @@ impl Emitter {
         let mut payloads = Vec::new();
         for (index, expression) in values.iter().enumerate() {
             let value = self.emit_expression(expression, variables, body)?;
+            let value = self.emit_to_string_call(&value, variables, body)?.unwrap_or(value);
             let code = match value.value_type {
                 ValueType::Int => 'i',
                 ValueType::Double => 'd',
@@ -6069,6 +6404,9 @@ impl Emitter {
         variables: &HashMap<String, Value>,
         body: &mut String,
     ) -> Result<Value, String> {
+        if matches!(left, Expr::Nullsafe(..)) {
+            return self.emit_nullsafe(left, Some(right), variables, body);
+        }
         let id = self.next_label;
         self.next_label += 1;
         let found_label = format!("coalesce.found{id}");
@@ -6480,14 +6818,14 @@ impl Emitter {
         };
 
         // The closure object's class: the function pointer, then the captures.
-        let mut properties = vec![Property { name: "function".to_string(), value_type: ValueType::Int, visibility: Visibility::Private, default: None, default_at: (0, 0) }];
+        let mut properties = vec![Property { name: "function".to_string(), value_type: ValueType::Int, visibility: Visibility::Private, default: None, default_at: (0, 0), readonly: false }];
         for (capture, _) in &captures {
             let field_type = if capture.name == "this" {
                 capture.value_type
             } else {
                 ValueType::Class(self.cell_class(capture.value_type))
             };
-            properties.push(Property { name: capture.name.clone(), value_type: field_type, visibility: Visibility::Private, default: None, default_at: (0, 0) });
+            properties.push(Property { name: capture.name.clone(), value_type: field_type, visibility: Visibility::Private, default: None, default_at: (0, 0), readonly: false });
         }
         let field_count = OBJECT_HEADER_FIELDS + properties.len();
         let class_id = self.add_synthetic_class("Closure", properties);
@@ -6529,7 +6867,7 @@ impl Emitter {
         let object = self.new_register();
         let at = self.new_register();
         body.push_str(&format!(
-            "  {object} = call ptr @qiq_object_new(i64 {field_count}, i64 {class_id})\n  {at} = getelementptr inbounds i64, ptr {object}, i64 {OBJECT_HEADER_FIELDS}\n  store ptr @{symbol}, ptr {at}, align 8\n"
+            "  {object} = call nonnull ptr @qiq_object_new(i64 {field_count}, i64 {class_id})\n  {at} = getelementptr inbounds i64, ptr {object}, i64 {OBJECT_HEADER_FIELDS}\n  store ptr @{symbol}, ptr {at}, align 8\n"
         ));
         for (index, (capture, variable)) in captures.iter().enumerate() {
             let pointer = if capture.name == "this" {
@@ -6676,7 +7014,7 @@ impl Emitter {
                 ));
                 let class_id = self.add_synthetic_class(
                     "Closure",
-                    vec![Property { name: "function".to_string(), value_type: ValueType::Int, visibility: Visibility::Private, default: None, default_at: (0, 0) }],
+                    vec![Property { name: "function".to_string(), value_type: ValueType::Int, visibility: Visibility::Private, default: None, default_at: (0, 0), readonly: false }],
                 );
                 self.function_references.push((symbol.clone(), class_id));
                 class_id
@@ -6685,7 +7023,7 @@ impl Emitter {
         let object = self.new_register();
         let at = self.new_register();
         body.push_str(&format!(
-            "  {object} = call ptr @qiq_object_new(i64 {}, i64 {class_id})\n  {at} = getelementptr inbounds i64, ptr {object}, i64 {OBJECT_HEADER_FIELDS}\n  store ptr @qiq.reference.{symbol}, ptr {at}, align 8\n",
+            "  {object} = call nonnull ptr @qiq_object_new(i64 {}, i64 {class_id})\n  {at} = getelementptr inbounds i64, ptr {object}, i64 {OBJECT_HEADER_FIELDS}\n  store ptr @qiq.reference.{symbol}, ptr {at}, align 8\n",
             OBJECT_HEADER_FIELDS + 1
         ));
         Ok(self.own(Value { value_type, operand: object, slot: None }))
@@ -7415,7 +7753,7 @@ impl Emitter {
         } else {
             let field_count = OBJECT_HEADER_FIELDS + self.class_field_count(class_id)?;
             body.push_str(&format!(
-                "  %object = call ptr @qiq_object_new(i64 {field_count}, i64 {class_id})\n"
+                "  %object = call nonnull ptr @qiq_object_new(i64 {field_count}, i64 {class_id})\n"
             ));
             if self.has_property_defaults(class_id) {
                 body.push_str(&format!("  call void @qiq_defaults.{}(ptr %object)\n", class.symbol));
@@ -7538,7 +7876,7 @@ impl Emitter {
                 cases.push_str(&format!(" i32 {kind}, label %kind{kind}"));
             }
             blocks.push_str(&format!(
-                "kind{kind}:\n  %object{kind} = call ptr @qiq_object_new(i64 {field_count}, i64 {class_id})\n  call void @qiq_{}___construct(ptr %object{kind}, ptr %message, i64 0)\n  store ptr %object{kind}, ptr @qiq_pending_exception, align 8\n  ret void\n",
+                "kind{kind}:\n  %object{kind} = call nonnull ptr @qiq_object_new(i64 {field_count}, i64 {class_id})\n  call void @qiq_{}___construct(ptr %object{kind}, ptr %message, i64 0)\n  store ptr %object{kind}, ptr @qiq_pending_exception, align 8\n  ret void\n",
                 self.classes[owner as usize].symbol
             ));
         }
@@ -7908,6 +8246,7 @@ impl Emitter {
                 ));
                 Ok(Value { value_type: ValueType::Bool, operand: result, slot: None })
             }
+            Expr::Nullsafe(..) => self.emit_nullsafe(expression, None, variables, body),
             Expr::Downcast(operand, target) => {
                 let value = self.emit_expression(operand, variables, body)?;
                 Ok(Value { value_type: ValueType::Class(*target), operand: value.operand, slot: value.slot })
@@ -8000,6 +8339,7 @@ impl Emitter {
                     ValueType::Class(class_id) => class_id,
                     _ => return Err("property access requires a class instance".to_string()),
                 };
+                self.emit_null_check(&object, object_expression, &format!("cannot read property '{property_name}' of null"), body);
                 let (property_index, property_type, visibility, owner_class) =
                     self.find_property(class_id, property_name)?;
                 self.check_visibility(visibility, owner_class, property_name)?;
@@ -8019,6 +8359,7 @@ impl Emitter {
                     ValueType::Class(class_id) => class_id,
                     _ => return Err("method call requires a class instance".to_string()),
                 };
+                self.emit_null_check(&object, object_expression, &format!("cannot call method '{method_name}' on null"), body);
                 let found = self.find_method(class_id, method_name);
                 if found.is_err() {
                     // `object->callback(x)` with a property holding a function.
@@ -8347,7 +8688,7 @@ impl Emitter {
                 let field_count = OBJECT_HEADER_FIELDS + self.class_field_count(*class_id)?;
                 let object = self.new_register();
                 body.push_str(&format!(
-                    "  {object} = call ptr @qiq_object_new(i64 {field_count}, i64 {class_id})\n"
+                    "  {object} = call nonnull ptr @qiq_object_new(i64 {field_count}, i64 {class_id})\n"
                 ));
                 if self.has_property_defaults(*class_id) {
                     body.push_str(&format!("  call void @qiq_defaults.{}(ptr {object})\n", self.classes[*class_id as usize].symbol));
@@ -8518,6 +8859,7 @@ impl Emitter {
                 } else {
                     self.emit_expression(left, variables, body)?
                 };
+                let right_expression = right;
                 let right = if matches!(**right, Expr::One) {
                     // `x++` and `x--`: 1 in x's type.
                     match left.value_type {
@@ -8528,7 +8870,21 @@ impl Emitter {
                 } else {
                     self.emit_borrowed(right, None, variables, body)?
                 };
+                let _ = right_expression;
                 let is_text = |value: &Value| matches!(value.value_type, ValueType::String | ValueType::Char);
+                let (left, right) = if *operator == BinaryOp::Add && (is_text(&left) || is_text(&right)) {
+                    let left = match self.emit_to_string_call(&left, variables, body)? {
+                        Some(text) if is_text(&right) => text,
+                        _ => left,
+                    };
+                    let right = match self.emit_to_string_call(&right, variables, body)? {
+                        Some(text) if is_text(&left) => text,
+                        _ => right,
+                    };
+                    (left, right)
+                } else {
+                    (left, right)
+                };
                 if *operator == BinaryOp::Add && is_text(&left) && is_text(&right) {
                     // Concatenation: any mix of strings and chars produces a string.
                     let register = self.new_register();
@@ -9170,6 +9526,11 @@ fn expression_names(expression: &Expr, used: &mut std::collections::BTreeSet<Str
             }
         }
         Expr::Downcast(operand, _) => expression_names(operand, used, declared),
+        Expr::Nullsafe(object, placeholder, rest) => {
+            expression_names(object, used, declared);
+            declared.insert(placeholder.clone());
+            expression_names(rest, used, declared);
+        }
         Expr::Variable(name) => {
             used.insert(name.clone());
         }
@@ -9816,6 +10177,7 @@ impl<'a> Loader<'a> {
             current_parent: None,
             private_names: HashSet::new(),
             next_hidden: 0,
+            promoted: Vec::new(),
         };
         let parsed = parser.parse_module();
         let private_names = std::mem::take(&mut parser.private_names);
@@ -10609,7 +10971,7 @@ mod tests {
             line.strip_prefix("@.class.name")?.split(' ').next()?.parse::<u32>().ok()
         });
         let class_b = class_b.expect("class B has an id");
-        assert!(ir.contains(&format!("call ptr @qiq_object_new(i64 2, i64 {class_b})")), "{ir}");
+        assert!(ir.contains(&format!("call nonnull ptr @qiq_object_new(i64 2, i64 {class_b})")), "{ir}");
         assert!(ir.contains("getelementptr inbounds i64, ptr %this, i64 1"));
     }
 
@@ -11257,6 +11619,36 @@ mod tests {
         }
         // A function named fn still works: only `fn(...) =>` is an arrow function.
         assert!(compile_source("function fn(int x): int { return x; } int y = fn(2);").is_ok());
+    }
+
+    #[test]
+    fn promotion_readonly_nullsafe_and_to_string() {
+        // A promoted parameter is a property set before the constructor's body.
+        let ir = compile_source("class P { function __construct(public readonly int x, private string name = \"p\") { print(this->x); } } P p = new P(3); print(p->x);").unwrap();
+        assert!(ir.contains("define void @qiq_P___construct("), "{ir}");
+        // A null receiver throws instead of crashing; ?-> branches around the chain.
+        let ir = compile_source("class A { public string s = \"a\"; } A a = null; print(a?->s ?? \"none\");").unwrap();
+        assert!(main_ir(&ir).contains("nullsafe.null"), "{ir}");
+        let ir = compile_source("class A { public int n; } A a = null; print(a->n);").unwrap();
+        assert!(main_ir(&ir).contains("cannot read property 'n' of null") || ir.contains("cannot read property 'n' of null"), "{ir}");
+        // __toString is called by +.
+        let ir = compile_source("class M { function __toString(): string { return \"m\"; } } print(\"x\" + new M());").unwrap();
+        assert!(main_ir(&ir).contains("@qiq_M___toString("), "{ir}");
+        for (source, error) in [
+            ("class P { function __construct(public readonly int x) {} } P p = new P(1); p->x = 2;", "property 'x' is readonly: only P's constructor can set it"),
+            ("class P { public readonly int x; function __construct() { this->x = 1; } function f(): void { this->x = 2; } }", "property 'x' is readonly"),
+            ("class P { public readonly int x = 1; }", "a readonly property can't have a default"),
+            ("class P { public static readonly int x; }", "a static property can't be readonly"),
+            ("class P { function f(public int x): void {} }", "only a constructor's parameters can be properties too"),
+            ("class A { public int n; } A a = null; int n = a?->n;", "add a default with ??"),
+            ("class A { public int n; } A a = null; int n = a?->n ?? \"x\";", "'??' after '?->' needs a default of type int, found string"),
+            ("class A { public int n; } A a = null; a?->n = 1;", "can't assign through '?->'"),
+            ("class A { function __toString(): int { return 1; } }", "__toString must be declared `public function __toString(): string`"),
+            ("class A {} string s = to_string(new A());", "needs the class to declare `public function __toString(): string`"),
+        ] {
+            let message = compile_source(source).unwrap_err();
+            assert!(message.contains(error), "{source}: {message}");
+        }
     }
 
     #[test]

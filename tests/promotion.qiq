@@ -1,0 +1,40 @@
+// Constructor property promotion and readonly properties.
+class Point {
+    function __construct(public readonly double x, public readonly double y = 0.0) {}
+    function moved(double dx): Point { return new Point(this->x + dx, this->y); }
+    function __toString(): string { return "(" + to_string(this->x) + ", " + to_string(this->y) + ")"; }
+}
+class User {
+    public string[] roles = [];
+    private int logins;
+    function __construct(public readonly string name, protected string email, private int age = 30, bool admin = false) {
+        // Promoted properties are set before the body runs.
+        this->logins = 0;
+        if (admin) {
+            array_push(this->roles, "admin");
+        }
+        print("constructing", this->name, this->email, this->age);
+    }
+    function email(): string { return this->email; }
+}
+class Admin extends User {
+    public readonly int level;
+    function __construct(string name, int level) {
+        parent::__construct(name, name + "@example.com", 40, true);
+        this->level = level;
+    }
+}
+Point p = new Point(1.5, 2.0);
+Point q = p->moved(1.0);
+print(p, q, p->x, new Point(3.0));
+User ada = new User("Ada", "ada@example.com");
+print(ada->name, ada->email(), ada->roles);
+Admin root = new Admin("root", 9);
+print(root->name, root->level, root->roles, root->email());
+// A readonly array can't be replaced, but what's in it can change.
+class Bag {
+    function __construct(public readonly string[] items) {}
+}
+Bag bag = new Bag(["a"]);
+array_push(bag->items, "b");
+print(bag->items);

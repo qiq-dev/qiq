@@ -1,0 +1,41 @@
+// ?->: reading through objects that may be null, with ?? defaults.
+class Address {
+    public string city;
+    public int floor;
+    function __construct(string city, int floor) { this->city = city; this->floor = floor; }
+    function label(): string { return this->city + " #" + to_string(this->floor); }
+}
+class User {
+    public string name;
+    public Address address;
+    public User manager;
+    function __construct(string name, Address address = null) { this->name = name; this->address = address; }
+    function log(string message): void { print("log:", this->name, message); }
+}
+User ada = new User("Ada", new Address("London", 3));
+User bob = new User("Bob");
+User nobody = null;
+ada->manager = bob;
+print(ada?->name, ada?->address?->city, bob?->address?->city == null, nobody?->name == null);
+print(ada?->address?->label(), bob?->address?->label() == null);
+// A chain stops at the first null: nobody?->manager->name doesn't read null->name.
+print(nobody?->manager->name == null, ada->manager?->address?->city ?? "no city");
+// Numbers and bools need a default.
+print(ada?->address?->floor ?? -1, bob?->address?->floor ?? -1, nobody?->address?->floor ?? 0);
+// ?? also covers a null result, and evaluates the default only when needed.
+function fallback(): string { print("fallback evaluated"); return "default"; }
+print(ada?->name ?? fallback());
+print(bob?->address?->city ?? fallback());
+// A void method: called when there's an object, skipped when not.
+ada?->log("hello");
+nobody?->log("never printed");
+// Through a variable, a call, and an array element.
+User[] users = [ada, bob, nobody];
+foreach (users as user) {
+    print(user?->name ?? "(none)", user?->address?->city ?? "-");
+}
+function find(string name, User[] all): User {
+    foreach (all as u) { if (u != null && u->name == name) { return u; } }
+    return null;
+}
+print(find("Bob", users)?->name, find("Zed", users)?->name ?? "not found");

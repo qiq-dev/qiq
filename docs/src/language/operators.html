@@ -114,7 +114,7 @@ en
 <ul>
 <li>The left side must be a map or array element, or a string, char, array, map, or object that can be <code>null</code>. The right side must have the same type, and can be <code>null</code> for those types.</li>
 <li><code>??</code> has the lowest precedence of all operators and groups to the right, so <code>a ?? b ?? c</code> tries <code>a</code>, then <code>b</code>, then <code>c</code>.</li>
-<li>Unlike PHP, a missing property or a <code>null</code> object earlier in a chain, as in <code>user-&gt;address-&gt;city ?? ""</code>, isn't covered: only the last step is checked.</li>
+<li>As in PHP, a <code>null</code> object earlier in a chain throws rather than counting as missing: <code>user-&gt;address-&gt;city ?? ""</code> throws when <code>user</code> is <code>null</code>. Write <code>user?-&gt;address?-&gt;city ?? ""</code> instead, with the <a href="classes.html#nullsafe">nullsafe operator</a>.</li>
 </ul>
 
 <h2>Logical operators</h2>

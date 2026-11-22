@@ -30,7 +30,8 @@ Ada (36)
 <li>Properties without a default (see below) start at zero, <code>false</code>, or <code>null</code> until assigned.</li>
 <li>A constructor has no return type. A class without a constructor is created with <code>new ClassName()</code>.</li>
 <li>Objects are references: assigning or passing one shares it.</li>
-<li>Printing an object prints its class name.</li>
+<li>Printing an object prints its class name, unless the class has a <code>__toString</code> method (see below).</li>
+<li>Reading a property of <code>null</code>, assigning one, or calling a method on it throws <code>RuntimeException</code>; see <a href="#nullsafe">the nullsafe operator</a> for a way to skip <code>null</code>.</li>
 </ul>
 
 <h3>Default values</h3>
@@ -136,6 +137,40 @@ It says ...
 
 <p>Calls to methods that no subclass overrides are compiled as direct calls; the others look up the object's class in a table, so overriding costs one extra load per call.</p>
 
+<h3>Constructor promotion</h3>
+<p>A constructor parameter written with a visibility (<code>public</code>, <code>protected</code>, or <code>private</code>), or with <code>readonly</code>, is also a property of that name and type, set from the argument before the constructor's body runs. It saves declaring each property and assigning it:</p>
+
+```qiq
+class Point {
+    function __construct(public readonly double x, public readonly double y = 0.0) {}
+
+    function moved(double dx): Point {
+        return new Point(this->x + dx, this->y);
+    }
+}
+class User {
+    function __construct(public string name, private string email, bool admin = false) {
+        print("new user", this->name, admin);
+    }
+}
+Point p = new Point(1.5, 2.0)->moved(1.0);
+User ada = new User("Ada", "ada@example.com");
+print(p->x, p->y, ada->name);
+```
+```output
+new user Ada 0
+2.5 2 Ada
+```
+
+<p>Promoted and ordinary parameters can be mixed, as <code>admin</code> shows, and promoted ones can have defaults. Only a constructor's parameters can be promoted.</p>
+
+<h3>Readonly properties</h3>
+<p>A <code>readonly</code> property can only be set by the constructor of the class that declares it, through <code>this</code>; anywhere else, including in a subclass or another method, assigning it is a compile error. This makes value objects that can't change once created, such as <code>Point</code> above, where <code>p-&gt;x = 0.0;</code> doesn't compile.</p>
+<ul>
+<li>A readonly property can't have a default (set it in the constructor instead), and can't be <code>static</code>.</li>
+<li>Readonly fixes which array, map, or object the property holds, not what's inside it: <code>array_push(bag-&gt;items, "b")</code> still works on a <code>readonly string[] items</code>, as it does for objects in PHP's readonly properties.</li>
+</ul>
+
 <h2>Constants</h2>
 <p><code>const</code> declares a value fixed when the program is compiled, read as <code>ClassName::NAME</code>, or <code>self::NAME</code> inside the class. The type comes from the value, or can be given: <code>const int LIMIT = 10;</code>. Constants can be <code>int</code>, <code>double</code>, <code>bool</code>, <code>byte</code>, <code>string</code>, or <code>char</code>, and their value is a literal or another constant.</p>
 
@@ -231,6 +266,66 @@ print(first == same, first == copy, first->next == first, copy->next == null);
 ```output
 1 0 1 1
 ```
+
+<h2 id="nullsafe">The nullsafe operator ?-&gt;</h2>
+<p><code>object?-&gt;property</code> and <code>object?-&gt;method()</code> give <code>null</code> when <code>object</code> is <code>null</code>, instead of throwing, and skip the rest of the chain: in <code>user?-&gt;address-&gt;city</code>, nothing after <code>?-&gt;</code> runs when <code>user</code> is <code>null</code>. It's PHP's <code>?-&gt;</code>.</p>
+
+```qiq
+class Address {
+    public string city;
+    public int floor;
+    function __construct(string city, int floor) { this->city = city; this->floor = floor; }
+}
+class User {
+    public string name;
+    public Address address;
+    function __construct(string name, Address address = null) { this->name = name; this->address = address; }
+    function greet(): void { print("hello,", this->name); }
+}
+User ada = new User("Ada", new Address("London", 3));
+User bob = new User("Bob");
+User nobody = null;
+print(ada?->address?->city, bob?->address?->city ?? "no address");
+print(ada?->address?->floor ?? 0, nobody?->address?->floor ?? 0);
+ada?->greet();
+nobody?->greet();
+```
+```output
+London no address
+3 0
+hello, Ada
+```
+
+<ul>
+<li>A number or bool can't be <code>null</code> in qiq, so <code>?-&gt;</code> to one needs a default with <code>??</code>: <code>user?-&gt;age ?? 0</code>. With <code>??</code>, the default is used when any <code>?-&gt;</code> in the chain meets <code>null</code>, or (for a string, array, map, or object) when the result is <code>null</code>.</li>
+<li><code>object?-&gt;method();</code> on its own skips the call when <code>object</code> is <code>null</code>.</li>
+<li>You can't assign through <code>?-&gt;</code>: <code>user?-&gt;name = "x";</code> is a compile error.</li>
+</ul>
+
+<h2>Converting objects to strings: __toString</h2>
+<p>A class with a <code>public function __toString(): string</code> method decides how its objects are written as text. <code>print</code>, <code>to_string</code>, <code>+</code> with a string or char, and <code>sprintf</code>'s <code>%s</code> call it:</p>
+
+```qiq
+class Money {
+    function __construct(public int cents) {}
+    function __toString(): string {
+        return sprintf("€%d.%02d", this->cents / 100, this->cents % 100);
+    }
+}
+Money price = new Money(1250);
+print(price);
+print("total: " + price, to_string(price), sprintf("[%s]", price));
+```
+```output
+€12.50
+total: €12.50 €12.50 [€12.50]
+```
+
+<ul>
+<li>A subclass can override <code>__toString</code>, and an interface can declare it, so a variable of the interface's type converts with the object's own method.</li>
+<li><code>print</code> writes a <code>null</code> object as <code>null</code>; <code>+</code>, <code>to_string</code>, and <code>sprintf</code> throw <code>RuntimeException</code> for one, as they do for a <code>null</code> string.</li>
+<li>Objects inside arrays and maps still print as their class name: <code>print([price])</code> shows <code>[Money]</code>.</li>
+</ul>
 
 <h2>Abstract classes</h2>
 <p>An <code>abstract</code> class can't be instantiated, and may declare <code>abstract</code> methods, which have no body and must be implemented by concrete subclasses. Calls to abstract methods run the object's own implementation, which is the template-method pattern:</p>
