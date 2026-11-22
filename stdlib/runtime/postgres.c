@@ -1046,6 +1046,7 @@ static void pg_send_statement(QiqPostgres *pg, const char *sql, int64_t mode, co
         char number[40];
         switch (value.type) {
         case 's':
+        case 'T': // with its offset, for timestamptz
             if (value.payload == 0) {
                 pg_put_int32(pg, -1);
             } else {

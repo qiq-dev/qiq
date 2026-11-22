@@ -94,7 +94,7 @@ static size_t qiq_sql_pending_capacity;
 void qiq_sql_drop_pending(void) {
     for (size_t index = 0; index < qiq_sql_pending_count; index++) {
         QiqSqlValue *value = &qiq_sql_pending[index];
-        if ((value->type == 's' || value->type == 'a') && value->payload != 0) qiq_release((void *)(uintptr_t)value->payload);
+        if ((value->type == 's' || value->type == 'a' || value->type == 'T') && value->payload != 0) qiq_release((void *)(uintptr_t)value->payload);
     }
     qiq_sql_pending_count = 0;
 }
@@ -104,7 +104,7 @@ void qiq_bind_values(const char *types, const uint64_t *payloads, int64_t count)
     qiq_sql_pending = qiq_sql_grow(qiq_sql_pending, &qiq_sql_pending_capacity, (size_t)count, sizeof(QiqSqlValue));
     for (int64_t index = 0; index < count; index++) {
         QiqSqlValue value = {types[index], payloads[index]};
-        if ((value.type == 's' || value.type == 'a') && value.payload != 0) qiq_retain((void *)(uintptr_t)value.payload);
+        if ((value.type == 's' || value.type == 'a' || value.type == 'T') && value.payload != 0) qiq_retain((void *)(uintptr_t)value.payload);
         qiq_sql_pending[index] = value;
     }
     qiq_sql_pending_count = (size_t)count;
@@ -830,6 +830,7 @@ static void qiq_sql_bind(sqlite3_stmt *statement, sqlite3_destructor_type keep) 
             break;
         }
         case 's':
+        case 'T': // with its offset, which SQLite's date functions understand
             if (value.payload == 0) sqlite3_bind_null(statement, at);
             else sqlite3_bind_text(statement, at, (const char *)(uintptr_t)value.payload, -1, keep);
             break;

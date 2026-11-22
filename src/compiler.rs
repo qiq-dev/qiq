@@ -3591,6 +3591,17 @@ impl Emitter {
             "unwind:\n  %uncaught = load ptr, ptr @qiq_pending_exception, align 8\n  %uncaught.class = load i64, ptr %uncaught, align 8\n  %uncaught.slot = getelementptr inbounds ptr, ptr @qiq_class_names, i64 %uncaught.class\n  %uncaught.name = load ptr, ptr %uncaught.slot, align 8\n  %uncaught.message = call ptr @qiq_{}_getMessage(ptr %uncaught)\n  call void @qiq_uncaught(ptr %uncaught.name, ptr %uncaught.message)\n  unreachable\n}}\n",
             exception_symbol
         ));
+        // DateTime's formatter for json.c, when the program has DateTimes,
+        // so that programs without them leave out the time zone code.
+        let datetime_used = self.stdlib_class("DateTime").is_some_and(|class_id| self.used_classes.contains(&class_id));
+        if datetime_used {
+            if !ir.contains("declare ptr @qiq_stdlib___datetime_format(") {
+                ir.push_str("declare ptr @qiq_stdlib___datetime_format(ptr, i64, ptr)\n");
+            }
+            ir.push_str("@qiq_json_datetime_format = constant ptr @qiq_stdlib___datetime_format\n");
+        } else {
+            ir.push_str("@qiq_json_datetime_format = constant ptr null\n");
+        }
         Ok(ir)
     }
 
@@ -6558,10 +6569,11 @@ impl Emitter {
                 ValueType::Double => ("getDouble", Some("getDoubleOr")),
                 ValueType::Bool => ("getBool", Some("getBoolOr")),
                 ValueType::String => ("getString", None),
+                ValueType::Class(class_id) if this.stdlib_class("DateTime") == Some(class_id) => ("getDateTime", None),
                 other if this.element_of(other) == Some(ValueType::Byte) => ("getBytes", None),
                 other => {
                     return Err(format!(
-                        "{method_name} can't read {what} of {class_name}, a {}, from a column: columns give an int, double, bool, string, or byte[]",
+                        "{method_name} can't read {what} of {class_name}, a {}, from a column: columns give an int, double, bool, string, byte[], or DateTime",
                         this.type_name(other)
                     ))
                 }
@@ -6711,8 +6723,24 @@ impl Emitter {
             if matches!(expression, Expr::NamedArgument(..)) {
                 return Err(format!("{method_name}: the values for the query's placeholders can't be named arguments"));
             }
-            let value = self.emit_expression(expression, variables, body)?;
+            let mut value = self.emit_expression(expression, variables, body)?;
+            // A DateTime goes as text (DateTime::__sqlText).
+            let mut datetime = false;
+            if let ValueType::Class(class_id) = value.value_type {
+                if self.stdlib_class("DateTime") == Some(class_id) {
+                    let mut scope = variables.clone();
+                    scope.insert("#bind.datetime".to_string(), Value { slot: None, ..value.clone() });
+                    let text = Expr::StaticCall(
+                        StaticTarget::Class { class_id, forwards: false },
+                        "__sqlText".to_string(),
+                        vec![Expr::Variable("#bind.datetime".to_string())],
+                    );
+                    value = self.emit_expression(&text, &scope, body)?;
+                    datetime = true;
+                }
+            }
             let code = match value.value_type {
+                ValueType::String if datetime => 'T',
                 ValueType::Int => 'i',
                 ValueType::Double => 'd',
                 ValueType::Bool => 'b',
@@ -6722,7 +6750,7 @@ impl Emitter {
                 other if self.element_of(other) == Some(ValueType::Byte) => 'a',
                 other => {
                     return Err(format!(
-                        "{method_name}: value {} for the query must be an int, double, bool, byte, string, char, byte[], or null, found {}",
+                        "{method_name}: value {} for the query must be an int, double, bool, byte, string, char, byte[], DateTime, or null, found {}",
                         index + 1,
                         self.type_name(other)
                     ))
@@ -7622,6 +7650,13 @@ impl Emitter {
                 }
                 visited.push(class_id);
                 let class = &self.classes[class_id as usize];
+                if self.stdlib_class("DateTime") == Some(class_id) || self.stdlib_class("Duration") == Some(class_id) {
+                    return Err(format!(
+                        "json_decode can't create a {} yet: decode it as a string and read that with {}",
+                        class.name,
+                        if class.name == "DateTime" { "DateTime::parse" } else { "Duration's constructors" }
+                    ));
+                }
                 if class.is_interface || class.is_abstract {
                     return Err(format!(
                         "json_decode can't create {}, which is {}; decode into a concrete class",
@@ -8297,11 +8332,21 @@ impl Emitter {
         ));
         // For JSON: per class, "<field count>|" then "<name>:<slot>:<descriptor>;"
         // for each public property.
+        // std/time's DateTime and Duration are values rather than records:
+        // "!T<microseconds slot>,<zone slot>" and "!D<microseconds slot>",
+        // which json.c writes as ISO 8601 text.
         let mut json = Vec::new();
+        let slot_of = |fields: &[(Property, usize)], name: &str| fields.iter().find(|(property, _)| property.name == name).map(|(_, slot)| *slot);
         for class_id in 0..self.classes.len() as u32 {
             let fields = self.class_fields(class_id);
             let mut text = format!("{}|", OBJECT_HEADER_FIELDS + fields.len());
-            for (property, slot) in fields.iter().filter(|(property, _)| property.visibility == Visibility::Public) {
+            if self.stdlib_class("DateTime") == Some(class_id) {
+                text = format!("!T{},{}", slot_of(&fields, "micros").unwrap_or(0), slot_of(&fields, "zoneName").unwrap_or(0));
+            } else if self.stdlib_class("Duration") == Some(class_id) {
+                text = format!("!D{}", slot_of(&fields, "micros").unwrap_or(0));
+            }
+            let special = text.starts_with('!');
+            for (property, slot) in fields.iter().filter(|(property, _)| property.visibility == Visibility::Public && !special) {
                 text.push_str(&format!("{}:{slot}:{};", property.name, self.json_descriptor(property.value_type)));
             }
             ir.push_str(&format!(
@@ -12039,6 +12084,20 @@ mod tests {
     }
 
     #[test]
+    fn datetime_in_queries_json_and_query_as() {
+        // A DateTime query value goes as text, through DateTime::__sqlText.
+        let ir = compile_source("import Database from \"std/sql\"; import DateTime from \"std/time\"; class E { function __construct(public DateTime at) {} } \
+            Database db = Database::open(\"sqlite::memory:\"); db->execute(\"insert into e values (?)\", DateTime::of(2026, 1, 1)); E[] es = db->queryAs(\"select at from e\"); print(json_encode(es));").unwrap();
+        assert!(main_ir(&ir).contains("___sqlText("), "{ir}");
+        assert!(ir.contains("c\"T\\00\""), "{ir}");
+        // JSON writes it as text, with the formatter linked in only then.
+        assert!(ir.contains("c\"!T") && ir.contains("@qiq_json_datetime_format = constant ptr @qiq_stdlib___datetime_format"), "{ir}");
+        assert!(compile_source("print(json_encode([1]));").unwrap().contains("@qiq_json_datetime_format = constant ptr null"));
+        let message = compile_source("import DateTime from \"std/time\"; class B { public DateTime at; } B b = json_decode(\"{}\");").unwrap_err();
+        assert!(message.contains("json_decode can't create a DateTime yet"), "{message}");
+    }
+
+    #[test]
     fn query_as_reads_rows_into_the_expected_class() {
         let ir = compile_source("import Database from \"std/sql\"; class U { function __construct(public int id, public string name = \"\") {} } \
             Database db = Database::open(\"sqlite::memory:\"); U[] all = db->queryAs(\"select * from u where id > ?\", 1); U one = db->queryOneAs(\"select * from u\"); \
@@ -12080,7 +12139,7 @@ mod tests {
         let computed = compile_source("import Database from \"std/sql\"; string url = \"sqlite::memory:\"; Database db = Database::open(url);").unwrap();
         assert!(computed.contains("@qiq_sql_postgres = constant ptr @qiq_postgres_driver") && computed.contains("@qiq_sql_mysql = constant ptr @qiq_mysql_driver"));
         for (source, error) in [
-            ("import Database from \"std/sql\"; Database db = Database::open(\"x\"); db->execute(\"select ?\", [1, 2]);", "value 1 for the query must be an int, double, bool, byte, string, char, byte[], or null, found int[]"),
+            ("import Database from \"std/sql\"; Database db = Database::open(\"x\"); db->execute(\"select ?\", [1, 2]);", "value 1 for the query must be an int, double, bool, byte, string, char, byte[], DateTime, or null, found int[]"),
             ("class A { function f(string s, ...): void {} }", "'...' parameters are only for standard library methods"),
         ] {
             let message = compile_source(source).unwrap_err();

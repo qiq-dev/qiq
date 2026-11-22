@@ -5,6 +5,8 @@
 // until the program calls date_default_timezone_set. A `timestamp` default
 // of -9223372036854775808 (the smallest int) means "now".
 
+import substr, implode, str_ends_with from "string";
+
 // The current time as a timestamp.
 extern function time(): int;
 
@@ -49,3 +51,445 @@ extern function date_default_timezone_get(): string;
 // Pauses the program. Negative values throw InvalidArgumentException.
 extern function sleep(int seconds): void;
 extern function usleep(int microseconds): void;
+
+// ---------------------------------------------------------------------------
+// DateTime and Duration: an instant shown in a time zone of its own, and a
+// length of time. Zones are names from the tz database ("Europe/London"),
+// "UTC", or fixed offsets ("+05:30"); a null zone means the default one
+// (date_default_timezone_set's, or the system's). Zone data comes from the
+// system's zoneinfo files, or the copy built into qiq when there are none.
+
+
+extern function __zone_name(string zone): string;
+extern function __zone_offset(string zone, int seconds): int;
+extern function __zone_local_to_utc(string zone, int local, int prefer): int;
+extern function __datetime_now(): int;
+extern function __datetime_format(string format, int micros, string zone): string;
+extern function __datetime_parse(string text, string format, string zone): int;
+extern function __datetime_parsed_zone(): string;
+extern function __datetime_check(int year, int month, int day, int hour, int minute, int second, int microsecond, string caller): void;
+
+// a / b rounded down, for times before 1970.
+function __floor_divide(int a, int b): int {
+    int quotient = a / b;
+    if (a % b != 0 && (a < 0) != (b < 0)) {
+        quotient--;
+    }
+    return quotient;
+}
+
+// Days since 1970-01-01 of a date (Howard Hinnant's days_from_civil).
+function __days_from_civil(int year, int month, int day): int {
+    int y = year;
+    if (month <= 2) {
+        y--;
+    }
+    int era = __floor_divide(y, 400);
+    int yearOfEra = y - era * 400;
+    int shifted = month - 3;
+    if (month <= 2) {
+        shifted = month + 9;
+    }
+    int dayOfYear = (153 * shifted + 2) / 5 + day - 1;
+    int dayOfEra = yearOfEra * 365 + yearOfEra / 4 - yearOfEra / 100 + dayOfYear;
+    return era * 146097 + dayOfEra - 719468;
+}
+
+function __days_in_month(int year, int month): int {
+    if (month == 2) {
+        if ((year % 4 == 0 && year % 100 != 0) || year % 400 == 0) {
+            return 29;
+        }
+        return 28;
+    }
+    if (month == 4 || month == 6 || month == 9 || month == 11) {
+        return 30;
+    }
+    return 31;
+}
+
+// A length of time, precise to the microsecond: what DateTime's until and
+// since give, and what add and sub take. A day here is 24 hours; use
+// DateTime's addDays for calendar days.
+final class Duration {
+    private int micros;
+
+    private function __construct(int micros) {
+        this->micros = micros;
+    }
+
+    static function ofDays(int days): Duration { return new Duration(days * 86400000000); }
+    static function ofHours(int hours): Duration { return new Duration(hours * 3600000000); }
+    static function ofMinutes(int minutes): Duration { return new Duration(minutes * 60000000); }
+    static function ofSeconds(int seconds): Duration { return new Duration(seconds * 1000000); }
+    static function ofMilliseconds(int milliseconds): Duration { return new Duration(milliseconds * 1000); }
+    static function ofMicroseconds(int microseconds): Duration { return new Duration(microseconds); }
+
+    // The length in whole units, rounded toward zero: 90 minutes is 1 hour.
+    function totalDays(): int { return this->micros / 86400000000; }
+    function totalHours(): int { return this->micros / 3600000000; }
+    function totalMinutes(): int { return this->micros / 60000000; }
+    function totalSeconds(): int { return this->micros / 1000000; }
+    function totalMilliseconds(): int { return this->micros / 1000; }
+    function totalMicroseconds(): int { return this->micros; }
+
+    function plus(Duration other): Duration { return new Duration(this->micros + other->micros); }
+    function minus(Duration other): Duration { return new Duration(this->micros - other->micros); }
+    function multipliedBy(int times): Duration { return new Duration(this->micros * times); }
+    function negated(): Duration { return new Duration(-this->micros); }
+
+    function abs(): Duration {
+        if (this->micros < 0) {
+            return new Duration(-this->micros);
+        }
+        return this;
+    }
+
+    function isNegative(): bool { return this->micros < 0; }
+    function isZero(): bool { return this->micros == 0; }
+
+    function equals(Duration other): bool {
+        return other != null && this->micros == other->micros;
+    }
+
+    function compareTo(Duration other): int {
+        if (this->micros < other->micros) {
+            return -1;
+        }
+        if (this->micros > other->micros) {
+            return 1;
+        }
+        return 0;
+    }
+
+    // As in 1d 2h 30m 5.5s, with only the units it needs: 90s is 1m 30s,
+    // nothing is 0s.
+    function __toString(): string {
+        if (this->micros == 0) {
+            return "0s";
+        }
+        int left = this->micros;
+        string text = "";
+        if (left < 0) {
+            text = "-";
+            left = -left;
+        }
+        int days = left / 86400000000;
+        int hours = left / 3600000000 % 24;
+        int minutes = left / 60000000 % 60;
+        int seconds = left / 1000000 % 60;
+        int fraction = left % 1000000;
+        string[] parts = [];
+        if (days > 0) {
+            array_push(parts, to_string(days) + "d");
+        }
+        if (hours > 0) {
+            array_push(parts, to_string(hours) + "h");
+        }
+        if (minutes > 0) {
+            array_push(parts, to_string(minutes) + "m");
+        }
+        if (seconds > 0 || fraction > 0) {
+            string part = to_string(seconds);
+            if (fraction > 0) {
+                string digits = sprintf("%06d", fraction);
+                while (str_ends_with(digits, "0")) {
+                    digits = substr(digits, 0, len(digits) - 1);
+                }
+                part += "." + digits;
+            }
+            array_push(parts, part + "s");
+        }
+        return text + implode(" ", parts);
+    }
+}
+
+// An instant in time, shown in a time zone: like PHP's DateTimeImmutable, a
+// DateTime never changes, and the methods that change something give a new
+// one. Precise to the microsecond.
+final class DateTime {
+    // Microseconds since 1970-01-01 00:00:00 UTC.
+    private int micros;
+    private string zoneName;
+    // The zone's offset from UTC at this instant, in seconds.
+    private int offsetSeconds;
+    // The time on the zone's clock.
+    private int y;
+    private int mo;
+    private int d;
+    private int h;
+    private int mi;
+    private int s;
+    private int us;
+
+    private function __construct(int micros, string zone) {
+        this->micros = micros;
+        this->zoneName = zone;
+        int seconds = __floor_divide(micros, 1000000);
+        this->us = micros - seconds * 1000000;
+        this->offsetSeconds = __zone_offset(zone, seconds);
+        int local = seconds + this->offsetSeconds;
+        int days = __floor_divide(local, 86400);
+        int secondOfDay = local - days * 86400;
+        this->h = secondOfDay / 3600;
+        this->mi = secondOfDay / 60 % 60;
+        this->s = secondOfDay % 60;
+        // The date of `days` (Howard Hinnant's civil_from_days).
+        int z = days + 719468;
+        int era = __floor_divide(z, 146097);
+        int dayOfEra = z - era * 146097;
+        int yearOfEra = (dayOfEra - dayOfEra / 1460 + dayOfEra / 36524 - dayOfEra / 146096) / 365;
+        int dayOfYear = dayOfEra - (365 * yearOfEra + yearOfEra / 4 - yearOfEra / 100);
+        int shifted = (5 * dayOfYear + 2) / 153;
+        this->d = dayOfYear - (153 * shifted + 2) / 5 + 1;
+        this->mo = shifted + 3;
+        if (shifted >= 10) {
+            this->mo = shifted - 9;
+        }
+        this->y = yearOfEra + era * 400;
+        if (this->mo <= 2) {
+            this->y++;
+        }
+    }
+
+    // The instant of a time on `zone`'s clock, as PHP chooses it: a time
+    // skipped when the clocks go forward moves forward with them (02:30
+    // becomes 03:30), and one that happens twice when they go back is the
+    // one with offset `prefer` if it's one of them, and otherwise the second
+    // (in standard time). Calendar steps prefer the offset they start from.
+    private static function atLocal(int year, int month, int day, int hour, int minute, int second, int microsecond, string zone, int prefer = 999999999): DateTime {
+        int local = __days_from_civil(year, month, day) * 86400 + hour * 3600 + minute * 60 + second;
+        return new DateTime(__zone_local_to_utc(zone, local, prefer) * 1000000 + microsecond, zone);
+    }
+
+    // The current time, in `zone` (or the default zone).
+    static function now(string zone = null): DateTime {
+        return new DateTime(__datetime_now(), __zone_name(zone));
+    }
+
+    // A date and time on `zone`'s clock. Throws InvalidArgumentException for
+    // fields that don't make a date or time, such as April 31.
+    static function of(int year, int month, int day, int hour = 0, int minute = 0, int second = 0, int microsecond = 0, string zone = null): DateTime {
+        __datetime_check(year, month, day, hour, minute, second, microsecond, "DateTime::of");
+        return DateTime::atLocal(year, month, day, hour, minute, second, microsecond, __zone_name(zone));
+    }
+
+    // The instant `seconds` after 1970-01-01 00:00:00 UTC (a Unix timestamp).
+    static function fromTimestamp(int seconds, string zone = null): DateTime {
+        return new DateTime(seconds * 1000000, __zone_name(zone));
+    }
+
+    // The instant `microseconds` after 1970-01-01 00:00:00 UTC.
+    static function fromTimestampMicros(int microseconds, string zone = null): DateTime {
+        return new DateTime(microseconds, __zone_name(zone));
+    }
+
+    // Reads a date and time. Without a format: ISO 8601 and what databases
+    // write, such as "2026-11-22", "2026-11-22 10:30:00", or
+    // "2026-11-22T10:30:00.125+01:00". With one: PHP's createFromFormat
+    // letters, as in parse("22/11/2026 10:30", "d/m/Y H:i"). A time with an
+    // offset or zone of its own is in it; others are in `zone` (or the
+    // default zone). Throws InvalidArgumentException when it can't.
+    static function parse(string text, string format = null, string zone = null): DateTime {
+        int micros = __datetime_parse(text, format, zone);
+        return new DateTime(micros, __datetime_parsed_zone());
+    }
+
+    function year(): int { return this->y; }
+    function month(): int { return this->mo; }
+    function day(): int { return this->d; }
+    function hour(): int { return this->h; }
+    function minute(): int { return this->mi; }
+    function second(): int { return this->s; }
+    function microsecond(): int { return this->us; }
+
+    // 1 for Monday to 7 for Sunday, as ISO 8601 numbers them.
+    function dayOfWeek(): int {
+        int weekday = (__days_from_civil(this->y, this->mo, this->d) + 3) % 7;
+        if (weekday < 0) {
+            weekday += 7;
+        }
+        return weekday + 1;
+    }
+
+    // 1 for January 1.
+    function dayOfYear(): int {
+        return __days_from_civil(this->y, this->mo, this->d) - __days_from_civil(this->y, 1, 1) + 1;
+    }
+
+    function daysInMonth(): int {
+        return __days_in_month(this->y, this->mo);
+    }
+
+    // Seconds since 1970-01-01 00:00:00 UTC (a Unix timestamp), rounded down.
+    function timestamp(): int {
+        return __floor_divide(this->micros, 1000000);
+    }
+
+    // Microseconds since 1970-01-01 00:00:00 UTC.
+    function timestampMicros(): int {
+        return this->micros;
+    }
+
+    // The zone's name: "Europe/London", "UTC", or "+05:30".
+    function zone(): string {
+        return this->zoneName;
+    }
+
+    // The zone's offset from UTC at this instant, in seconds: 3600 for +01:00.
+    function offset(): int {
+        return this->offsetSeconds;
+    }
+
+    // The same instant on another zone's clock.
+    function withZone(string zone): DateTime {
+        return new DateTime(this->micros, __zone_name(zone));
+    }
+
+    // Another date at the same time of day.
+    function withDate(int year, int month, int day): DateTime {
+        __datetime_check(year, month, day, this->h, this->mi, this->s, this->us, "DateTime::withDate");
+        return DateTime::atLocal(year, month, day, this->h, this->mi, this->s, this->us, this->zoneName);
+    }
+
+    // Another time of day on the same date.
+    function withTime(int hour, int minute, int second = 0, int microsecond = 0): DateTime {
+        __datetime_check(this->y, this->mo, this->d, hour, minute, second, microsecond, "DateTime::withTime");
+        return DateTime::atLocal(this->y, this->mo, this->d, hour, minute, second, microsecond, this->zoneName);
+    }
+
+    // Calendar steps keep the time on the clock, across daylight saving
+    // changes too: a day later is the same time tomorrow, even when that's
+    // 23 or 25 hours away. A month or year later on a day the month doesn't
+    // have is its last day: January 31 plus a month is February 28 (or 29).
+    // Negative numbers go back.
+    function addYears(int years): DateTime {
+        return this->addMonths(years * 12);
+    }
+
+    function addMonths(int months): DateTime {
+        int total = this->y * 12 + this->mo - 1 + months;
+        int year = __floor_divide(total, 12);
+        int month = total - year * 12 + 1;
+        int day = this->d;
+        if (day > __days_in_month(year, month)) {
+            day = __days_in_month(year, month);
+        }
+        return DateTime::atLocal(year, month, day, this->h, this->mi, this->s, this->us, this->zoneName, this->offsetSeconds);
+    }
+
+    function addWeeks(int weeks): DateTime {
+        return this->addDays(weeks * 7);
+    }
+
+    function addDays(int days): DateTime {
+        int local = (__days_from_civil(this->y, this->mo, this->d) + days) * 86400 + this->h * 3600 + this->mi * 60 + this->s;
+        return new DateTime(__zone_local_to_utc(this->zoneName, local, this->offsetSeconds) * 1000000 + this->us, this->zoneName);
+    }
+
+    // Steps of elapsed time: exactly that long later, whatever the clock says.
+    function addHours(int hours): DateTime {
+        return new DateTime(this->micros + hours * 3600000000, this->zoneName);
+    }
+
+    function addMinutes(int minutes): DateTime {
+        return new DateTime(this->micros + minutes * 60000000, this->zoneName);
+    }
+
+    function addSeconds(int seconds): DateTime {
+        return new DateTime(this->micros + seconds * 1000000, this->zoneName);
+    }
+
+    function add(Duration duration): DateTime {
+        return new DateTime(this->micros + duration->totalMicroseconds(), this->zoneName);
+    }
+
+    function sub(Duration duration): DateTime {
+        return new DateTime(this->micros - duration->totalMicroseconds(), this->zoneName);
+    }
+
+    // 00:00:00 on this date (or the first time the day has, where midnight
+    // is skipped by a daylight saving change).
+    function startOfDay(): DateTime {
+        return DateTime::atLocal(this->y, this->mo, this->d, 0, 0, 0, 0, this->zoneName);
+    }
+
+    // 23:59:59.999999 on this date.
+    function endOfDay(): DateTime {
+        return DateTime::atLocal(this->y, this->mo, this->d, 23, 59, 59, 999999, this->zoneName);
+    }
+
+    function startOfMonth(): DateTime {
+        return DateTime::atLocal(this->y, this->mo, 1, 0, 0, 0, 0, this->zoneName);
+    }
+
+    function endOfMonth(): DateTime {
+        return DateTime::atLocal(this->y, this->mo, __days_in_month(this->y, this->mo), 23, 59, 59, 999999, this->zoneName);
+    }
+
+    // Comparisons are of instants, whatever the zones: 10:00 in London and
+    // 11:00 in Paris on the same winter day are equal.
+    function isBefore(DateTime other): bool {
+        return this->micros < other->micros;
+    }
+
+    function isAfter(DateTime other): bool {
+        return this->micros > other->micros;
+    }
+
+    function equals(DateTime other): bool {
+        return other != null && this->micros == other->micros;
+    }
+
+    // -1, 0, or 1, as this is before, at, or after `other`.
+    function compareTo(DateTime other): int {
+        if (this->micros < other->micros) {
+            return -1;
+        }
+        if (this->micros > other->micros) {
+            return 1;
+        }
+        return 0;
+    }
+
+    // The time from this to `other`: negative when `other` is earlier.
+    function until(DateTime other): Duration {
+        return Duration::ofMicroseconds(other->micros - this->micros);
+    }
+
+    // The time from `other` to this.
+    function since(DateTime other): Duration {
+        return Duration::ofMicroseconds(this->micros - other->micros);
+    }
+
+    // With date()'s letters, as in format("D j M Y, H:i T"): also u for the
+    // microseconds, v for the milliseconds, and e for the zone's name.
+    function format(string format): string {
+        return __datetime_format(format, this->micros, this->zoneName);
+    }
+
+    // ISO 8601, as in 2026-11-22T10:30:00+01:00, with the microseconds when
+    // there are any.
+    function __toString(): string {
+        if (this->us != 0) {
+            return this->format("Y-m-d\\TH:i:s.uP");
+        }
+        return this->format("Y-m-d\\TH:i:sP");
+    }
+
+    // For a database (see std/sql): the time on the default zone's clock
+    // with its offset, or null for null. The default zone, so a database
+    // whose column has no zone (MySQL's DATETIME, which gets the time
+    // without the offset) holds times that getDateTime reads back as the
+    // same instants, and a column's text sorts in time order.
+    static function __sqlText(DateTime value): string {
+        if (value == null) {
+            return null;
+        }
+        DateTime local = value->withZone(null);
+        if (local->us != 0) {
+            return local->format("Y-m-d H:i:s.uP");
+        }
+        return local->format("Y-m-d H:i:sP");
+    }
+}

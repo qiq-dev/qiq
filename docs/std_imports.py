@@ -73,7 +73,8 @@ def used(code):
             # A call, not a method call (->name), a static call (::name), or a declaration.
             pattern = r"(?<![\w>:$])" + re.escape(name) + r"\s*\("
         else:
-            pattern = r"(?<![\w>$])" + re.escape(name) + r"\b(?!\s*:)"
+            # Not a named argument (name: value), though Class:: is a use.
+            pattern = r"(?<![\w>$])" + re.escape(name) + r"\b(?!\s*:(?!:))"
         if re.search(pattern, bare):
             found.setdefault(path, []).append(name)
     return found

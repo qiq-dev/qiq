@@ -21,7 +21,7 @@ OVERVIEW = (
     "import by name, like Go's packages:</p>\n"
     "<table><thead><tr><th>Import path</th><th>Contents</th></tr></thead><tbody>"
     "<tr><td><code>std/file</code></td><td><a href=\"ref.files.html\">Files</a> and the <a href=\"class.file.html\">File</a> class</td></tr>"
-    "<tr><td><code>std/time</code></td><td><a href=\"ref.datetime.html\">Date and time</a></td></tr>"
+    "<tr><td><code>std/time</code></td><td><a href=\"ref.datetime.html\">Date and time</a>, and the <a href=\"class.datetime.html\">DateTime</a> and <a href=\"class.duration.html\">Duration</a> classes</td></tr>"
     "<tr><td><code>std/os</code></td><td>The <a href=\"ref.program.html\">program</a>: arguments, exit status, environment</td></tr>"
     "<tr><td><code>std/memory</code></td><td><a href=\"function.gc-collect-cycles.html\">gc_collect_cycles</a></td></tr>"
     "<tr><td><code>std/net</code></td><td>The <a href=\"class.socket.html\">Socket</a> class</td></tr>"
@@ -779,7 +779,8 @@ DATES = {
         "format one with <code>date</code>, and build one with <code>mktime</code> or <code>strtotime</code>. "
         "Local time follows the system (the <code>TZ</code> environment variable, or <code>/etc/localtime</code>) "
         "until the program calls <code>date_default_timezone_set</code>. Zone data is read from the system's "
-        "zoneinfo files when the program runs, so compiled programs stay static."
+        "zoneinfo files when the program runs, so compiled programs stay static. "
+        "For dates you calculate with, compare, or keep in several time zones, the <a href=\"class.datetime.html\">DateTime</a> class is easier."
     ),
     "details": """<h2>Format characters</h2>
 <p><code>date</code> and <code>gmdate</code> use PHP's format letters. Any other character is copied as is; put <code>\\\\</code> before a letter to print it literally (in a qiq string, <code>"\\\\T"</code> is the two characters <code>\\T</code>).</p>
@@ -2397,7 +2398,7 @@ Ada is 36
 ```
 
 <h2>Values for placeholders</h2>
-<p>Write a <code>?</code> in the SQL for each value, and give the values after the SQL, in order. Each can be an <code>int</code>, <code>double</code>, <code>bool</code> (stored as 1 or 0), <code>byte</code>, <code>string</code>, <code>char</code>, <code>byte[]</code> (stored as a blob), or <code>null</code>; a <code>null</code> string or array is stored as NULL. The compiler checks the types, as it does for <a href="function.sprintf.html">sprintf</a>.</p>
+<p>Write a <code>?</code> in the SQL for each value, and give the values after the SQL, in order. Each can be an <code>int</code>, <code>double</code>, <code>bool</code> (stored as 1 or 0), <code>byte</code>, <code>string</code>, <code>char</code>, <code>byte[]</code> (stored as a blob), <a href="class.datetime.html">DateTime</a> (stored as text: see <a href="class.datetime.html">In databases</a>), or <code>null</code>; a <code>null</code> string or array is stored as NULL. The compiler checks the types, as it does for <a href="function.sprintf.html">sprintf</a>.</p>
 <p>The values are sent to the database separately from the SQL, never pasted into it, so a value can't change what the statement does: this is what prevents SQL injection. Build the SQL itself only from text in your program, and give everything else as a value.</p>
 <pre class="code">Database db = Database::open("sqlite:app.db");
 string name = "Robert'); drop table students; --";
@@ -2450,7 +2451,7 @@ Lin 1
 <ul>
 <li>When the class has a constructor, it's called with each parameter set from the column of the same name, read with the getter for the parameter's type (<code>getInt</code> for an <code>int</code>, and so on), so constructor promotion makes a short record class. A parameter with a default gets it when its column is NULL or missing; one without a default needs the column, or the query throws <code>DatabaseException</code>, as does a value of another type.</li>
 <li>When the class has no constructor, its public properties are set the same way, by name, after the object is made. Properties with defaults keep them when their column is missing or NULL.</li>
-<li>Parameters and properties can be <code>int</code>, <code>double</code>, <code>bool</code>, <code>string</code>, or <code>byte[]</code>; others are a compile error. Name columns to match, with <code>AS</code> where they differ: <code>select created_at as createdAt</code>. Columns that nothing reads are ignored.</li>
+<li>Parameters and properties can be <code>int</code>, <code>double</code>, <code>bool</code>, <code>string</code>, <code>byte[]</code>, or <code>DateTime</code> (read with <code>getDateTime</code>); others are a compile error. Name columns to match, with <code>AS</code> where they differ: <code>select created_at as createdAt</code>. Columns that nothing reads are ignored.</li>
 <li>The constructor must be public, and the class concrete: not an interface or abstract.</li>
 <li>For results too big to hold at once, a <a href="class.cursor.html">Cursor</a>'s <code>nextAs</code> and <code>fetchAs</code> read rows into objects the same way, a batch at a time.</li>
 </ul>
@@ -2626,6 +2627,7 @@ ROW_CLASS = """<h1>The Row class</h1>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">getBool</span>(<span class="type">string</span> column): <span class="type">bool</span><br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">getString</span>(<span class="type">string</span> column): <span class="type">string</span><br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">getBytes</span>(<span class="type">string</span> column): <span class="type">byte[]</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">getDateTime</span>(<span class="type">string</span> column, <span class="type">string</span> zone = <span class="default">null</span>): <span class="cls">DateTime</span><br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">getIntOr</span>(<span class="type">string</span> column, <span class="type">int</span> fallback): <span class="type">int</span><br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">getDoubleOr</span>(<span class="type">string</span> column, <span class="type">double</span> fallback): <span class="type">double</span><br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">getBoolOr</span>(<span class="type">string</span> column, <span class="type">bool</span> fallback): <span class="type">bool</span><br>
@@ -2644,6 +2646,7 @@ ROW_CLASS = """<h1>The Row class</h1>
 <tr><td><code>getBool(column)</code></td><td>An <code>INTEGER</code> that is 0 or 1, as SQLite stores booleans</td><td>Throws</td></tr>
 <tr><td><code>getString(column)</code></td><td><code>TEXT</code>, or a PostgreSQL <code>numeric</code> or MySQL <code>DECIMAL</code> as its exact digits</td><td>Returns <code>null</code>, so <code>?? ""</code> gives a default</td></tr>
 <tr><td><code>getBytes(column)</code></td><td>A <code>BLOB</code>, or text that isn't valid UTF-8</td><td>Returns <code>null</code></td></tr>
+<tr><td><code>getDateTime(column, zone)</code></td><td>A <a href="class.datetime.html">DateTime</a>: text such as a PostgreSQL <code>timestamptz</code> or a MySQL <code>DATETIME</code>, read as <code>DateTime::parse</code> reads it (a time without an offset is in <code>zone</code>, or the default zone), or an <code>INTEGER</code> Unix timestamp</td><td>Returns <code>null</code></td></tr>
 <tr><td><code>getIntOr</code>, <code>getDoubleOr</code>, <code>getBoolOr(column, fallback)</code></td><td>The same as the getter</td><td>Returns <code>fallback</code></td></tr>
 <tr><td><code>isNull(column)</code></td><td colspan="2">Whether the column is NULL</td></tr>
 <tr><td><code>has(column)</code></td><td colspan="2">Whether the result has a column with that name</td></tr>
@@ -2769,6 +2772,128 @@ while (event != null) {
 <p>A cursor that's no longer used isn't closed until the program ends, or its database is closed, so close one you stop reading early, in a <code>finally</code> block when the reading can throw.</p>
 """
 
+DATETIME_CLASS = """<h1>The DateTime class</h1>
+<p>An instant in time, shown in a time zone of its own, precise to the microsecond. It works like PHP's <code>DateTimeImmutable</code>: a <code>DateTime</code> never changes, and the methods that change something give a new one, so passing one around can't change it under you.</p>
+```qiq
+DateTime meeting = DateTime::of(2026, 12, 3, 14, 30, zone: "Europe/London");
+print(meeting);
+print(meeting->format("l j F Y, g:i a T"));
+print(meeting->withZone("America/New_York")->format("H:i T"), meeting->withZone("Asia/Kolkata")->format("H:i T"));
+DateTime reminder = meeting->addDays(-1)->withTime(9, 0);
+print(reminder, reminder->until(meeting));
+```
+```output
+2026-12-03T14:30:00+00:00
+Thursday 3 December 2026, 2:30 pm GMT
+09:30 EST 20:00 IST
+2026-12-02T09:00:00+00:00 1d 5h 30m
+```
+<h2>Class synopsis</h2>
+<div class="synopsis"><code><span class="kw">final class</span> <span class="cls">DateTime</span> {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">static function</span> <span class="fn">now</span>(<span class="type">string</span> zone = <span class="default">null</span>): <span class="cls">DateTime</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">static function</span> <span class="fn">of</span>(<span class="type">int</span> year, <span class="type">int</span> month, <span class="type">int</span> day, <span class="type">int</span> hour = <span class="default">0</span>, <span class="type">int</span> minute = <span class="default">0</span>, <span class="type">int</span> second = <span class="default">0</span>, <span class="type">int</span> microsecond = <span class="default">0</span>, <span class="type">string</span> zone = <span class="default">null</span>): <span class="cls">DateTime</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">static function</span> <span class="fn">parse</span>(<span class="type">string</span> text, <span class="type">string</span> format = <span class="default">null</span>, <span class="type">string</span> zone = <span class="default">null</span>): <span class="cls">DateTime</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">static function</span> <span class="fn">fromTimestamp</span>(<span class="type">int</span> seconds, <span class="type">string</span> zone = <span class="default">null</span>): <span class="cls">DateTime</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">static function</span> <span class="fn">fromTimestampMicros</span>(<span class="type">int</span> microseconds, <span class="type">string</span> zone = <span class="default">null</span>): <span class="cls">DateTime</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">year</span>(), <span class="fn">month</span>(), <span class="fn">day</span>(), <span class="fn">hour</span>(), <span class="fn">minute</span>(), <span class="fn">second</span>(), <span class="fn">microsecond</span>(): <span class="type">int</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">dayOfWeek</span>(), <span class="fn">dayOfYear</span>(), <span class="fn">daysInMonth</span>(), <span class="fn">timestamp</span>(), <span class="fn">timestampMicros</span>(), <span class="fn">offset</span>(): <span class="type">int</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">zone</span>(): <span class="type">string</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">withZone</span>(<span class="type">string</span> zone), <span class="fn">withDate</span>(<span class="type">int</span> year, <span class="type">int</span> month, <span class="type">int</span> day), <span class="fn">withTime</span>(<span class="type">int</span> hour, <span class="type">int</span> minute, <span class="type">int</span> second = <span class="default">0</span>, <span class="type">int</span> microsecond = <span class="default">0</span>): <span class="cls">DateTime</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">addYears</span>(<span class="type">int</span> n), <span class="fn">addMonths</span>, <span class="fn">addWeeks</span>, <span class="fn">addDays</span>, <span class="fn">addHours</span>, <span class="fn">addMinutes</span>, <span class="fn">addSeconds</span>: <span class="cls">DateTime</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">add</span>(<span class="cls">Duration</span> d), <span class="fn">sub</span>(<span class="cls">Duration</span> d): <span class="cls">DateTime</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">startOfDay</span>(), <span class="fn">endOfDay</span>(), <span class="fn">startOfMonth</span>(), <span class="fn">endOfMonth</span>(): <span class="cls">DateTime</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">isBefore</span>(<span class="cls">DateTime</span> other), <span class="fn">isAfter</span>(<span class="cls">DateTime</span> other), <span class="fn">equals</span>(<span class="cls">DateTime</span> other): <span class="type">bool</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">compareTo</span>(<span class="cls">DateTime</span> other): <span class="type">int</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">until</span>(<span class="cls">DateTime</span> other), <span class="fn">since</span>(<span class="cls">DateTime</span> other): <span class="cls">Duration</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">format</span>(<span class="type">string</span> format): <span class="type">string</span><br>
+}</code></div>
+
+<h2>Making one</h2>
+<table>
+<thead><tr><th>Method</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>DateTime::now(zone)</code></td><td>The current time.</td></tr>
+<tr><td><code>DateTime::of(year, month, day, hour, minute, second, microsecond, zone)</code></td><td>A date and time on the zone's clock. Fields that don't make one, such as April 31 or 24:00, throw <code>InvalidArgumentException</code>; unlike PHP, they don't roll over into the next month or day.</td></tr>
+<tr><td><code>DateTime::parse(text, format, zone)</code></td><td>Reads a date and time; see <a href="#parsing">Parsing</a>.</td></tr>
+<tr><td><code>DateTime::fromTimestamp(seconds, zone)</code>, <code>fromTimestampMicros(microseconds, zone)</code></td><td>The instant that many seconds (or microseconds) after 1970-01-01 00:00:00 UTC: from <code>time()</code>, a database's Unix timestamps, or an API.</td></tr>
+</tbody>
+</table>
+<p>Every <code>zone</code> is a name from the tz database (<code>"Europe/London"</code>, <code>"America/New_York"</code>), <code>"UTC"</code>, or a fixed offset (<code>"+05:30"</code>). A null zone means the default one: <code>date_default_timezone_set</code>'s, or the <code>TZ</code> environment variable's, or the system's (<code>/etc/localtime</code>), or UTC. An unknown name throws <code>InvalidArgumentException</code>.</p>
+
+<h2>Reading it</h2>
+<p><code>year()</code>, <code>month()</code> (1–12), <code>day()</code>, <code>hour()</code> (0–23), <code>minute()</code>, <code>second()</code>, and <code>microsecond()</code> are the time on the zone's clock. <code>dayOfWeek()</code> is 1 for Monday to 7 for Sunday, as ISO 8601 numbers them; <code>dayOfYear()</code> is 1 for January 1. <code>timestamp()</code> and <code>timestampMicros()</code> count from 1970 UTC, whatever the zone. <code>zone()</code> is the zone's name and <code>offset()</code> its offset from UTC at this instant, in seconds (3600 for <code>+01:00</code>, more in summer where clocks go forward).</p>
+<p><code>format(format)</code> takes <a href="function.date.html">date</a>'s letters, plus <code>u</code> for the microseconds, <code>v</code> for the milliseconds, and <code>e</code> for the zone's name. Printing a <code>DateTime</code>, or adding one to a string, gives ISO 8601: <code>2026-12-03T14:30:00+00:00</code>, with the microseconds when there are any. <code>json_encode</code> writes it the same way, as a string.</p>
+
+<h2>Changing it</h2>
+<p>Each of these gives a new <code>DateTime</code> in the same zone. Negative numbers go back.</p>
+<ul>
+<li><code>addDays</code>, <code>addWeeks</code>, <code>addMonths</code>, and <code>addYears</code> step through the calendar and keep the time on the clock, even across a daylight saving change: a day after 12:00 is 12:00 the next day, though that may be 23 or 25 hours later. A month or year later on a day the month doesn't have is its last day: January 31 plus a month is February 28 (or 29), where PHP would give March 3.</li>
+<li><code>addHours</code>, <code>addMinutes</code>, <code>addSeconds</code>, <code>add(duration)</code>, and <code>sub(duration)</code> add elapsed time: exactly that long later, whatever the clock then says.</li>
+<li><code>withZone(zone)</code> shows the same instant on another zone's clock. <code>withDate</code> and <code>withTime</code> change the date or the time of day and keep the other.</li>
+<li><code>startOfDay()</code> and <code>endOfDay()</code> are 00:00:00 and 23:59:59.999999 on the same date; <code>startOfMonth()</code> and <code>endOfMonth()</code> the same for the month.</li>
+</ul>
+```qiq
+DateTime saturday = DateTime::of(2026, 3, 28, 12, 0, zone: "Europe/London");
+print(saturday->addDays(1), saturday->addHours(24));
+print(DateTime::of(2026, 1, 31)->addMonths(1)->format("Y-m-d"), DateTime::of(2024, 2, 29)->addYears(1)->format("Y-m-d"));
+```
+```output
+2026-03-29T12:00:00+01:00 2026-03-29T13:00:00+01:00
+2026-02-28 2025-02-28
+```
+<p>When the clocks go forward, a time they skip, such as 01:30 on that Sunday in London, moves forward with them, to 02:30. When they go back, a time that happens twice is the second of the two (in standard time), as PHP chooses; a calendar step from a time with one of the two offsets keeps that offset.</p>
+
+<h2>Comparing</h2>
+<p><code>isBefore</code>, <code>isAfter</code>, <code>equals</code>, and <code>compareTo</code> (-1, 0, or 1) compare instants, whatever the zones: 10:00 in London is 11:00 in Paris on the same winter day. Use them rather than <code>==</code>, which for objects asks whether they're the same object. <code>a-&gt;until(b)</code> is the <a href="class.duration.html">Duration</a> from <code>a</code> to <code>b</code>, negative when <code>b</code> is earlier, and <code>a-&gt;since(b)</code> the other way round.</p>
+
+<h2 id="parsing">Parsing</h2>
+<p>Without a format, <code>parse</code> reads ISO 8601 and what databases write: <code>2026-11-22</code>, <code>2026-11-22 10:30</code>, <code>2026-11-22T10:30:00.125Z</code>, <code>2026-11-22 10:30:00+01</code> (PostgreSQL), and <code>2026-11-22T10:30:00+01:00</code>. With a format, it takes PHP's <code>DateTime::createFromFormat</code> letters: <code>d</code> <code>j</code> <code>m</code> <code>n</code> <code>M</code> <code>F</code> <code>Y</code> <code>y</code> <code>D</code> <code>l</code> <code>H</code> <code>G</code> <code>h</code> <code>g</code> <code>A</code> <code>a</code> <code>i</code> <code>s</code> <code>u</code> <code>v</code> <code>U</code> <code>O</code> <code>P</code> <code>p</code> <code>e</code> <code>T</code>, and <code>\\</code> before a letter to match it literally. Fields the format doesn't give are those of 1970-01-01 00:00:00, so <code>"Y-m-d"</code> gives midnight. A time with an offset or zone of its own is in it; others are in the <code>zone</code> argument, or the default zone. Text that doesn't fit throws <code>InvalidArgumentException</code>.</p>
+```qiq
+print(DateTime::parse("2026-11-22T10:30:00+01:00"));
+print(DateTime::parse("22/11/2026 3:05 pm", "d/m/Y g:i a", "Europe/Paris"));
+print(DateTime::parse("Sun, 22 Nov 2026 10:30:00 +0000", "D, d M Y H:i:s O")->zone());
+```
+```output
+2026-11-22T10:30:00+01:00
+2026-11-22T15:05:00+01:00
+UTC
+```
+
+<h2>Time zone data</h2>
+<p>Zones come from the system's zoneinfo files, which the system keeps up to date with each government's changes. Where there are none, as in a <code>FROM scratch</code> or plain Alpine container, qiq uses the copy of the tz database built into it (version 2026c, covering 1970 on), which adds about 90 KB to programs that use <code>DateTime</code>.</p>
+
+<h2>In databases</h2>
+<p>A <code>DateTime</code> can be a query's value, and <a href="class.row.html">Row</a>'s <code>getDateTime</code> reads one back; <code>queryAs</code> fills <code>DateTime</code> parameters and properties the same way. A value is sent as its time in the default zone, with the offset for PostgreSQL and SQLite, and without it for MySQL, whose <code>DATETIME</code> has no zone. Read it back in the same default zone and it's the same instant; PostgreSQL's <code>timestamptz</code> keeps the instant in any case.</p>
+"""
+
+DURATION_CLASS = """<h1>The Duration class</h1>
+<p>A length of time, precise to the microsecond, such as how long until a deadline or how long a request took: what <a href="class.datetime.html">DateTime</a>'s <code>until</code> and <code>since</code> give, and what its <code>add</code> and <code>sub</code> take. A day here is always 24 hours; for calendar days, use <code>DateTime</code>'s <code>addDays</code>.</p>
+<h2>Class synopsis</h2>
+<div class="synopsis"><code><span class="kw">final class</span> <span class="cls">Duration</span> {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">static function</span> <span class="fn">ofDays</span>(<span class="type">int</span> n), <span class="fn">ofHours</span>, <span class="fn">ofMinutes</span>, <span class="fn">ofSeconds</span>, <span class="fn">ofMilliseconds</span>, <span class="fn">ofMicroseconds</span>: <span class="cls">Duration</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">totalDays</span>(), <span class="fn">totalHours</span>(), <span class="fn">totalMinutes</span>(), <span class="fn">totalSeconds</span>(), <span class="fn">totalMilliseconds</span>(), <span class="fn">totalMicroseconds</span>(): <span class="type">int</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">plus</span>(<span class="cls">Duration</span> other), <span class="fn">minus</span>(<span class="cls">Duration</span> other), <span class="fn">multipliedBy</span>(<span class="type">int</span> times), <span class="fn">negated</span>(), <span class="fn">abs</span>(): <span class="cls">Duration</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">isNegative</span>(), <span class="fn">isZero</span>(), <span class="fn">equals</span>(<span class="cls">Duration</span> other): <span class="type">bool</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">compareTo</span>(<span class="cls">Duration</span> other): <span class="type">int</span><br>
+}</code></div>
+<p>The <code>total</code> methods give the length in whole units, rounded toward zero: 90 minutes is 1 hour. Printing a <code>Duration</code> gives its units, as in <code>1d 2h 30m 5.5s</code>; <code>json_encode</code> writes ISO 8601's form, as in <code>"P1DT2H30M5.5S"</code>.</p>
+<h2>Example</h2>
+```qiq
+DateTime start = DateTime::of(2026, 11, 22, 9, 0, zone: "UTC");
+DateTime end = DateTime::of(2026, 11, 23, 17, 45, 30, zone: "UTC");
+Duration worked = start->until(end);
+print(worked, worked->totalHours(), worked->totalMinutes());
+Duration timeout = Duration::ofSeconds(30)->multipliedBy(4);
+print(timeout, timeout->compareTo(Duration::ofMinutes(2)), start->add(timeout));
+print(json_encode([worked, Duration::ofMilliseconds(-1500)]));
+```
+```output
+1d 8h 45m 30s 32 1965
+2m 0 2026-11-22T09:02:00+00:00
+["P1DT8H45M30S","-PT1.5S"]
+```
+"""
+
 # Pages for standard library classes: (href, title, summary, html).
 CLASS_PAGES = [
     ("class.file.html", "The File class", "Reading and writing files a line or a chunk at a time, including standard input and output.", FILE_CLASS),
@@ -2777,6 +2902,8 @@ CLASS_PAGES = [
     ("class.responsewriter.html", "The ResponseWriter class", "Builds the HTTP server's response to a request.", RESPONSEWRITER_CLASS),
     ("class.router.html", "The Router class", "Sends each HTTP request to a handler by method and path.", ROUTER_CLASS),
     ("class.socket.html", "The Socket class", "TCP connections, optionally encrypted with TLS, for talking to network services.", SOCKET_CLASS),
+    ("class.datetime.html", "The DateTime class", "An instant in a time zone: calendar arithmetic, zones and daylight saving, parsing, and formatting.", DATETIME_CLASS),
+    ("class.duration.html", "The Duration class", "A length of time, from DateTime's until and since, for its add and sub.", DURATION_CLASS),
     ("class.database.html", "The Database class", "SQL databases (SQLite, PostgreSQL, MySQL, and MariaDB): running statements with values for their placeholders, queries, and transactions.", DATABASE_CLASS),
     ("class.row.html", "The Row class", "One row of a query's result, read by column name with typed getters.", ROW_CLASS),
     ("class.cursor.html", "The Cursor class", "A query's rows, read a batch at a time, for results too big to hold in memory.", CURSOR_CLASS),

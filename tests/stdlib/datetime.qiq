@@ -1,0 +1,58 @@
+// std/time's DateTime and Duration: zones, daylight saving changes, calendar steps, parsing,
+// formatting (the same as PHP's DateTimeImmutable for the cases at the end), and JSON.
+import DateTime, Duration, date_default_timezone_set from "std/time";
+
+date_default_timezone_set("Europe/Berlin");
+DateTime meeting = DateTime::of(2026, 12, 3, 14, 30, zone: "Europe/London");
+print(meeting, meeting->format("D j M Y, H:i T e"), meeting->dayOfWeek(), meeting->dayOfYear());
+print(meeting->withZone("America/New_York"), meeting->withZone("Asia/Kolkata")->format("H:i T"), meeting->withZone("+05:30"));
+DateTime summer = DateTime::of(2026, 7, 1, 9, 0, zone: "Europe/London");
+print(summer, summer->format("T I O P"), summer->offset());
+// DST: the day before the clocks go forward in London (2026-03-29 01:00 UTC).
+DateTime before = DateTime::of(2026, 3, 28, 12, 0, zone: "Europe/London");
+print(before->addDays(1), before->addHours(24), before->until(before->addDays(1)));
+print("gap:", DateTime::of(2026, 3, 29, 1, 30, zone: "Europe/London"));
+print("overlap:", DateTime::of(2026, 10, 25, 1, 30, zone: "Europe/London"), DateTime::of(2026, 10, 25, 1, 30, zone: "Europe/London")->addHours(1));
+print(DateTime::of(2026, 1, 31)->addMonths(1)->format("Y-m-d"), DateTime::of(2024, 1, 31)->addMonths(1)->format("Y-m-d"), DateTime::of(2024, 2, 29)->addYears(1)->format("Y-m-d"), DateTime::of(2026, 3, 31)->addMonths(-1)->format("Y-m-d"));
+print(DateTime::parse("2026-11-22T10:30:00.125+01:00"), DateTime::parse("2026-11-22 10:30:00+00"), DateTime::parse("2026-11-22", zone: "Asia/Tokyo"), DateTime::parse("2026-11-22 10:30:00Z")->zone());
+print(DateTime::parse("22/11/2026 3:05 pm", "d/m/Y g:i a", "Europe/Paris"), DateTime::parse("Sun, 22 Nov 2026 10:30:00 +0100", "D, d M Y H:i:s O"), DateTime::parse("1700000000", "U"));
+print(DateTime::fromTimestamp(0, "UTC"), DateTime::fromTimestamp(-1, "UTC"), DateTime::of(1969, 12, 31, 23, 59, 59, 999999, "UTC")->timestampMicros(), DateTime::of(1600, 2, 29, zone: "UTC")->dayOfWeek());
+DateTime a = DateTime::of(2026, 11, 22, 10, 0, zone: "Europe/London");
+DateTime b = DateTime::of(2026, 11, 22, 11, 0, zone: "Europe/Paris");
+print(a->equals(b), a == b, a->isBefore(b), a->compareTo(b->addSeconds(1)), a->until(DateTime::of(2026, 11, 24, 13, 30, 5, 500000, "Europe/London")));
+print(a->startOfDay(), a->endOfDay(), a->startOfMonth(), a->endOfMonth()->format("Y-m-d H:i:s.u"));
+print(Duration::ofMinutes(90), Duration::ofMinutes(90)->totalHours(), Duration::ofSeconds(-3725), Duration::ofMilliseconds(250), Duration::ofDays(2)->plus(Duration::ofHours(3))->totalHours(), Duration::ofSeconds(0));
+print(DateTime::now("UTC")->year() >= 2026, DateTime::now()->zone(), DateTime::of(2026, 1, 1)->zone());
+foreach (["2026-02-30", "nonsense", "2026-11-22 25:00"] as text) {
+    try { DateTime::parse(text); } catch (InvalidArgumentException e) { print("error:", e->getMessage()); }
+}
+try { DateTime::of(2026, 4, 31); } catch (InvalidArgumentException e) { print("error:", e->getMessage()); }
+try { DateTime::now("Mars/Olympus"); } catch (InvalidArgumentException e) { print("error:", e->getMessage()); }
+try { DateTime::parse("22-11-2026", "d/m/Y"); } catch (InvalidArgumentException e) { print("error:", e->getMessage()); }
+
+// JSON.
+class Booking {
+    public string guest;
+    public DateTime arrives;
+    public Duration stay;
+    public DateTime[] reminders;
+}
+Booking booking = new Booking();
+booking->guest = "Ada";
+booking->arrives = DateTime::of(2026, 12, 3, 14, 30, zone: "Europe/Paris");
+booking->stay = Duration::ofDays(2)->plus(Duration::ofHours(3))->plus(Duration::ofMilliseconds(500));
+booking->reminders = [booking->arrives->addDays(-1), booking->arrives->addHours(-2)->addSeconds(1)->add(Duration::ofMicroseconds(250))];
+print(json_encode(booking));
+print(json_encode([Duration::ofSeconds(0), Duration::ofMinutes(-90), Duration::ofMilliseconds(1)]));
+map[string, DateTime] m = {"x" => DateTime::fromTimestamp(0, "UTC")};
+print(json_encode(m, true));
+
+// The same as PHP 8.3 gives for these.
+string f = "D, d M Y H:i:s T e O P N jS z W o t L y a A g G h B U c r";
+int[][] cases = [[2026,12,3,14,30], [2026,7,1,9,0], [2026,3,29,1,30], [2026,10,25,1,30], [2027,1,1,0,0], [2026,3,8,2,30], [2026,11,1,1,30], [2030,6,15,12,0], [1985,4,20,3,0], [2026,12,31,23,59], [2024,2,29,12,0], [2026,4,1,0,30]];
+string[] zones = ["Europe/London", "Europe/London", "Europe/London", "Europe/London", "Asia/Kolkata", "America/New_York", "America/New_York", "Australia/Sydney", "Europe/Moscow", "Pacific/Auckland", "America/Sao_Paulo", "America/Havana"];
+foreach (cases as i => c) {
+    DateTime t = DateTime::of(c[0], c[1], c[2], c[3], c[4], zone: zones[i]);
+    print(t->format(f));
+    print(t->addMonths(1)->format("c") + " " + t->addDays(1)->format("c") + " " + t->addHours(36)->format("c"));
+}

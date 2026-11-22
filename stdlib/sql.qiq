@@ -19,6 +19,7 @@
 
 import Exception, DatabaseException, InvalidArgumentException from "exceptions";
 import implode, str_contains from "string";
+import DateTime from "date";
 
 extern function __sql_open(string dsn): int;
 extern function __sql_close(int handle): void;
@@ -210,6 +211,30 @@ final class Row {
         }
         int blob = this->result->values[cell];
         return __sql_slice(this->result->blobs, this->result->blobStarts[blob], this->result->blobStarts[blob + 1]);
+    }
+
+    // A date and time column as a DateTime, or null when it's NULL: text
+    // such as a PostgreSQL timestamptz or a MySQL DATETIME (see
+    // DateTime::parse; a time without an offset is in `zone`, or the
+    // default zone), or an INTEGER Unix timestamp.
+    function getDateTime(string column, string zone = null): DateTime {
+        int cell = this->cell(column);
+        int kind = this->result->kinds[cell];
+        if (kind == 5) {
+            return null;
+        }
+        if (kind == 1) {
+            return DateTime::fromTimestamp(this->result->values[cell], zone);
+        }
+        if (kind != 3) {
+            throw this->mismatch(column, kind, "getDateTime");
+        }
+        string text = this->result->texts[this->result->values[cell]];
+        try {
+            return DateTime::parse(text, null, zone);
+        } catch (InvalidArgumentException e) {
+            throw new DatabaseException(sprintf("column '%s' holds \"%s\", which getDateTime can't read as a date and time", column, text));
+        }
     }
 
     // The row as text, for printing and debugging: each column's value

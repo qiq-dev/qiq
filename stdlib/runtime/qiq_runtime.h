@@ -32,6 +32,25 @@ typedef enum {
 // code sees the pending exception right after the call.
 _Noreturn void qiq_throw(QiqExceptionKind kind, const char *message);
 
+// Time zones (tz.c): loaded by name ("Europe/London", "UTC", "+05:30")
+// from the system's zoneinfo files or the embedded copy, and kept.
+typedef struct QiqZone QiqZone;
+// The zone, or NULL for a name that isn't one.
+const QiqZone *qiq_zone_find(const char *name);
+// The zone's UTC offset in seconds at `when` (seconds since 1970 UTC), with
+// whether it's daylight saving time and its abbreviation then ("BST").
+int32_t qiq_zone_offset(const QiqZone *zone, int64_t when, bool *dst, const char **abbreviation);
+const char *qiq_zone_name_of(const QiqZone *zone);
+// The UTC time of a wall clock time in the zone, written as if it were UTC;
+// a time that happens twice is the one with offset `prefer`, or else the
+// second (QIQ_ZONE_LATER).
+#define QIQ_ZONE_LATER INT32_MIN
+int64_t qiq_zone_local_to_utc(const QiqZone *zone, int64_t local, int32_t prefer);
+// The zone DateTime uses when given none.
+const char *qiq_default_zone_name(void);
+// date_default_timezone_set's zone, or NULL (time.c).
+const char *qiq_time_default_zone(void);
+
 // Records a database error's SQLSTATE and number for the DatabaseException
 // about to be raised, whose constructor takes them (core.c).
 void qiq_set_database_error(const char *state, int64_t code);

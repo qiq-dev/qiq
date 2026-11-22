@@ -20,6 +20,9 @@
 #include "qiq_runtime.h"
 
 extern const char *const qiq_class_json[];
+// DateTime's formatter (time.c), or NULL when the program has no DateTimes;
+// defined by the compiler.
+extern char *(*const qiq_json_datetime_format)(const char *format, int64_t micros, const char *zone);
 extern const char *qiq_class_names[];
 
 // From map.c and memory.c.
@@ -157,6 +160,57 @@ typedef struct {
 } QiqEncoder;
 
 static void qiq_encode_value(QiqEncoder *encoder, const char *descriptor, uint64_t payload);
+static void qiq_encode_string(QiqBuffer *out, const char *text);
+
+// std/time's values, as ISO 8601 text: a DateTime as
+// "2026-11-22T10:30:00+01:00" (with the microseconds when it has any), a
+// Duration as "PT1H30M" (or "P2DT3H", "-PT0.5S").
+static void qiq_encode_time_value(QiqEncoder *encoder, const char *json, const int64_t *slots) {
+    char *end;
+    if (json[1] == 'T') {
+        int64_t micros = slots[strtol(json + 2, &end, 10)];
+        const char *zone = (const char *)(uintptr_t)slots[strtol(end + 1, NULL, 10)];
+        if (qiq_json_datetime_format == NULL) {
+            encoder->error = "internal error: DateTime's formatter isn't linked in";
+            return;
+        }
+        int64_t micro = micros % 1000000;
+        char *text = qiq_json_datetime_format(micro != 0 ? "Y-m-d\\TH:i:s.uP" : "Y-m-d\\TH:i:sP", micros, zone);
+        if (text == NULL) {
+            encoder->error = "a DateTime couldn't be written";
+            return;
+        }
+        qiq_encode_string(&encoder->out, text);
+        qiq_release(text);
+        return;
+    }
+    int64_t micros = slots[strtol(json + 2, NULL, 10)];
+    char text[96];
+    size_t length = 0;
+    uint64_t left = micros < 0 ? (uint64_t)-(micros + 1) + 1 : (uint64_t)micros;
+    if (micros < 0) text[length++] = '-';
+    text[length++] = 'P';
+    uint64_t days = left / 86400000000ULL, rest = left % 86400000000ULL;
+    if (days > 0) length += (size_t)snprintf(text + length, sizeof text - length, "%lluD", (unsigned long long)days);
+    if (rest > 0 || days == 0) {
+        text[length++] = 'T';
+        uint64_t hours = rest / 3600000000ULL, minutes = rest / 60000000ULL % 60, seconds = rest / 1000000ULL % 60, fraction = rest % 1000000ULL;
+        if (hours > 0) length += (size_t)snprintf(text + length, sizeof text - length, "%lluH", (unsigned long long)hours);
+        if (minutes > 0) length += (size_t)snprintf(text + length, sizeof text - length, "%lluM", (unsigned long long)minutes);
+        if (seconds > 0 || fraction > 0 || (hours == 0 && minutes == 0)) {
+            length += (size_t)snprintf(text + length, sizeof text - length, "%llu", (unsigned long long)seconds);
+            if (fraction > 0) {
+                char digits[8];
+                snprintf(digits, sizeof digits, "%06llu", (unsigned long long)fraction);
+                for (int last = 5; last > 0 && digits[last] == '0'; last--) digits[last] = '\0';
+                length += (size_t)snprintf(text + length, sizeof text - length, ".%s", digits);
+            }
+            text[length++] = 'S';
+        }
+    }
+    text[length] = '\0';
+    qiq_encode_string(&encoder->out, text);
+}
 
 static void qiq_encode_newline(QiqEncoder *encoder) {
     if (!encoder->pretty) return;
@@ -387,6 +441,11 @@ static void qiq_encode_value(QiqEncoder *encoder, const char *descriptor, uint64
     default: {
         // An object: its own class's public properties.
         const int64_t *slots = (const int64_t *)(uintptr_t)payload;
+        const char *json = qiq_class_json[slots[0]];
+        if (json[0] == '!') {
+            qiq_encode_time_value(encoder, json, slots);
+            return;
+        }
         if (!qiq_encode_open(encoder)) return;
         QiqObjectEncoding object = {encoder, slots, true};
         size_t start = encoder->out.length;

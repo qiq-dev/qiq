@@ -1099,16 +1099,24 @@ static void my_send_execute(QiqMysql *my, MyCached *statement, const char *calle
         my_put_byte(my, 1); // types follow
         for (size_t i = 0; i < given; i++) {
             QiqSqlValue value = qiq_sql_pending[i];
-            bool null = value.type == 'n' || ((value.type == 's' || value.type == 'a') && value.payload == 0);
+            bool null = value.type == 'n' || ((value.type == 's' || value.type == 'a' || value.type == 'T') && value.payload == 0);
             if (null) my->out[bitmap_at + i / 8] |= (unsigned char)(1 << (i % 8));
-            unsigned char type = null ? MY_NULL : value.type == 'd' ? MY_DOUBLE : value.type == 's' ? MY_VAR_STRING : value.type == 'a' ? MY_BLOB : MY_LONGLONG;
+            unsigned char type = null ? MY_NULL : value.type == 'd' ? MY_DOUBLE : value.type == 's' || value.type == 'T' ? MY_VAR_STRING : value.type == 'a' ? MY_BLOB : MY_LONGLONG;
             my_put_byte(my, type);
             my_put_byte(my, 0);
         }
         for (size_t i = 0; i < given; i++) {
             QiqSqlValue value = qiq_sql_pending[i];
-            if (value.type == 'n' || ((value.type == 's' || value.type == 'a') && value.payload == 0)) continue;
-            if (value.type == 's') {
+            if (value.type == 'n' || ((value.type == 's' || value.type == 'a' || value.type == 'T') && value.payload == 0)) continue;
+            if (value.type == 'T') {
+                // The clock time without its offset ("+01:00"), which MariaDB
+                // and older MySQL reject in a DATETIME.
+                const char *text = (const char *)(uintptr_t)value.payload;
+                size_t length = strlen(text);
+                if (length > 6) length -= 6;
+                my_put_lenenc(my, length);
+                my_put(my, text, length);
+            } else if (value.type == 's') {
                 const char *text = (const char *)(uintptr_t)value.payload;
                 size_t length = strlen(text);
                 my_put_lenenc(my, length);

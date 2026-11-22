@@ -12,7 +12,10 @@
 enum { QIQ_SQL_INT = 1, QIQ_SQL_DOUBLE = 2, QIQ_SQL_TEXT = 3, QIQ_SQL_BYTES = 4, QIQ_SQL_NULL = 5, QIQ_SQL_DECIMAL = 6 };
 
 typedef struct {
-    char type;                // 'i' int, 'd' double, 'b' bool, 'y' byte, 's' string, 'a' byte[], 'n' null
+    // 'i' int, 'd' double, 'b' bool, 'y' byte, 's' string, 'a' byte[], 'n'
+    // null, or 'T' a DateTime, as text: "2026-11-22 10:30:00.125+01:00"
+    // (its clock time and offset, see DateTime::__sqlText)
+    char type;
     uint64_t payload;         // the value's bits; a pointer for 's' and 'a' (NULL for SQL NULL)
 } QiqSqlValue;
 
