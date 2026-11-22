@@ -69,3 +69,35 @@ attempt(db, "insert into nope values (?, ?, ?, ?)", "e", "E", 1, 0);
 DatabaseException mine = new DatabaseException("my own", 7);
 print(mine->getSqlState(), mine->getCode());
 try { db->query("select 1 where 1 = ?"); } catch (DatabaseException e) { print(e->getSqlState(), e->getMessage()); }
+
+// Rows read into objects: nextAs and fetchAs.
+class Event {
+    function __construct(public int id, public string kind, public string note = "-") {}
+}
+class Tally { public string kind; public int n; }
+Database asDb = Database::open("sqlite::memory:");
+asDb->execute("create table events (id integer primary key, kind text, note text)");
+asDb->transaction(function(): void {
+    foreach (range(10) as i) {
+        string kind = "view";
+        if (i % 3 == 0) { kind = "click"; }
+        asDb->execute("insert into events (kind) values (?)", kind);
+    }
+});
+Cursor eventRows = asDb->cursor("select * from events where kind = ? order by id", "click");
+Event event = eventRows->nextAs();
+while (event != null) {
+    print(event->id, event->kind, event->note);
+    event = eventRows->nextAs();
+}
+Cursor batches = asDb->cursor("select id, kind from events order by id");
+Event[] batch = batches->fetchAs(4);
+while (len(batch) > 0) {
+    print("batch", len(batch), batch[0]->id);
+    batch = batches->fetchAs(4);
+}
+Cursor tallies = asDb->cursor("select kind, count(*) as n from events group by kind order by kind");
+Tally[] counts = tallies->fetchAs(10);
+foreach (counts as tally) { print(tally->kind, tally->n); }
+function first(Cursor c): Event { return c->nextAs(); }
+print(first(asDb->cursor("select * from events where id = ?", 2))->kind);

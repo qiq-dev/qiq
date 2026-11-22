@@ -6433,10 +6433,11 @@ impl Emitter {
         }))
     }
 
-    /// `db->queryAs(sql, ...)` and `db->queryOneAs(sql, ...)`: query (or
-    /// queryOne) with the same arguments, then each row read into an object
-    /// of the class the result is used as (`User[] users = ...`), by a
-    /// function made for the class (see row_reader).
+    /// `db->queryAs(sql, ...)` and `db->queryOneAs(sql, ...)`, and a cursor's
+    /// `fetchAs(count)` and `nextAs()`: query, queryOne, fetch, or next with
+    /// the same arguments, then each row read into an object of the class
+    /// the result is used as (`User[] users = ...`), by a function made for
+    /// the class (see row_reader).
     fn emit_query_as(
         &mut self,
         object: Value,
@@ -6446,8 +6447,13 @@ impl Emitter {
         variables: &HashMap<String, Value>,
         body: &mut String,
     ) -> Result<Value, String> {
-        let many = method_name == "queryAs";
-        let example = if many { "User[] users = db->queryAs(sql, ...);" } else { "User user = db->queryOneAs(sql, ...);" };
+        // The method that gives the Row or Row[], and how it's used.
+        let (plain, many, example) = match method_name {
+            "queryAs" => ("query", true, "User[] users = db->queryAs(sql, ...);"),
+            "queryOneAs" => ("queryOne", false, "User user = db->queryOneAs(sql, ...);"),
+            "fetchAs" => ("fetch", true, "User[] users = cursor->fetchAs(100);"),
+            _ => ("next", false, "User user = cursor->nextAs();"),
+        };
         let class_id = match (many, expected) {
             (true, Some(value_type)) => match self.element_of(value_type) {
                 Some(ValueType::Class(class_id)) => Some(class_id),
@@ -6479,11 +6485,7 @@ impl Emitter {
         let symbol = self.row_reader(class_id, many, method_name)?;
         let mut scope = variables.clone();
         scope.insert("#query.database".to_string(), Value { slot: None, ..object });
-        let query = Expr::MethodCall(
-            Box::new(Expr::Variable("#query.database".to_string())),
-            if many { "query" } else { "queryOne" }.to_string(),
-            arguments.to_vec(),
-        );
+        let query = Expr::MethodCall(Box::new(Expr::Variable("#query.database".to_string())), plain.to_string(), arguments.to_vec());
         let rows = self.emit_expression(&query, &scope, body)?;
         let result = self.new_register();
         body.push_str(&format!("  {result} = call ptr @{symbol}(ptr {})\n", rows.operand));
@@ -7753,7 +7755,7 @@ impl Emitter {
             Expr::MapLiteral(entries) => self.emit_map_literal(entries, expected, variables, body),
             Expr::Closure(closure) => self.emit_closure(closure, expected, variables, body),
             // Database::queryAs reads rows into the type its result is used as.
-            Expr::MethodCall(_, name, _) if matches!(name.as_str(), "queryAs" | "queryOneAs") => {
+            Expr::MethodCall(_, name, _) if matches!(name.as_str(), "queryAs" | "queryOneAs" | "nextAs" | "fetchAs") => {
                 self.call_expectation = expected;
                 let result = self.emit_expression(expression, variables, body);
                 self.call_expectation = None;
@@ -8712,7 +8714,10 @@ impl Emitter {
                     _ => return Err("method call requires a class instance".to_string()),
                 };
                 self.emit_null_check(&object, object_expression, &format!("cannot call method '{method_name}' on null"), body);
-                if matches!(method_name.as_str(), "queryAs" | "queryOneAs") && self.stdlib_class("Database") == Some(class_id) {
+                // Rows read into the class the result is used as.
+                if (matches!(method_name.as_str(), "queryAs" | "queryOneAs") && self.stdlib_class("Database") == Some(class_id))
+                    || (matches!(method_name.as_str(), "nextAs" | "fetchAs") && self.stdlib_class("Cursor") == Some(class_id))
+                {
                     return self.emit_query_as(object, method_name, arguments, expectation, variables, body);
                 }
                 let found = self.find_method(class_id, method_name);
@@ -11999,14 +12004,21 @@ mod tests {
         // One reader per class and shape, shared by both array calls.
         assert_eq!(ir.matches("define ptr @qiq.rows_to.").count(), 1, "{ir}");
         assert_eq!(ir.matches("define ptr @qiq.row_to.").count(), 1, "{ir}");
+        // A cursor's nextAs and fetchAs use the same readers.
+        let cursor = compile_source("import Database, Cursor from \"std/sql\"; class U { function __construct(public int id) {} } \
+            Database db = Database::open(\"sqlite::memory:\"); Cursor c = db->cursor(\"select 1 as id\"); U one = c->nextAs(); U[] some = c->fetchAs(2); U again = db->queryOneAs(\"select 1 as id\");").unwrap();
+        assert_eq!(cursor.matches("define ptr @qiq.row_to.").count(), 1, "{cursor}");
+        assert_eq!(cursor.matches("define ptr @qiq.rows_to.").count(), 1, "{cursor}");
         assert!(main_ir(&ir).contains("call void @qiq_bind_values(ptr"), "{ir}");
         for (source, error) in [
             ("foreach (db->queryAs(\"select 1\") as u) {}", "queryAs needs to know the class to read rows into"),
             ("int[] n = db->queryAs(\"select 1\");", "queryAs reads rows into an array of objects, such as User[], not int[]"),
             ("class A { function __construct(string[] tags) {} } A[] a = db->queryAs(\"select 1\");", "queryAs can't read the constructor's parameter 'tags' of A, a string[], from a column"),
             ("abstract class B {} B b = db->queryOneAs(\"select 1\");", "queryOneAs can't create B, which is abstract"),
+            ("Cursor c = db->cursor(\"select 1\"); foreach (c->fetchAs(5) as x) {}", "fetchAs needs to know the class to read rows into"),
+            ("Cursor c = db->cursor(\"select 1\"); int n = c->nextAs();", "nextAs reads rows into an object, not int"),
         ] {
-            let source = format!("import Database from \"std/sql\"; Database db = Database::open(\"x\"); {source}");
+            let source = format!("import Database, Cursor from \"std/sql\"; Database db = Database::open(\"x\"); {source}");
             let message = compile_source(&source).unwrap_err();
             assert!(message.contains(error), "{source}: {message}");
         }

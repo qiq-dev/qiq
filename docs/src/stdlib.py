@@ -2452,6 +2452,7 @@ Lin 1
 <li>When the class has no constructor, its public properties are set the same way, by name, after the object is made. Properties with defaults keep them when their column is missing or NULL.</li>
 <li>Parameters and properties can be <code>int</code>, <code>double</code>, <code>bool</code>, <code>string</code>, or <code>byte[]</code>; others are a compile error. Name columns to match, with <code>AS</code> where they differ: <code>select created_at as createdAt</code>. Columns that nothing reads are ignored.</li>
 <li>The constructor must be public, and the class concrete: not an interface or abstract.</li>
+<li>For results too big to hold at once, a <a href="class.cursor.html">Cursor</a>'s <code>nextAs</code> and <code>fetchAs</code> read rows into objects the same way, a batch at a time.</li>
 </ul>
 
 <h2>Transactions</h2>
@@ -2682,6 +2683,8 @@ CURSOR_CLASS = """<h1>The Cursor class</h1>
 <div class="synopsis"><code><span class="kw">final class</span> <span class="cls">Cursor</span> {<br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">next</span>(): <span class="cls">Row</span><br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">fetch</span>(<span class="type">int</span> count): <span class="cls">Row</span>[]<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">nextAs</span>(): <span class="cls">T</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">fetchAs</span>(<span class="type">int</span> count): <span class="cls">T</span>[]<br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">close</span>(): <span class="type">void</span><br>
 }</code></div>
 <table>
@@ -2689,6 +2692,7 @@ CURSOR_CLASS = """<h1>The Cursor class</h1>
 <tbody>
 <tr><td><code>next()</code></td><td>The next <a href="class.row.html">Row</a>, or <code>null</code> after the last. It reads ahead 256 rows at a time, so each call is quick.</td></tr>
 <tr><td><code>fetch(count)</code></td><td>Up to <code>count</code> more rows: fewer only at the end, and an empty array after it. Throws <code>InvalidArgumentException</code> for a count below 1.</td></tr>
+<tr><td><code>nextAs()</code>, <code>fetchAs(count)</code></td><td>Like <code>next</code> and <code>fetch</code>, with each row read into an object of the class the result is used as, as <a href="class.database.html#objects">queryAs</a> does: <code>Event event = rows-&gt;nextAs();</code>, <code>Event[] batch = rows-&gt;fetchAs(500);</code>.</td></tr>
 <tr><td><code>close()</code></td><td>Stops reading; the rest of the rows are skipped. A cursor closes itself after its last row, and closing twice does nothing.</td></tr>
 </tbody>
 </table>
@@ -2731,6 +2735,29 @@ clicks: 334
 batch of 400 starting at 1
 batch of 400 starting at 401
 ```
+<h2>Reading rows into objects</h2>
+<p><code>nextAs</code> and <code>fetchAs</code> read rows into your own class, by constructor parameter or public property name, as <a href="class.database.html#objects">queryAs</a> does, so a large result can be streamed as objects. Like <code>queryAs</code>, they take the class from where the result goes, so use them in a declaration, an assignment, an argument, or a <code>return</code>.</p>
+```qiq
+class Event {
+    function __construct(public int id, public string kind, public string note = "-") {}
+}
+
+Database db = Database::open("sqlite::memory:");
+db->execute("create table events (id integer primary key, kind text, note text)");
+db->execute("insert into events (kind, note) values (?, ?), (?, ?), (?, ?)", "click", "home", "view", null, "click", null);
+
+Cursor rows = db->cursor("select * from events where kind = ? order by id", "click");
+Event event = rows->nextAs();
+while (event != null) {
+    print(event->id, event->kind, event->note);
+    event = rows->nextAs();
+}
+```
+```output
+1 click home
+3 click -
+```
+
 <h2>Cursors and the connection</h2>
 <p>With SQLite, a cursor has its own statement, so the database can run other statements, and other cursors, while it's open. With PostgreSQL and MySQL, the rows come from the connection as they're read, as with libpq's single-row mode and unbuffered MySQL queries, so that database can't run anything else until the cursor has read its last row or been closed: another statement throws <code>DatabaseException</code>. Closing a network cursor early still reads the rest of its rows from the server (and drops them); to stop sooner, ask for fewer rows with <code>LIMIT</code>. Open a second <code>Database</code> for statements to run while reading.</p>
 <p>A cursor that's no longer used isn't closed until the program ends, or its database is closed, so close one you stop reading early, in a <code>finally</code> block when the reading can throw.</p>
