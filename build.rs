@@ -60,6 +60,7 @@ const RUNTIME_SOURCES: &[&str] = &[
     "crypto.c",
     "sql.c",
     "postgres.c",
+    "mysql.c",
 ];
 /// LLVM components qiq uses: reading IR, linking modules, optimizing, and
 /// emitting x86-64 object code (plus what inkwell references).

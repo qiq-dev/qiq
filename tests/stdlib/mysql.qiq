@@ -1,0 +1,68 @@
+// std/sql with MySQL or MariaDB: run with QIQ_TEST_MYSQL=mysql://user:password@host/database
+// (it creates and drops a table named users). Types, placeholders, errors, transactions, queryAs.
+import Database, Row from "std/sql";
+import getenv, exit from "std/os";
+
+string url = getenv("QIQ_TEST_MYSQL");
+if (url == null) {
+    print("skipped: set QIQ_TEST_MYSQL to a mysql:// URL of a database the test may create tables in");
+    exit(0);
+}
+Database db = Database::open(url);
+db->executeScript("drop table if exists users; create table users (id int auto_increment primary key, name varchar(100) not null, email varchar(100) unique, age int, score double, active boolean, avatar blob, balance decimal(10, 2), born date, seen datetime(3), f float, big bigint unsigned, nick varbinary(10));");
+byte[] avatar = [1, 2, 255];
+int changed = db->execute("insert into users (name, email, age, score, active, avatar, balance, born, seen, f, big, nick) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", "Ada", "ada@example.com", 36, 9.5, true, avatar, "1234.50", "1815-12-10", "2026-11-22 10:30:00.125", 3.14, "18446744073709551615", "ada");
+print("inserted", changed, db->lastInsertId());
+string missing = null;
+db->execute("insert into users (name, email, age, score, active) values (?, ?, ?, ?, ?)", "Lin", missing, 41, 7.25, false);
+db->execute("insert into users (name, age) values (?, ?)", "Bob", null);
+print("last id", db->lastInsertId());
+foreach (db->query("select * from users where age > ? or age is null order by id", 30) as row) {
+    print(row->getInt("id"), row->getString("name"), row->getString("email") ?? "-", row->getIntOr("age", -1), row->getDoubleOr("score", 0.0), row->getBoolOr("active", false), row->isNull("avatar"));
+}
+Row ada = db->queryOne("select avatar, balance, born, seen, f, big, nick, count(*) over () as n, sum(age) over () as total, avg(age) over () as mean, cast('12:30:05' as time) as t, json_object('a', 1) as j from users where name = ?", "Ada");
+print(ada->getBytes("avatar"), ada->getString("balance"), ada->getDouble("balance"), ada->getInt("n"), ada->getInt("total"), ada->getDouble("mean"));
+print(ada->toMap());
+print(ada->getBytes("nick"));
+print(db->queryOne("select * from users where name = ?", "Nobody") == null);
+print(db->execute("update users set age = age + 1 where age is not null"));
+print(db->execute("update users set age = age where id = 1"), "(matched, not changed)");
+print(db->execute("select 1"));
+print(db->query("insert into users (name) values ('viaquery')"));
+print(db->queryOne("select 'it''s ? not a placeholder' as a, ? as c -- and ? here", "yes")->toMap());
+
+try { db->execute("insert into users (name, email) values (?, ?)", "Ada2", "ada@example.com"); } catch (DatabaseException e) { print("error:", substr(e->getMessage(), 0, 38)); }
+try { db->query("select * from users where id = ?"); } catch (DatabaseException e) { print("error:", e->getMessage()); }
+try { db->query("select * from nope"); } catch (DatabaseException e) { print("error:", e->getMessage()); }
+try { db->execute("delete from users; delete from users"); } catch (DatabaseException e) { print("error:", e->getMessage()); }
+try { db->executeScript("select 1; select * from nope; select 2"); } catch (DatabaseException e) { print("script error:", e->getMessage()); }
+print("still works:", db->queryOne("select 5 as five")->getInt("five"));
+
+db->transaction(function(): void {
+    db->execute("insert into users (name) values (?)", "Tx1");
+});
+try {
+    db->transaction(function(): void {
+        db->execute("insert into users (name) values (?)", "Tx2");
+        throw new RuntimeException("boom");
+    });
+} catch (RuntimeException e) { print("rolled back:", e->getMessage(), db->inTransaction()); }
+print(db->queryOne("select count(*) as n from users where name like 'Tx%'")->getInt("n"));
+db->begin();
+print("in tx:", db->inTransaction());
+db->rollback();
+print("after rollback:", db->inTransaction());
+
+class User { function __construct(public int id, public string name, public int age = 0) {} }
+User[] users = db->queryAs("select id, name, age from users order by id limit ?", 2);
+print(users[0]->name, users[1]->age);
+db->execute("set @greeting = 'hi'");
+print(db->queryOne("select @greeting as g")->getString("g"));
+foreach (range(20) as i) { db->queryOne("select ? + ? as s", i, 1); }
+print("cache ok:", db->queryOne("select ? * 2 as d", 21)->getInt("d"));
+string big = "";
+foreach (range(20000) as i) { big += "0123456789"; }
+db->execute("create temporary table big (t longtext)");
+db->execute("insert into big values (?)", big);
+print("big:", len(db->queryOne("select t from big")->getString("t")));
+db->close();

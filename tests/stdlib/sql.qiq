@@ -43,4 +43,4 @@ print(db->queryOne("select count(*) as n from users where name like 'Tx%'")->get
 db->close();
 db->close();
 try { db->query("select 1"); } catch (DatabaseException e) { print("error:", e->getMessage()); }
-try { Database::open("postgres://x"); } catch (InvalidArgumentException e) { print("error:", e->getMessage()); }
+try { Database::open("oracle://x"); } catch (InvalidArgumentException e) { print("error:", e->getMessage()); }

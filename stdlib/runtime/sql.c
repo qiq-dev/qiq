@@ -26,6 +26,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/random.h>
 
 #include "qiq_runtime.h"
 #include "sql_driver.h"
@@ -44,8 +45,9 @@ typedef struct {
 } QiqSqlCached;
 
 typedef struct {
-    sqlite3 *db;              // NULL for PostgreSQL, and when the slot is free
-    QiqPostgres *pg;          // a PostgreSQL connection, or NULL
+    sqlite3 *db;              // NULL for other databases, and when the slot is free
+    const QiqSqlDriver *driver; // for a network database, its driver
+    void *pg;                 // and its connection (NULL otherwise)
     char *filename;           // to reopen it after a fork
     char *pragmas;            // the PRAGMA statements it ran, to run again then
     uint32_t generation;
@@ -164,6 +166,125 @@ int64_t qiq_sql_first_int(void) {
     return qiq_sql_cells > 0 && qiq_sql_kinds[0] == QIQ_SQL_INT ? qiq_sql_values[0] : 0;
 }
 
+// ---------------------------------------------------------------------------
+// For the network drivers: URLs and random bytes.
+
+static int qiq_sql_hex(char c) {
+    return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+}
+
+// A percent-decoded copy of `length` bytes.
+static char *qiq_sql_decode(const char *text, size_t length) {
+    char *out = malloc(length + 1);
+    if (out == NULL) qiq_fatal("out of memory");
+    size_t o = 0;
+    for (size_t i = 0; i < length; i++) {
+        if (text[i] == '%' && i + 2 < length && qiq_sql_hex(text[i + 1]) >= 0 && qiq_sql_hex(text[i + 2]) >= 0) {
+            out[o++] = (char)(qiq_sql_hex(text[i + 1]) * 16 + qiq_sql_hex(text[i + 2]));
+            i += 2;
+        } else {
+            out[o++] = text[i];
+        }
+    }
+    out[o] = '\0';
+    return out;
+}
+
+void qiq_sql_free_url(QiqSqlUrl *url) {
+    free(url->user);
+    free(url->password);
+    free(url->host);
+    free(url->database);
+    for (size_t i = 0; i < url->option_count; i++) free(url->options[i]);
+    free(url->options);
+    memset(url, 0, sizeof *url);
+}
+
+bool qiq_sql_parse_url(const char *text, QiqSqlUrl *url) {
+    memset(url, 0, sizeof *url);
+    const char *scheme_end = strstr(text, "://");
+    if (scheme_end == NULL) return false;
+    const char *rest = scheme_end + 3;
+    const char *end = rest + strcspn(rest, "?");
+    const char *slash = memchr(rest, '/', (size_t)(end - rest));
+    const char *authority_end = slash != NULL ? slash : end;
+    // The last @ ends the user and password (a password may contain one).
+    const char *at = NULL;
+    for (const char *c = rest; c < authority_end; c++) {
+        if (*c == '@') at = c;
+    }
+    const char *host = rest;
+    if (at != NULL) {
+        const char *colon = memchr(rest, ':', (size_t)(at - rest));
+        url->user = qiq_sql_decode(rest, (size_t)((colon != NULL ? colon : at) - rest));
+        if (colon != NULL) url->password = qiq_sql_decode(colon + 1, (size_t)(at - colon - 1));
+        host = at + 1;
+    }
+    const char *port = NULL;
+    if (*host == '[') {
+        const char *close = memchr(host, ']', (size_t)(authority_end - host));
+        if (close == NULL) goto invalid;
+        url->host = qiq_sql_decode(host + 1, (size_t)(close - host - 1));
+        if (close + 1 < authority_end) {
+            if (close[1] != ':') goto invalid;
+            port = close + 2;
+        }
+    } else {
+        const char *colon = memchr(host, ':', (size_t)(authority_end - host));
+        url->host = qiq_sql_decode(host, (size_t)((colon != NULL ? colon : authority_end) - host));
+        if (colon != NULL) port = colon + 1;
+    }
+    if (port != NULL) {
+        char *after;
+        long number = strtol(port, &after, 10);
+        if (after != authority_end || number < 1 || number > 65535) goto invalid;
+        url->port = number;
+    }
+    if (url->host[0] == '\0') {
+        free(url->host);
+        url->host = NULL;
+    }
+    if (url->user != NULL && url->user[0] == '\0') {
+        free(url->user);
+        url->user = NULL;
+    }
+    if (slash != NULL && slash + 1 < end) url->database = qiq_sql_decode(slash + 1, (size_t)(end - slash - 1));
+    for (const char *option = *end == '?' ? end + 1 : end; *option != '\0';) {
+        size_t length = strcspn(option, "&");
+        if (memchr(option, '=', length) == NULL) goto invalid;
+        char **grown = realloc(url->options, (url->option_count + 1) * sizeof(char *));
+        if (grown == NULL) qiq_fatal("out of memory");
+        url->options = grown;
+        url->options[url->option_count++] = qiq_sql_decode(option, length);
+        option += length + (option[length] == '&' ? 1 : 0);
+    }
+    return true;
+invalid:
+    qiq_sql_free_url(url);
+    return false;
+}
+
+bool qiq_sql_is_local_host(const char *host) {
+    return host == NULL || strcmp(host, "localhost") == 0 || strncmp(host, "127.", 4) == 0 || strcmp(host, "::1") == 0;
+}
+
+bool qiq_sql_connection_options(const QiqSqlUrl *url, const char *host, bool *tls, int64_t *timeout) {
+    *tls = !qiq_sql_is_local_host(host);
+    *timeout = 10;
+    for (size_t i = 0; i < url->option_count; i++) {
+        const char *option = url->options[i];
+        if (strcmp(option, "sslmode=disable") == 0) *tls = false;
+        else if (strcmp(option, "sslmode=require") == 0 || strcmp(option, "sslmode=verify-full") == 0) *tls = true;
+        else if (strncmp(option, "connect_timeout=", 16) == 0 && strtol(option + 16, NULL, 10) >= 1) *timeout = strtol(option + 16, NULL, 10);
+        else return false;
+    }
+    return true;
+}
+
+void qiq_sql_random(unsigned char *out, size_t count) {
+    if (getrandom(out, count, 0) != (ssize_t)count) qiq_throw(QIQ_DATABASE_EXCEPTION, "no random numbers from the system");
+}
+
 bool qiq_sql_is_setting(const char *sql, size_t length, const char *keyword) {
     size_t at = 0;
     while (at < length && (sql[at] == ' ' || sql[at] == '\t' || sql[at] == '\n' || sql[at] == '\r')) at++;
@@ -227,18 +348,23 @@ QIQ_GUARDED(int64_t, qiq_stdlib___sql_open, 0, (const char *dsn), (dsn)) {
         registered = true;
     }
     sqlite3 *db = NULL;
-    QiqPostgres *pg = NULL;
+    void *pg = NULL;
+    const QiqSqlDriver *driver = NULL;
     const char *filename = NULL;
     if (strncmp(dsn, "postgres://", 11) == 0 || strncmp(dsn, "postgresql://", 13) == 0) {
-        pg = qiq_pg_open(dsn);
+        driver = &qiq_postgres_driver;
+    } else if (strncmp(dsn, "mysql://", 8) == 0 || strncmp(dsn, "mariadb://", 10) == 0) {
+        driver = &qiq_mysql_driver;
+    }
+    if (driver != NULL) {
+        pg = driver->open(dsn);
     } else if (strncmp(dsn, "sqlite:", 7) == 0) {
         filename = dsn + 7;
         if (*filename == '\0') qiq_throw(QIQ_INVALID_ARGUMENT_EXCEPTION, "Database::open: \"sqlite:\" needs a file name, or :memory:");
         db = qiq_sql_connect(filename);
     } else {
-        if (strncmp(dsn, "mysql:", 6) == 0) qiq_throw(QIQ_INVALID_ARGUMENT_EXCEPTION, "Database::open: MySQL isn't supported yet");
         qiq_throw(QIQ_INVALID_ARGUMENT_EXCEPTION,
-                  "Database::open: expected a database such as \"sqlite:path/to/file.db\", \"sqlite::memory:\", or \"postgres://user:password@host/database\"");
+                  "Database::open: expected a database such as \"sqlite:path/to/file.db\", \"sqlite::memory:\", \"postgres://user:password@host/database\", or \"mysql://user:password@host/database\"");
     }
     size_t slot = 0;
     while (slot < qiq_sql_connection_count && (qiq_sql_connections[slot].db != NULL || qiq_sql_connections[slot].pg != NULL)) slot++;
@@ -254,6 +380,7 @@ QIQ_GUARDED(int64_t, qiq_stdlib___sql_open, 0, (const char *dsn), (dsn)) {
     memset(connection, 0, sizeof *connection);
     connection->generation = generation;
     connection->db = db;
+    connection->driver = driver;
     connection->pg = pg;
     if (filename != NULL) {
         connection->filename = strdup(filename);
@@ -315,7 +442,7 @@ QIQ_GUARDED_VOID(qiq_stdlib___sql_close, (int64_t handle), (handle)) {
     QiqSqlConnection *connection = qiq_sql_find(handle);
     if (connection == NULL) return;
     if (connection->pg != NULL) {
-        qiq_pg_close(connection->pg);
+        connection->driver->close(connection->pg);
     } else if (connection->fork_count == qiq_sql_forks) {
         for (int index = 0; index < QIQ_SQL_CACHE; index++) {
             if (connection->cache[index].sql == NULL) continue;
@@ -424,7 +551,7 @@ QIQ_GUARDED(int64_t, qiq_stdlib___sql_run, 0, (int64_t handle, const char *sql, 
         qiq_sql_drop_pending();
         qiq_throw(QIQ_DATABASE_EXCEPTION, "the database is closed");
     }
-    if (connection->pg != NULL) return qiq_pg_run(connection->pg, sql, mode, caller);
+    if (connection->pg != NULL) return connection->driver->run(connection->pg, sql, mode, caller);
     sqlite3_stmt *statement;
     {
         // Prepare errors throw from inside; the pending values go first.
@@ -485,7 +612,7 @@ QIQ_GUARDED(int64_t, qiq_stdlib___sql_run, 0, (int64_t handle, const char *sql, 
 QIQ_GUARDED_VOID(qiq_stdlib___sql_execute_script, (int64_t handle, const char *sql), (handle, sql)) {
     QiqSqlConnection *connection = qiq_sql_connection(handle);
     if (connection->pg != NULL) {
-        qiq_pg_script(connection->pg, sql);
+        connection->driver->script(connection->pg, sql);
         return;
     }
     const char *next = sql;
@@ -510,22 +637,13 @@ QIQ_GUARDED_VOID(qiq_stdlib___sql_execute_script, (int64_t handle, const char *s
 
 QIQ_GUARDED(int64_t, qiq_stdlib___sql_last_insert_id, 0, (int64_t handle), (handle)) {
     QiqSqlConnection *connection = qiq_sql_connection(handle);
-    if (connection->pg != NULL) {
-        // PostgreSQL has no rowid: the value the session's last sequence
-        // (such as a serial or identity column's) gave, as PDO does.
-        qiq_sql_drop_pending();
-        qiq_sql_clear_results();
-        qiq_pg_run(connection->pg, "select lastval()", 2, "lastInsertId");
-        int64_t id = qiq_sql_first_int();
-        qiq_sql_clear_results();
-        return id;
-    }
+    if (connection->pg != NULL) return connection->driver->last_insert_id(connection->pg);
     return (int64_t)sqlite3_last_insert_rowid(connection->db);
 }
 
 QIQ_GUARDED(bool, qiq_stdlib___sql_in_transaction, false, (int64_t handle), (handle)) {
     QiqSqlConnection *connection = qiq_sql_connection(handle);
-    if (connection->pg != NULL) return qiq_pg_in_transaction(connection->pg);
+    if (connection->pg != NULL) return connection->driver->in_transaction(connection->pg);
     return sqlite3_get_autocommit(connection->db) == 0;
 }
 

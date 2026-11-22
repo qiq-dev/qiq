@@ -1,7 +1,7 @@
 // SQL databases: SQLite, built into every qiq program that uses it, and
-// PostgreSQL, whose protocol qiq speaks itself, so there's nothing to
-// install for either. Implemented in C (stdlib/runtime/sql.c and
-// postgres.c).
+// PostgreSQL, MySQL, and MariaDB, whose protocols qiq speaks itself, so
+// there's nothing to install for any of them. Implemented in C
+// (stdlib/runtime/sql.c, postgres.c, and mysql.c).
 //
 //   import Database, Row from "std/sql";
 //
@@ -246,7 +246,8 @@ final class Database {
 
     // Opens a database: "sqlite:path/to/file.db" (created if it doesn't
     // exist), "sqlite::memory:" for one that lives in memory until it's
-    // closed, or "postgres://user:password@host:5432/database" (options
+    // closed, "postgres://user:password@host:5432/database", or
+    // "mysql://user:password@host:3306/database" (for MariaDB too; options
     // after ?: sslmode=disable|require, connect_timeout=seconds). SQLite's
     // URI names work too, such as "sqlite:file:data.db?mode=ro" to open
     // read-only. A SQLite statement waits up to 5 seconds for another

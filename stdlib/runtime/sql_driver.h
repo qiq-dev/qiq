@@ -1,6 +1,7 @@
-// Shared by sql.c (std/sql, with SQLite) and postgres.c (its PostgreSQL
-// driver): the values for a statement's placeholders, and the buffers a
-// query's rows are collected in for the qiq side.
+// Shared by sql.c (std/sql, with SQLite) and its network drivers,
+// postgres.c and mysql.c: the values for a statement's placeholders, the
+// buffers a query's rows are collected in for the qiq side, and the
+// functions each driver provides.
 #ifndef QIQ_SQL_DRIVER_H
 #define QIQ_SQL_DRIVER_H
 
@@ -37,12 +38,41 @@ int64_t qiq_sql_first_int(void);
 // SET in PostgreSQL), so it can be run again on a new connection.
 bool qiq_sql_is_setting(const char *sql, size_t length, const char *keyword);
 
-// The PostgreSQL driver (postgres.c).
-typedef struct QiqPostgres QiqPostgres;
-QiqPostgres *qiq_pg_open(const char *dsn);
-int64_t qiq_pg_run(QiqPostgres *pg, const char *sql, int64_t mode, const char *caller);
-void qiq_pg_script(QiqPostgres *pg, const char *sql);
-bool qiq_pg_in_transaction(QiqPostgres *pg);
-void qiq_pg_close(QiqPostgres *pg);
+// A network database's driver. `run` runs one statement with the pending
+// values: mode 0 (execute) returns the rows changed, 1 (query) collects
+// every row and 2 (queryOne) the first, returning how many. Each function
+// throws DatabaseException or NetworkException, and reconnects first when
+// the process was forked or the connection was lost.
+typedef struct {
+    void *(*open)(const char *dsn);
+    int64_t (*run)(void *connection, const char *sql, int64_t mode, const char *caller);
+    void (*script)(void *connection, const char *sql);
+    int64_t (*last_insert_id)(void *connection);
+    bool (*in_transaction)(void *connection);
+    void (*close)(void *connection);
+} QiqSqlDriver;
+
+extern const QiqSqlDriver qiq_postgres_driver; // postgres.c
+extern const QiqSqlDriver qiq_mysql_driver;    // mysql.c
+
+// The parts of a URL such as scheme://user:password@host:port/database?a=b,
+// percent-decoded; NULL for those it doesn't have (sql.c). Options are
+// "name=value" strings. Returns false when it isn't such a URL.
+typedef struct {
+    char *user, *password, *host, *database;
+    int64_t port;             // 0 when not given
+    char **options;
+    size_t option_count;
+} QiqSqlUrl;
+bool qiq_sql_parse_url(const char *url, QiqSqlUrl *out);
+void qiq_sql_free_url(QiqSqlUrl *url);
+// Whether a host is this machine, where TLS is off by default.
+bool qiq_sql_is_local_host(const char *host);
+// Reads the options both network drivers take: sslmode=disable|require
+// (or verify-full) into *tls, which defaults to on except for this machine,
+// and connect_timeout=seconds (10 by default). False for any other option.
+bool qiq_sql_connection_options(const QiqSqlUrl *url, const char *host, bool *tls, int64_t *timeout);
+// Fills `out` with `count` random bytes, or fails with DatabaseException.
+void qiq_sql_random(unsigned char *out, size_t count);
 
 #endif

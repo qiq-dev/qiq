@@ -21,12 +21,13 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
-#include <sys/random.h>
 
 #include "mbedtls/md.h"
 #include "mbedtls/pkcs5.h"
 #include "qiq_runtime.h"
 #include "sql_driver.h"
+
+typedef struct QiqPostgres QiqPostgres;
 
 // PostgreSQL's type ids (pg_type.oid) for the types converted specially.
 enum {
@@ -258,7 +259,7 @@ static _Noreturn void pg_auth_failed(QiqPostgres *pg, const char *reason) {
 // SCRAM-SHA-256 (RFC 5802 and 7677), without channel binding.
 static void pg_scram(QiqPostgres *pg) {
     unsigned char random[18];
-    if (getrandom(random, sizeof random, 0) != (ssize_t)sizeof random) pg_auth_failed(pg, "no random numbers for the SCRAM nonce");
+    qiq_sql_random(random, sizeof random);
     char nonce[32];
     pg_base64_encode(random, sizeof random, nonce);
     // The user name is the one in the startup message; SCRAM's is ignored.
@@ -469,26 +470,6 @@ static int pg_hex_digit(char c) {
     return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
 }
 
-// A percent-decoded copy of `length` bytes.
-static char *pg_decode(const char *text, size_t length) {
-    char *out = pg_strdup(text, length);
-    size_t o = 0;
-    for (size_t i = 0; i < length; i++) {
-        if (text[i] == '%' && i + 2 < length + 0 && pg_hex_digit(text[i + 1]) >= 0 && pg_hex_digit(text[i + 2]) >= 0) {
-            out[o++] = (char)(pg_hex_digit(text[i + 1]) * 16 + pg_hex_digit(text[i + 2]));
-            i += 2;
-        } else {
-            out[o++] = text[i];
-        }
-    }
-    out[o] = '\0';
-    return out;
-}
-
-static bool pg_is_local(const char *host) {
-    return strcmp(host, "localhost") == 0 || strncmp(host, "127.", 4) == 0 || strcmp(host, "::1") == 0;
-}
-
 static void pg_free(QiqPostgres *pg) {
     free(pg->host);
     free(pg->user);
@@ -501,86 +482,31 @@ static void pg_free(QiqPostgres *pg) {
     free(pg);
 }
 
+static char *pg_copy(const char *text) {
+    return pg_strdup(text, strlen(text));
+}
+
 QiqPostgres *qiq_pg_open(const char *dsn) {
-    const char *rest = strstr(dsn, "://") + 3;
+    QiqSqlUrl url;
+    if (!qiq_sql_parse_url(dsn, &url)) {
+        qiq_throw(QIQ_INVALID_ARGUMENT_EXCEPTION, "Database::open: expected a PostgreSQL URL such as \"postgres://user:password@host:5432/database\"");
+    }
     QiqPostgres *pg = calloc(1, sizeof *pg);
     if (pg == NULL) qiq_fatal("out of memory");
     pg->socket = -1;
-    pg->port = 5432;
-    pg->connect_timeout = 10;
     pg->fork_count = qiq_sql_forks;
-    const char *end = rest + strcspn(rest, "?");
-    const char *slash = memchr(rest, '/', (size_t)(end - rest));
-    const char *authority_end = slash != NULL ? slash : end;
-    // The last @ ends the user and password (a password may contain one).
-    const char *at = NULL;
-    for (const char *c = rest; c < authority_end; c++) {
-        if (*c == '@') at = c;
-    }
-    const char *host = rest;
-    if (at != NULL) {
-        const char *colon = memchr(rest, ':', (size_t)(at - rest));
-        pg->user = pg_decode(rest, (size_t)((colon != NULL ? colon : at) - rest));
-        if (colon != NULL) pg->password = pg_decode(colon + 1, (size_t)(at - colon - 1));
-        host = at + 1;
-    }
-    const char *host_end = authority_end;
-    const char *port = NULL;
-    if (*host == '[') {
-        const char *close = memchr(host, ']', (size_t)(authority_end - host));
-        if (close == NULL) goto invalid;
-        pg->host = pg_strdup(host + 1, (size_t)(close - host - 1));
-        if (close + 1 < authority_end && close[1] == ':') port = close + 2;
-    } else {
-        const char *colon = memchr(host, ':', (size_t)(authority_end - host));
-        if (colon != NULL) {
-            host_end = colon;
-            port = colon + 1;
-        }
-        pg->host = pg_decode(host, (size_t)(host_end - host));
-    }
-    if (port != NULL) {
-        char *after;
-        long number = strtol(port, &after, 10);
-        if (after != authority_end || number < 1 || number > 65535) goto invalid;
-        pg->port = number;
-    }
-    if (pg->host[0] == '\0') {
-        free(pg->host);
-        pg->host = pg_strdup("localhost", 9);
-    }
-    if (pg->user == NULL || pg->user[0] == '\0') {
-        free(pg->user);
-        pg->user = pg_strdup("postgres", 8);
-    }
-    if (pg->password == NULL && getenv("PGPASSWORD") != NULL) pg->password = pg_strdup(getenv("PGPASSWORD"), strlen(getenv("PGPASSWORD")));
-    pg->database = slash != NULL && slash + 1 < end ? pg_decode(slash + 1, (size_t)(end - slash - 1)) : pg_strdup(pg->user, strlen(pg->user));
-    pg->tls = !pg_is_local(pg->host);
-    // Options after ?, separated by &.
-    for (const char *option = *end == '?' ? end + 1 : end; *option != '\0';) {
-        size_t length = strcspn(option, "&");
-        const char *equals = memchr(option, '=', length);
-        if (equals == NULL) goto invalid;
-        size_t name_length = (size_t)(equals - option);
-        char *value = pg_decode(equals + 1, length - name_length - 1);
-        bool known = true;
-        if (name_length == 7 && strncmp(option, "sslmode", 7) == 0) {
-            if (strcmp(value, "disable") == 0) pg->tls = false;
-            else if (strcmp(value, "require") == 0 || strcmp(value, "verify-full") == 0) pg->tls = true;
-            else known = false;
-        } else if (name_length == 15 && strncmp(option, "connect_timeout", 15) == 0) {
-            pg->connect_timeout = strtol(value, NULL, 10);
-            if (pg->connect_timeout < 1) known = false;
-        } else {
-            known = false;
-        }
-        free(value);
-        if (!known) {
-            pg_free(pg);
-            qiq_throw(QIQ_INVALID_ARGUMENT_EXCEPTION,
-                      "Database::open: a PostgreSQL URL's options are sslmode=disable, sslmode=require (or verify-full), and connect_timeout=seconds");
-        }
-        option += length + (option[length] == '&' ? 1 : 0);
+    pg->host = pg_copy(url.host != NULL ? url.host : "localhost");
+    pg->user = pg_copy(url.user != NULL ? url.user : "postgres");
+    if (url.password != NULL) pg->password = pg_copy(url.password);
+    else if (getenv("PGPASSWORD") != NULL) pg->password = pg_copy(getenv("PGPASSWORD"));
+    pg->database = pg_copy(url.database != NULL ? url.database : pg->user);
+    pg->port = url.port != 0 ? url.port : 5432;
+    bool known = qiq_sql_connection_options(&url, pg->host, &pg->tls, &pg->connect_timeout);
+    qiq_sql_free_url(&url);
+    if (!known) {
+        pg_free(pg);
+        qiq_throw(QIQ_INVALID_ARGUMENT_EXCEPTION,
+                  "Database::open: a PostgreSQL URL's options are sslmode=disable, sslmode=require (or verify-full), and connect_timeout=seconds");
     }
     {
         // A failure to connect frees everything before passing the exception on.
@@ -595,10 +521,6 @@ QiqPostgres *qiq_pg_open(const char *dsn) {
         qiq_guard_leave(previous);
     }
     return pg;
-
-invalid:
-    pg_free(pg);
-    qiq_throw(QIQ_INVALID_ARGUMENT_EXCEPTION, "Database::open: expected a PostgreSQL URL such as \"postgres://user:password@host:5432/database\"");
 }
 
 void qiq_pg_close(QiqPostgres *pg) {
@@ -1116,3 +1038,25 @@ int64_t qiq_pg_run(QiqPostgres *pg, const char *sql, int64_t mode, const char *c
     qiq_guard_leave(previous);
     return mode == 0 ? changes : rows;
 }
+
+// ---------------------------------------------------------------------------
+
+// PostgreSQL has no rowid: the value the session's last sequence (such as a
+// serial or identity column's) gave, as PDO does.
+static int64_t qiq_pg_last_insert_id(QiqPostgres *pg) {
+    qiq_sql_drop_pending();
+    qiq_sql_clear_results();
+    qiq_pg_run(pg, "select lastval()", 2, "lastInsertId");
+    int64_t id = qiq_sql_first_int();
+    qiq_sql_clear_results();
+    return id;
+}
+
+const QiqSqlDriver qiq_postgres_driver = {
+    .open = (void *(*)(const char *))qiq_pg_open,
+    .run = (int64_t (*)(void *, const char *, int64_t, const char *))qiq_pg_run,
+    .script = (void (*)(void *, const char *))qiq_pg_script,
+    .last_insert_id = (int64_t (*)(void *))qiq_pg_last_insert_id,
+    .in_transaction = (bool (*)(void *))qiq_pg_in_transaction,
+    .close = (void (*)(void *))qiq_pg_close,
+};
