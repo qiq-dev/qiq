@@ -3279,6 +3279,10 @@ struct Emitter {
     /// Functions made for queryAs and queryOneAs: (class, whether it reads
     /// all the rows, symbol).
     row_readers: Vec<(u32, bool, String)>,
+    /// The network databases the program's Database::open calls can open
+    /// (see note_database_open): only their drivers are linked in.
+    uses_postgres: bool,
+    uses_mysql: bool,
 }
 
 /// Built-in conversion functions (see Emitter::emit_conversion).
@@ -3371,6 +3375,8 @@ impl Emitter {
             entry_allocas: String::new(),
             call_expectation: None,
             row_readers: Vec::new(),
+            uses_postgres: false,
+            uses_mysql: false,
         }
     }
 
@@ -3531,6 +3537,17 @@ impl Emitter {
         ir.push_str(&static_globals);
         ir.push_str(&self.emit_late_tables());
         ir.push_str("@qiq_pending_exception = external global ptr\n");
+        // std/sql's network drivers, or null for those no Database::open
+        // call can reach, which are then left out of the executable.
+        for (used, name) in [(self.uses_postgres, "postgres"), (self.uses_mysql, "mysql")] {
+            if used {
+                ir.push_str(&format!(
+                    "@qiq_{name}_driver = external constant i8\n@qiq_sql_{name} = constant ptr @qiq_{name}_driver\n"
+                ));
+            } else {
+                ir.push_str(&format!("@qiq_sql_{name} = constant ptr null\n"));
+            }
+        }
         for (owner, method_name) in &self.dispatch_tables {
             ir.push_str(&self.emit_dispatch_table(*owner, method_name, None));
         }
@@ -6433,6 +6450,30 @@ impl Emitter {
         }))
     }
 
+    /// Notes which network databases a `Database::open(url)` can open: those
+    /// a literal URL names, or all of them for one computed at run time.
+    fn note_database_open(&mut self, target: StaticTarget, method_name: &str, arguments: &[Expr]) {
+        let StaticTarget::Class { class_id, .. } = target else { return };
+        if method_name != "open" || self.stdlib_class("Database") != Some(class_id) {
+            return;
+        }
+        let url = match arguments.first() {
+            Some(Expr::NamedArgument(_, value)) => value.as_ref(),
+            Some(value) => value,
+            None => return,
+        };
+        match url {
+            Expr::Text(text) if text.starts_with("sqlite:") => {}
+            Expr::Text(text) if text.starts_with("postgres://") || text.starts_with("postgresql://") => self.uses_postgres = true,
+            Expr::Text(text) if text.starts_with("mysql://") || text.starts_with("mariadb://") => self.uses_mysql = true,
+            Expr::Text(_) => {}
+            _ => {
+                self.uses_postgres = true;
+                self.uses_mysql = true;
+            }
+        }
+    }
+
     /// `db->queryAs(sql, ...)` and `db->queryOneAs(sql, ...)`, and a cursor's
     /// `fetchAs(count)` and `nextAs()`: query, queryOne, fetch, or next with
     /// the same arguments, then each row read into an object of the class
@@ -8840,6 +8881,7 @@ impl Emitter {
             }
             Expr::StaticCall(target, method_name, arguments) => {
                 let target = *target;
+                self.note_database_open(target, method_name, arguments);
                 let class_id = Self::static_target_class(target);
                 let class_name = self.classes[class_id as usize].name.clone();
                 let Some(owner) = self.find_declaring_class(class_id, method_name) else {
@@ -12031,6 +12073,12 @@ mod tests {
         let ir = compile_source("import Database from \"std/sql\"; Database db = Database::open(\"sqlite::memory:\"); int n = db->execute(\"select ?, ?, ?\", 1, \"a\", null);").unwrap();
         assert!(main_ir(&ir).contains("call void @qiq_bind_values(ptr"), "{ir}");
         assert!(ir.contains("c\"isn\\00\""), "{ir}");
+        // Only the network drivers a Database::open can reach are linked in.
+        assert!(ir.contains("@qiq_sql_postgres = constant ptr null") && ir.contains("@qiq_sql_mysql = constant ptr null"), "{ir}");
+        let postgres = compile_source("import Database from \"std/sql\"; Database db = Database::open(\"postgres://u@db/app\");").unwrap();
+        assert!(postgres.contains("@qiq_sql_postgres = constant ptr @qiq_postgres_driver") && postgres.contains("@qiq_sql_mysql = constant ptr null"));
+        let computed = compile_source("import Database from \"std/sql\"; string url = \"sqlite::memory:\"; Database db = Database::open(url);").unwrap();
+        assert!(computed.contains("@qiq_sql_postgres = constant ptr @qiq_postgres_driver") && computed.contains("@qiq_sql_mysql = constant ptr @qiq_mysql_driver"));
         for (source, error) in [
             ("import Database from \"std/sql\"; Database db = Database::open(\"x\"); db->execute(\"select ?\", [1, 2]);", "value 1 for the query must be an int, double, bool, byte, string, char, byte[], or null, found int[]"),
             ("class A { function f(string s, ...): void {} }", "'...' parameters are only for standard library methods"),

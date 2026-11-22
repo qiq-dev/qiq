@@ -2,6 +2,7 @@
 // (it creates and drops a table named users). Types, placeholders, errors, transactions, queryAs.
 import Database, Row, Cursor from "std/sql";
 import getenv, exit from "std/os";
+import microtime from "std/time";
 
 string url = getenv("QIQ_TEST_POSTGRES");
 if (url == null) {
@@ -136,3 +137,13 @@ cached->execute("alter table t add column d int default 8");
 try { cached->queryOne("select * from t"); print("in tx: ok"); } catch (DatabaseException e) { print("in tx:", e->getSqlState(), e->getMessage()); }
 cached->rollback();
 print(cached->queryOne("select * from t")->toMap());
+
+// Closing a cursor early stops its statement on the server.
+Database server = Database::open(url);
+server->executeScript("drop table if exists k; create table k (n int)");
+server->transaction(function(): void { foreach (range(1000) as i) { server->execute("insert into k values (?)", i); } });
+double started = microtime();
+Cursor billion = server->cursor("select a.n as x, b.n as y, c.n as z from k a, k b, k c");
+billion->next();
+billion->close();
+print("closed a billion-row query quickly:", microtime() - started < 5.0, server->queryOne("select count(*) as c from k")->getInt("c"));

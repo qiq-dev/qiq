@@ -2602,6 +2602,9 @@ print("order", db->lastInsertId());</pre>
 <li>Statements that change tables, such as <code>CREATE TABLE</code>, commit an open transaction first: MySQL can't roll them back.</li>
 </ul>
 
+<h2>Program size</h2>
+<p>SQLite adds about 1.6 MB to a program, and the PostgreSQL and MySQL drivers (with TLS) about 0.7 MB more. The drivers are only included when a <code>Database::open</code> could need them: a program whose URLs are all literals such as <code>"sqlite:app.db"</code> leaves them out, while one that builds its URL at run time, as from an environment variable, includes both.</p>
+
 <h2>Using a database in a web server</h2>
 <p>A database can be opened before calling <a href="function.http-serve.html">http_serve</a> and used in the handler. Each worker process gets its own connection: a connection opened before the workers start is opened again in each worker the first time it's used there, and the settings it made are made again, since they belong to the connection: SQLite's <code>PRAGMA</code> statements, PostgreSQL's <code>SET</code> statements (except <code>SET LOCAL</code>), and MySQL's <code>SET</code> statements (except <code>SET GLOBAL</code>, <code>SET PERSIST</code>, and <code>SET TRANSACTION</code>), including user variables such as <code>@user_id</code>. A <code>sqlite::memory:</code> database isn't shared between workers. With PostgreSQL and MySQL, each worker holds one connection to the server, so 4 workers use 4 of its connections.</p>
 <p>With SQLite, the workers can read at the same time, but only one can write at a time. A statement waits up to 5 seconds for another process's write to finish before throwing <code>DatabaseException</code> (<code>database is locked</code>). For a server, switch the database to write-ahead logging, which lets reads go on while a write happens, and stop waiting for the disk after every commit:</p>
@@ -2761,7 +2764,8 @@ while (event != null) {
 ```
 
 <h2>Cursors and the connection</h2>
-<p>With SQLite, a cursor has its own statement, so the database can run other statements, and other cursors, while it's open. With PostgreSQL and MySQL, the rows come from the connection as they're read, as with libpq's single-row mode and unbuffered MySQL queries, so that database can't run anything else until the cursor has read its last row or been closed: another statement throws <code>DatabaseException</code>. Closing a network cursor early still reads the rest of its rows from the server (and drops them); to stop sooner, ask for fewer rows with <code>LIMIT</code>. Open a second <code>Database</code> for statements to run while reading.</p>
+<p>With SQLite, a cursor has its own statement, so the database can run other statements, and other cursors, while it's open. With PostgreSQL and MySQL, the rows come from the connection as they're read, as with libpq's single-row mode and unbuffered MySQL queries, so that database can't run anything else until the cursor has read its last row or been closed: another statement throws <code>DatabaseException</code>. Open a second <code>Database</code> for statements to run while reading.</p>
+<p>Closing a network cursor early stops its statement on the server, so leaving a huge result after a few rows is quick: PostgreSQL gets a cancel request on a connection of its own (as libpq sends one), and MySQL a <code>KILL QUERY</code> from a second login, after a few thousand more rows, since a short rest is quicker to read than to stop. Inside a PostgreSQL transaction, cancelling would abort the transaction, so there the rest of the rows are read instead; ask for fewer with <code>LIMIT</code> when that matters.</p>
 <p>A cursor that's no longer used isn't closed until the program ends, or its database is closed, so close one you stop reading early, in a <code>finally</code> block when the reading can throw.</p>
 """
 

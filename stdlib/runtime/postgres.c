@@ -60,6 +60,8 @@ struct QiqPostgres {
     bool lost_in_transaction; // the connection was lost with a transaction open
     bool in_io;               // talking to the server: a failure now loses the connection
     bool streaming;           // a cursor's rows are still arriving
+    bool cancellable;         // and its statement isn't in a transaction
+    int32_t backend_pid, backend_key; // from BackendKeyData, for cancel requests
     char *settings;           // the SET statements it ran, to run again on a new connection
     // The message being written, and the one being read.
     unsigned char *out;
@@ -404,7 +406,13 @@ static void pg_until_ready(QiqPostgres *pg) {
             pg_error_text(pg, message, sizeof message, state);
             qiq_throwf(QIQ_DATABASE_EXCEPTION, "PostgreSQL at %s: %s", pg->host, message);
         }
-        // ParameterStatus, BackendKeyData, notices, and notifications.
+        if (type == 'K') {
+            // BackendKeyData: what a cancel request names this connection by.
+            PgReader reader = pg_reader(pg);
+            pg->backend_pid = pg_int32(&reader);
+            pg->backend_key = pg_int32(&reader);
+        }
+        // ParameterStatus, notices, and notifications.
     }
 }
 
@@ -1194,6 +1202,8 @@ static void qiq_pg_open_cursor(QiqPostgres *pg, const char *sql, const char *cal
         qiq_rethrow(previous);
     }
     pg_ready(pg);
+    // Cancelling a statement in a transaction would abort the transaction.
+    pg->cancellable = pg->status == 'I';
     pg_send_statement(pg, sql, 1, caller);
     pg->type_count = 0;
     char message[1024] = "", state[6] = "";
@@ -1274,6 +1284,40 @@ static int64_t qiq_pg_fetch(QiqPostgres *pg, int64_t count) {
     return rows;
 }
 
+// Asks the server to cancel the statement this connection is running: a
+// CancelRequest on a connection of its own, as libpq sends it. The server
+// closes that connection once it has passed the request on, which is waited
+// for, so the request can't reach the connection's next statement instead.
+// A failure here only means the rest of the rows are read instead.
+static void pg_cancel(QiqPostgres *pg) {
+    volatile int64_t socket = -1;
+    jmp_buf environment;
+    jmp_buf *previous = qiq_guard_enter(&environment);
+    if (setjmp(environment)) {
+        qiq_guard_leave(previous);
+        if (socket >= 0) qiq_net_abandon(socket);
+        qiq_discard_exception();
+        return;
+    }
+    socket = pg->socket_file != NULL ? qiq_net_connect_unix(pg->socket_file, pg->connect_timeout)
+                                     : qiq_net_connect(pg->host, pg->port, pg->connect_timeout);
+    qiq_net_set_timeout_ms(socket, 5000);
+    unsigned char request[16];
+    uint32_t fields[4] = {16, 80877102, (uint32_t)pg->backend_pid, (uint32_t)pg->backend_key};
+    for (int i = 0; i < 4; i++) {
+        request[i * 4] = (unsigned char)(fields[i] >> 24);
+        request[i * 4 + 1] = (unsigned char)(fields[i] >> 16);
+        request[i * 4 + 2] = (unsigned char)(fields[i] >> 8);
+        request[i * 4 + 3] = (unsigned char)fields[i];
+    }
+    qiq_net_send(socket, request, sizeof request);
+    // Throws (and is caught above) when the server closes it, as it should.
+    unsigned char byte;
+    qiq_net_receive(socket, &byte, 1);
+    qiq_guard_leave(previous);
+    qiq_net_abandon(socket);
+}
+
 static void qiq_pg_close_cursor(QiqPostgres *pg) {
     if (!pg->streaming || pg->socket < 0 || pg->fork_count != qiq_sql_forks) {
         pg->streaming = false;
@@ -1286,8 +1330,16 @@ static void qiq_pg_close_cursor(QiqPostgres *pg) {
         qiq_rethrow(previous);
     }
     pg->in_io = true;
-    // The rows left, and the end, are read and dropped.
-    while (pg_read(pg) != 'Z') {}
+    // A few more rows are read first: a result that ends soon is quicker to
+    // finish than to cancel. Then the statement is cancelled, unless it's in
+    // a transaction, and the rest (the rows already sent, then the
+    // cancellation's error) is read and dropped.
+    char type = 0;
+    for (int read = 0; read < 1000 && (type = pg_read(pg)) != 'Z'; read++) {}
+    if (type != 'Z') {
+        if (pg->cancellable) pg_cancel(pg);
+        while (pg_read(pg) != 'Z') {}
+    }
     pg->status = pg->in_length > 0 ? (char)pg->in[0] : 'I';
     pg->streaming = false;
     pg->in_io = false;

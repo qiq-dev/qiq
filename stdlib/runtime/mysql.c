@@ -88,6 +88,7 @@ typedef struct {
     bool in_io;               // talking to the server: a failure now loses the connection
     bool streaming;           // a cursor's rows are still arriving
     bool streaming_binary;    // as binary rows (a prepared statement's) rather than text
+    uint32_t connection_id;   // the server's id for this connection, for KILL QUERY
     char *settings;           // the SET statements it ran, to run again on a new connection
     MyCached cache[MY_CACHE];
     uint64_t clock;
@@ -403,7 +404,7 @@ static void my_connect(QiqMysql *my) {
     }
     if (my_int(&reader, 1) != 10) my_auth_failed(my, "the server speaks a protocol version qiq doesn't");
     my_string(&reader); // server version
-    my_int(&reader, 4); // connection id
+    my->connection_id = (uint32_t)my_int(&reader, 4);
     unsigned char nonce[21] = {0};
     memcpy(nonce, my_bytes(&reader, 8), 8);
     my_int(&reader, 1);
@@ -1274,6 +1275,41 @@ static int64_t qiq_my_fetch(QiqMysql *my, int64_t count) {
     return rows;
 }
 
+// Stops the statement this connection is running: KILL QUERY, from a
+// connection of its own with the same settings. MySQL returns once the
+// statement is marked, and a statement that already ended isn't affected
+// (the mark is cleared when the next one starts). A failure here only means
+// the rest of the rows are read instead.
+static void my_kill_query(QiqMysql *my) {
+    QiqMysql *killer = calloc(1, sizeof *killer);
+    if (killer == NULL) qiq_fatal("out of memory");
+    killer->socket = -1;
+    killer->fork_count = qiq_sql_forks;
+    killer->host = my_copy(my->host);
+    killer->user = my_copy(my->user);
+    if (my->password != NULL) killer->password = my_copy(my->password);
+    if (my->ca_file != NULL) killer->ca_file = my_copy(my->ca_file);
+    if (my->socket_file != NULL) killer->socket_file = my_copy(my->socket_file);
+    killer->port = my->port;
+    killer->connect_timeout = my->connect_timeout;
+    killer->tls = my->tls;
+    jmp_buf environment;
+    jmp_buf *previous = qiq_guard_enter(&environment);
+    if (setjmp(environment)) {
+        qiq_guard_leave(previous);
+        if (killer->socket >= 0) qiq_net_abandon(killer->socket);
+        my_free(killer);
+        qiq_discard_exception();
+        return;
+    }
+    my_connect(killer);
+    char kill[40];
+    snprintf(kill, sizeof kill, "KILL QUERY %u", my->connection_id);
+    my_simple_query(killer, kill);
+    qiq_guard_leave(previous);
+    qiq_my_close(killer);
+}
+
 static void qiq_my_close_cursor(QiqMysql *my) {
     if (!my->streaming || my->socket < 0 || my->fork_count != qiq_sql_forks) {
         my->streaming = false;
@@ -1286,8 +1322,12 @@ static void qiq_my_close_cursor(QiqMysql *my) {
         qiq_rethrow(previous);
     }
     my->in_io = true;
-    // The rows left are read and dropped.
-    for (;;) {
+    // The rows left are read and dropped. After a few thousand, the
+    // statement is stopped: logging in to do that takes a few milliseconds,
+    // which reading a short rest of a result doesn't. The server then sends
+    // an error in place of the rows it hadn't sent.
+    for (int read = 0;; read++) {
+        if (read == 5000) my_kill_query(my);
         my_read(my);
         if (my_is_eof(my)) {
             my_finish_stream(my);

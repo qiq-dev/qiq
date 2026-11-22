@@ -86,6 +86,11 @@ char *qiq_stdlib___database_error_state(void) {
     return qiq_string_from(state, strlen(state));
 }
 
+void qiq_discard_exception(void) {
+    if (qiq_pending_exception != NULL) qiq_release(qiq_pending_exception);
+    qiq_pending_exception = NULL;
+}
+
 _Noreturn void qiq_rethrow(jmp_buf *previous) {
     qiq_guard = previous;
     if (previous == NULL) qiq_fatal("internal error: an exception was rethrown with no handler");

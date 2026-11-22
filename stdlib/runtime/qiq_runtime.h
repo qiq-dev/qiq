@@ -160,6 +160,8 @@ void qiq_guard_leave(jmp_buf *previous);
 // For C code that catches a runtime exception with its own guard to clean
 // up: passes it on to the guard `previous` (from qiq_guard_enter).
 _Noreturn void qiq_rethrow(jmp_buf *previous);
+// For C code that caught an exception it handles itself: drops it.
+void qiq_discard_exception(void);
 
 // Connections for runtime files other than net.c (see net.c); they throw
 // NetworkException. A timeout of -1 waits as long as it takes.

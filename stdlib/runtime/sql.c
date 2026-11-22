@@ -62,6 +62,12 @@ static QiqSqlConnection *qiq_sql_connections;
 static size_t qiq_sql_connection_count;
 uint64_t qiq_sql_forks;
 
+// The network drivers, defined by the compiler: each one's QiqSqlDriver when
+// the program's Database::open calls could open that database, or NULL, so
+// a program that only uses SQLite doesn't include them (or TLS).
+extern const QiqSqlDriver *const qiq_sql_postgres;
+extern const QiqSqlDriver *const qiq_sql_mysql;
+
 static sqlite3_stmt *qiq_sql_prepare(QiqSqlConnection *connection, const char *sql, const char *caller, bool keep);
 static void qiq_sql_bind(sqlite3_stmt *statement, sqlite3_destructor_type keep);
 static void qiq_sql_close_cursors(int64_t connection);
@@ -445,10 +451,17 @@ QIQ_GUARDED(int64_t, qiq_stdlib___sql_open, 0, (const char *dsn), (dsn)) {
     void *pg = NULL;
     const QiqSqlDriver *driver = NULL;
     const char *filename = NULL;
+    bool network = true;
     if (strncmp(dsn, "postgres://", 11) == 0 || strncmp(dsn, "postgresql://", 13) == 0) {
-        driver = &qiq_postgres_driver;
+        driver = qiq_sql_postgres;
     } else if (strncmp(dsn, "mysql://", 8) == 0 || strncmp(dsn, "mariadb://", 10) == 0) {
-        driver = &qiq_mysql_driver;
+        driver = qiq_sql_mysql;
+    } else {
+        network = false;
+    }
+    if (network && driver == NULL) {
+        // The compiler leaves a driver out only when no URL could need it.
+        qiq_throw(QIQ_DATABASE_EXCEPTION, "internal error: this program was built without the driver for this database");
     }
     if (driver != NULL) {
         pg = driver->open(dsn);
