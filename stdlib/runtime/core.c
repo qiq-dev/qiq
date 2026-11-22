@@ -59,6 +59,12 @@ void qiq_guard_leave(jmp_buf *previous) {
     qiq_guard = previous;
 }
 
+_Noreturn void qiq_rethrow(jmp_buf *previous) {
+    qiq_guard = previous;
+    if (previous == NULL) qiq_fatal("internal error: an exception was rethrown with no handler");
+    longjmp(*previous, 1);
+}
+
 _Noreturn void qiq_fatal(const char *message) {
     fprintf(stderr, "qiq runtime error: %s\n", message);
     exit(1);

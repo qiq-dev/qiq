@@ -151,6 +151,19 @@ void *qiq_array_create(int64_t count, int64_t element_size, int references);
 
 jmp_buf *qiq_guard_enter(jmp_buf *environment);
 void qiq_guard_leave(jmp_buf *previous);
+// For C code that catches a runtime exception with its own guard to clean
+// up: passes it on to the guard `previous` (from qiq_guard_enter).
+_Noreturn void qiq_rethrow(jmp_buf *previous);
+
+// Connections for runtime files other than net.c (see net.c); they throw
+// NetworkException. A timeout of -1 waits as long as it takes.
+int64_t qiq_net_connect(const char *host, int64_t port, int64_t timeout_seconds);
+void qiq_net_start_tls(int64_t handle, const char *host);
+void qiq_net_set_timeout_ms(int64_t handle, int timeout_ms);
+void qiq_net_send(int64_t handle, const void *data, size_t length);
+void qiq_net_receive(int64_t handle, void *out, size_t length);
+void qiq_net_close(int64_t handle);
+void qiq_net_abandon(int64_t handle);
 
 // Defines a public runtime function `name` that can raise exceptions. Write
 // the body after the macro; it becomes `name##_impl`. If the body raises, the

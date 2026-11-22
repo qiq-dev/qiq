@@ -1,5 +1,7 @@
-// SQL databases for std/sql (stdlib/sql.qiq), with SQLite (vendor/, built
-// by build.rs and linked into programs that use it).
+// SQL databases for std/sql (stdlib/sql.qiq): SQLite (vendor/, built by
+// build.rs and linked into programs that use it), and PostgreSQL through
+// postgres.c, which shares this file's handles, values, and result buffers
+// (sql_driver.h).
 //
 // A query runs to completion in one call (qiq_stdlib___sql_run): its
 // statement is prepared, given the values the compiled code passed just
@@ -26,6 +28,7 @@
 #include <string.h>
 
 #include "qiq_runtime.h"
+#include "sql_driver.h"
 #include "sqlite3.h"
 
 // Prepared statements each connection keeps.
@@ -34,9 +37,6 @@
 // another server worker writing) before failing with "database is locked".
 #define QIQ_SQL_BUSY_TIMEOUT 5000
 
-// What a cell holds, as the qiq side reads it (stdlib/sql.qiq).
-enum { QIQ_SQL_INT = 1, QIQ_SQL_DOUBLE = 2, QIQ_SQL_TEXT = 3, QIQ_SQL_BYTES = 4, QIQ_SQL_NULL = 5 };
-
 typedef struct {
     char *sql;                // NULL when the entry is unused
     sqlite3_stmt *statement;
@@ -44,7 +44,8 @@ typedef struct {
 } QiqSqlCached;
 
 typedef struct {
-    sqlite3 *db;              // NULL when the slot is free
+    sqlite3 *db;              // NULL for PostgreSQL, and when the slot is free
+    QiqPostgres *pg;          // a PostgreSQL connection, or NULL
     char *filename;           // to reopen it after a fork
     char *pragmas;            // the PRAGMA statements it ran, to run again then
     uint32_t generation;
@@ -55,7 +56,7 @@ typedef struct {
 
 static QiqSqlConnection *qiq_sql_connections;
 static size_t qiq_sql_connection_count;
-static uint64_t qiq_sql_forks;
+uint64_t qiq_sql_forks;
 
 static void *qiq_sql_grow(void *data, size_t *capacity, size_t needed, size_t size) {
     if (needed <= *capacity) return data;
@@ -72,15 +73,11 @@ static void *qiq_sql_grow(void *data, size_t *capacity, size_t needed, size_t si
 // (see Function::binds_values in src/compiler.rs). Strings and byte arrays
 // are retained until the statement has run.
 
-typedef struct {
-    char type;                // 'i' int, 'd' double, 'b' bool, 'y' byte, 's' string, 'a' byte[], 'n' null
-    uint64_t payload;
-} QiqSqlValue;
+QiqSqlValue *qiq_sql_pending;
+size_t qiq_sql_pending_count;
+static size_t qiq_sql_pending_capacity;
 
-static QiqSqlValue *qiq_sql_pending;
-static size_t qiq_sql_pending_count, qiq_sql_pending_capacity;
-
-static void qiq_sql_drop_pending(void) {
+void qiq_sql_drop_pending(void) {
     for (size_t index = 0; index < qiq_sql_pending_count; index++) {
         QiqSqlValue *value = &qiq_sql_pending[index];
         if ((value->type == 's' || value->type == 'a') && value->payload != 0) qiq_release((void *)(uintptr_t)value->payload);
@@ -116,14 +113,14 @@ static size_t qiq_sql_blob_length, qiq_sql_blobs_capacity;
 static char **qiq_sql_columns;
 static size_t qiq_sql_column_count, qiq_sql_columns_capacity;
 
-static void qiq_sql_clear_results(void) {
+void qiq_sql_clear_results(void) {
     for (size_t index = 0; index < qiq_sql_text_count; index++) qiq_release(qiq_sql_texts[index]);
     for (size_t index = 0; index < qiq_sql_column_count; index++) qiq_release(qiq_sql_columns[index]);
     qiq_sql_cells = qiq_sql_double_count = qiq_sql_text_count = 0;
     qiq_sql_blob_count = qiq_sql_blob_length = qiq_sql_column_count = 0;
 }
 
-static void qiq_sql_add_cell(int64_t kind, int64_t value) {
+void qiq_sql_add_cell(int64_t kind, int64_t value) {
     qiq_sql_kinds = qiq_sql_grow(qiq_sql_kinds, &qiq_sql_kinds_capacity, qiq_sql_cells + 1, sizeof(int64_t));
     qiq_sql_values = qiq_sql_grow(qiq_sql_values, &qiq_sql_values_capacity, qiq_sql_cells + 1, sizeof(int64_t));
     qiq_sql_kinds[qiq_sql_cells] = kind;
@@ -131,7 +128,7 @@ static void qiq_sql_add_cell(int64_t kind, int64_t value) {
     qiq_sql_cells++;
 }
 
-static void qiq_sql_add_bytes(const void *bytes, size_t length) {
+void qiq_sql_add_bytes(const void *bytes, size_t length) {
     qiq_sql_blob_starts = qiq_sql_grow(qiq_sql_blob_starts, &qiq_sql_blob_starts_capacity, qiq_sql_blob_count + 1, sizeof(int64_t));
     qiq_sql_blobs = qiq_sql_grow(qiq_sql_blobs, &qiq_sql_blobs_capacity, qiq_sql_blob_length + length, 1);
     if (length > 0) memcpy(qiq_sql_blobs + qiq_sql_blob_length, bytes, length);
@@ -141,6 +138,41 @@ static void qiq_sql_add_bytes(const void *bytes, size_t length) {
     qiq_sql_blob_length += length;
 }
 
+void qiq_sql_add_double(double value) {
+    qiq_sql_doubles = qiq_sql_grow(qiq_sql_doubles, &qiq_sql_doubles_capacity, qiq_sql_double_count + 1, sizeof(double));
+    qiq_sql_doubles[qiq_sql_double_count] = value;
+    qiq_sql_add_cell(QIQ_SQL_DOUBLE, (int64_t)qiq_sql_double_count++);
+}
+
+void qiq_sql_add_text(const char *text, size_t length, int64_t kind) {
+    // Text a qiq string can't hold reads as bytes (getBytes).
+    if (text == NULL || !qiq_is_utf8_text((const unsigned char *)text, length)) {
+        qiq_sql_add_bytes(text, text == NULL ? 0 : length);
+        return;
+    }
+    qiq_sql_texts = qiq_sql_grow(qiq_sql_texts, &qiq_sql_texts_capacity, qiq_sql_text_count + 1, sizeof(char *));
+    qiq_sql_texts[qiq_sql_text_count] = qiq_string_from(text, length);
+    qiq_sql_add_cell(kind, (int64_t)qiq_sql_text_count++);
+}
+
+void qiq_sql_add_column(const char *name, size_t length) {
+    qiq_sql_columns = qiq_sql_grow(qiq_sql_columns, &qiq_sql_columns_capacity, qiq_sql_column_count + 1, sizeof(char *));
+    qiq_sql_columns[qiq_sql_column_count++] = qiq_string_from(name, length);
+}
+
+int64_t qiq_sql_first_int(void) {
+    return qiq_sql_cells > 0 && qiq_sql_kinds[0] == QIQ_SQL_INT ? qiq_sql_values[0] : 0;
+}
+
+bool qiq_sql_is_setting(const char *sql, size_t length, const char *keyword) {
+    size_t at = 0;
+    while (at < length && (sql[at] == ' ' || sql[at] == '\t' || sql[at] == '\n' || sql[at] == '\r')) at++;
+    size_t size = strlen(keyword);
+    if (length - at <= size || sqlite3_strnicmp(sql + at, keyword, (int)size) != 0) return false;
+    char after = sql[at + size];
+    return after == ' ' || after == '\t' || after == '\n' || after == '\r';
+}
+
 static void qiq_sql_add_row(sqlite3_stmt *statement, int columns) {
     for (int column = 0; column < columns; column++) {
         switch (sqlite3_column_type(statement, column)) {
@@ -148,21 +180,11 @@ static void qiq_sql_add_row(sqlite3_stmt *statement, int columns) {
             qiq_sql_add_cell(QIQ_SQL_INT, sqlite3_column_int64(statement, column));
             break;
         case SQLITE_FLOAT:
-            qiq_sql_doubles = qiq_sql_grow(qiq_sql_doubles, &qiq_sql_doubles_capacity, qiq_sql_double_count + 1, sizeof(double));
-            qiq_sql_doubles[qiq_sql_double_count] = sqlite3_column_double(statement, column);
-            qiq_sql_add_cell(QIQ_SQL_DOUBLE, (int64_t)qiq_sql_double_count++);
+            qiq_sql_add_double(sqlite3_column_double(statement, column));
             break;
         case SQLITE_TEXT: {
-            const unsigned char *text = sqlite3_column_text(statement, column);
-            size_t length = (size_t)sqlite3_column_bytes(statement, column);
-            // Text a qiq string can't hold reads as bytes (getBytes).
-            if (text == NULL || !qiq_is_utf8_text(text, length)) {
-                qiq_sql_add_bytes(text, text == NULL ? 0 : length);
-                break;
-            }
-            qiq_sql_texts = qiq_sql_grow(qiq_sql_texts, &qiq_sql_texts_capacity, qiq_sql_text_count + 1, sizeof(char *));
-            qiq_sql_texts[qiq_sql_text_count] = qiq_string_from((const char *)text, length);
-            qiq_sql_add_cell(QIQ_SQL_TEXT, (int64_t)qiq_sql_text_count++);
+            const char *text = (const char *)sqlite3_column_text(statement, column);
+            qiq_sql_add_text(text, (size_t)sqlite3_column_bytes(statement, column), QIQ_SQL_TEXT);
             break;
         }
         case SQLITE_BLOB: {
@@ -204,18 +226,22 @@ QIQ_GUARDED(int64_t, qiq_stdlib___sql_open, 0, (const char *dsn), (dsn)) {
         pthread_atfork(NULL, NULL, qiq_sql_after_fork);
         registered = true;
     }
-    if (strncmp(dsn, "sqlite:", 7) != 0) {
-        if (strncmp(dsn, "postgres", 8) == 0 || strncmp(dsn, "mysql:", 6) == 0) {
-            qiq_throw(QIQ_INVALID_ARGUMENT_EXCEPTION, "Database::open: only SQLite is supported so far, as \"sqlite:path/to/file.db\"");
-        }
+    sqlite3 *db = NULL;
+    QiqPostgres *pg = NULL;
+    const char *filename = NULL;
+    if (strncmp(dsn, "postgres://", 11) == 0 || strncmp(dsn, "postgresql://", 13) == 0) {
+        pg = qiq_pg_open(dsn);
+    } else if (strncmp(dsn, "sqlite:", 7) == 0) {
+        filename = dsn + 7;
+        if (*filename == '\0') qiq_throw(QIQ_INVALID_ARGUMENT_EXCEPTION, "Database::open: \"sqlite:\" needs a file name, or :memory:");
+        db = qiq_sql_connect(filename);
+    } else {
+        if (strncmp(dsn, "mysql:", 6) == 0) qiq_throw(QIQ_INVALID_ARGUMENT_EXCEPTION, "Database::open: MySQL isn't supported yet");
         qiq_throw(QIQ_INVALID_ARGUMENT_EXCEPTION,
-                  "Database::open: expected a database such as \"sqlite:path/to/file.db\" or \"sqlite::memory:\"");
+                  "Database::open: expected a database such as \"sqlite:path/to/file.db\", \"sqlite::memory:\", or \"postgres://user:password@host/database\"");
     }
-    const char *filename = dsn + 7;
-    if (*filename == '\0') qiq_throw(QIQ_INVALID_ARGUMENT_EXCEPTION, "Database::open: \"sqlite:\" needs a file name, or :memory:");
-    sqlite3 *db = qiq_sql_connect(filename);
     size_t slot = 0;
-    while (slot < qiq_sql_connection_count && qiq_sql_connections[slot].db != NULL) slot++;
+    while (slot < qiq_sql_connection_count && (qiq_sql_connections[slot].db != NULL || qiq_sql_connections[slot].pg != NULL)) slot++;
     if (slot == qiq_sql_connection_count) {
         QiqSqlConnection *grown = realloc(qiq_sql_connections, (slot + 1) * sizeof(QiqSqlConnection));
         if (grown == NULL) qiq_fatal("out of memory");
@@ -228,8 +254,11 @@ QIQ_GUARDED(int64_t, qiq_stdlib___sql_open, 0, (const char *dsn), (dsn)) {
     memset(connection, 0, sizeof *connection);
     connection->generation = generation;
     connection->db = db;
-    connection->filename = strdup(filename);
-    if (connection->filename == NULL) qiq_fatal("out of memory");
+    connection->pg = pg;
+    if (filename != NULL) {
+        connection->filename = strdup(filename);
+        if (connection->filename == NULL) qiq_fatal("out of memory");
+    }
     connection->fork_count = qiq_sql_forks;
     return (int64_t)((uint64_t)generation << 32 | (uint64_t)(slot + 1));
 }
@@ -240,14 +269,15 @@ static QiqSqlConnection *qiq_sql_find(int64_t handle) {
     uint32_t generation = (uint32_t)((uint64_t)handle >> 32);
     if (slot == 0 || slot > qiq_sql_connection_count) return NULL;
     QiqSqlConnection *connection = &qiq_sql_connections[slot - 1];
-    if (connection->db == NULL || connection->generation != generation) return NULL;
+    if ((connection->db == NULL && connection->pg == NULL) || connection->generation != generation) return NULL;
     return connection;
 }
 
 static QiqSqlConnection *qiq_sql_connection(int64_t handle) {
     QiqSqlConnection *connection = qiq_sql_find(handle);
     if (connection == NULL) qiq_throw(QIQ_DATABASE_EXCEPTION, "the database is closed");
-    if (connection->fork_count != qiq_sql_forks) {
+    // PostgreSQL connections reconnect themselves (postgres.c).
+    if (connection->pg == NULL && connection->fork_count != qiq_sql_forks) {
         // Opened before this process was forked: the parent's connection
         // and statements are left alone (closing them here could release
         // the parent's locks) and the database is opened again.
@@ -269,8 +299,8 @@ static QiqSqlConnection *qiq_sql_connection(int64_t handle) {
 // Records a statement that ran if it's a PRAGMA (see the top of the file).
 static void qiq_sql_remember(QiqSqlConnection *connection, sqlite3_stmt *statement) {
     const char *sql = sqlite3_sql(statement);
+    if (!qiq_sql_is_setting(sql, strlen(sql), "pragma")) return;
     while (*sql == ' ' || *sql == '\t' || *sql == '\n' || *sql == '\r') sql++;
-    if (sqlite3_strnicmp(sql, "pragma", 6) != 0) return;
     size_t length = strlen(sql);
     while (length > 0 && (sql[length - 1] == ';' || sql[length - 1] == ' ' || sql[length - 1] == '\n')) length--;
     size_t old = connection->pragmas != NULL ? strlen(connection->pragmas) : 0;
@@ -284,7 +314,9 @@ static void qiq_sql_remember(QiqSqlConnection *connection, sqlite3_stmt *stateme
 QIQ_GUARDED_VOID(qiq_stdlib___sql_close, (int64_t handle), (handle)) {
     QiqSqlConnection *connection = qiq_sql_find(handle);
     if (connection == NULL) return;
-    if (connection->fork_count == qiq_sql_forks) {
+    if (connection->pg != NULL) {
+        qiq_pg_close(connection->pg);
+    } else if (connection->fork_count == qiq_sql_forks) {
         for (int index = 0; index < QIQ_SQL_CACHE; index++) {
             if (connection->cache[index].sql == NULL) continue;
             sqlite3_finalize(connection->cache[index].statement);
@@ -392,6 +424,7 @@ QIQ_GUARDED(int64_t, qiq_stdlib___sql_run, 0, (int64_t handle, const char *sql, 
         qiq_sql_drop_pending();
         qiq_throw(QIQ_DATABASE_EXCEPTION, "the database is closed");
     }
+    if (connection->pg != NULL) return qiq_pg_run(connection->pg, sql, mode, caller);
     sqlite3_stmt *statement;
     {
         // Prepare errors throw from inside; the pending values go first.
@@ -451,6 +484,10 @@ QIQ_GUARDED(int64_t, qiq_stdlib___sql_run, 0, (int64_t handle, const char *sql, 
 // Runs several statements separated by semicolons, without values.
 QIQ_GUARDED_VOID(qiq_stdlib___sql_execute_script, (int64_t handle, const char *sql), (handle, sql)) {
     QiqSqlConnection *connection = qiq_sql_connection(handle);
+    if (connection->pg != NULL) {
+        qiq_pg_script(connection->pg, sql);
+        return;
+    }
     const char *next = sql;
     while (*next != '\0') {
         sqlite3_stmt *statement = NULL;
@@ -472,11 +509,24 @@ QIQ_GUARDED_VOID(qiq_stdlib___sql_execute_script, (int64_t handle, const char *s
 }
 
 QIQ_GUARDED(int64_t, qiq_stdlib___sql_last_insert_id, 0, (int64_t handle), (handle)) {
-    return (int64_t)sqlite3_last_insert_rowid(qiq_sql_connection(handle)->db);
+    QiqSqlConnection *connection = qiq_sql_connection(handle);
+    if (connection->pg != NULL) {
+        // PostgreSQL has no rowid: the value the session's last sequence
+        // (such as a serial or identity column's) gave, as PDO does.
+        qiq_sql_drop_pending();
+        qiq_sql_clear_results();
+        qiq_pg_run(connection->pg, "select lastval()", 2, "lastInsertId");
+        int64_t id = qiq_sql_first_int();
+        qiq_sql_clear_results();
+        return id;
+    }
+    return (int64_t)sqlite3_last_insert_rowid(connection->db);
 }
 
 QIQ_GUARDED(bool, qiq_stdlib___sql_in_transaction, false, (int64_t handle), (handle)) {
-    return sqlite3_get_autocommit(qiq_sql_connection(handle)->db) == 0;
+    QiqSqlConnection *connection = qiq_sql_connection(handle);
+    if (connection->pg != NULL) return qiq_pg_in_transaction(connection->pg);
+    return sqlite3_get_autocommit(connection->db) == 0;
 }
 
 // ---------------------------------------------------------------------------

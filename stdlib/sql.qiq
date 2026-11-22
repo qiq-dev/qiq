@@ -1,5 +1,7 @@
-// SQL databases: SQLite so far, built into every qiq program that uses it,
-// so there's nothing to install. Implemented in C (stdlib/runtime/sql.c).
+// SQL databases: SQLite, built into every qiq program that uses it, and
+// PostgreSQL, whose protocol qiq speaks itself, so there's nothing to
+// install for either. Implemented in C (stdlib/runtime/sql.c and
+// postgres.c).
 //
 //   import Database, Row from "std/sql";
 //
@@ -16,7 +18,7 @@
 // injection). Errors throw DatabaseException.
 
 import Exception, DatabaseException from "exceptions";
-import implode from "string";
+import implode, str_contains from "string";
 
 extern function __sql_open(string dsn): int;
 extern function __sql_close(int handle): void;
@@ -34,8 +36,9 @@ extern function __sql_blob_starts(): int[];
 extern function __sql_slice(byte[] data, int start, int end): byte[];
 
 // The cells of a query's rows, shared by its Row objects. Each cell has a
-// kind (1 int, 2 double, 3 string, 4 bytes, 5 NULL) and a value: the int
-// itself, or the index of its double, string, or byte array.
+// kind (1 int, 2 double, 3 string, 4 bytes, 5 NULL, 6 decimal: PostgreSQL's
+// numeric, as its exact text) and a value: the int itself, or the index of
+// its double, string, or byte array.
 final class __Result {
     public string[] columns;
     public map[string, int] positions;
@@ -89,8 +92,8 @@ final class Row {
         if (kind == 5) {
             return new DatabaseException(sprintf("column '%s' is NULL; check with isNull first, or read it with a fallback, as %sOr(\"%s\", fallback)", column, wanted, column));
         }
-        string[] names = ["", "an int", "a double", "a string", "bytes"];
-        string[] getters = ["", "getInt", "getDouble", "getString", "getBytes"];
+        string[] names = ["", "an int", "a double", "a string", "bytes", "NULL", "a decimal"];
+        string[] getters = ["", "getInt", "getDouble", "getString", "getBytes", "", "getDouble or getString"];
         return new DatabaseException(sprintf("column '%s' holds %s: read it with %s, not %s", column, names[kind], getters[kind], wanted));
     }
 
@@ -113,6 +116,13 @@ final class Row {
     function getInt(string column): int {
         int cell = this->cell(column);
         int kind = this->result->kinds[cell];
+        if (kind == 6) {
+            // A decimal with no fraction, as from PostgreSQL's SUM of bigints.
+            string text = this->result->texts[this->result->values[cell]];
+            if (!str_contains(text, ".") && !str_contains(text, "N")) {
+                return to_int(text);
+            }
+        }
         if (kind != 1) {
             throw this->mismatch(column, kind, "getInt");
         }
@@ -127,12 +137,16 @@ final class Row {
         return this->getInt(column);
     }
 
-    // A REAL column, or an INTEGER one as a double (as from AVG or SUM).
+    // A REAL column, or an INTEGER one as a double (as from AVG or SUM), or
+    // a PostgreSQL numeric.
     function getDouble(string column): double {
         int cell = this->cell(column);
         int kind = this->result->kinds[cell];
         if (kind == 1) {
             return to_double(this->result->values[cell]);
+        }
+        if (kind == 6) {
+            return to_double(this->result->texts[this->result->values[cell]]);
         }
         if (kind != 2) {
             throw this->mismatch(column, kind, "getDouble");
@@ -165,7 +179,8 @@ final class Row {
         return this->getBool(column);
     }
 
-    // A TEXT column, or null when it's NULL (so `?? ""` gives a default).
+    // A TEXT column (or a PostgreSQL numeric, as its exact text), or null
+    // when it's NULL (so `?? ""` gives a default).
     // Text that isn't valid UTF-8 can only be read with getBytes.
     function getString(string column): string {
         int cell = this->cell(column);
@@ -173,7 +188,7 @@ final class Row {
         if (kind == 5) {
             return null;
         }
-        if (kind != 3) {
+        if (kind != 3 && kind != 6) {
             throw this->mismatch(column, kind, "getString");
         }
         return this->result->texts[this->result->values[cell]];
@@ -209,7 +224,7 @@ final class Row {
                     row[name] = to_string(value);
                 case 2:
                     row[name] = to_string(this->result->doubles[value]);
-                case 3:
+                case 3, 6:
                     row[name] = this->result->texts[value];
                 case 4:
                     row[name] = sprintf("(%d bytes)", this->result->blobStarts[value + 1] - this->result->blobStarts[value]);
@@ -230,10 +245,12 @@ final class Database {
     }
 
     // Opens a database: "sqlite:path/to/file.db" (created if it doesn't
-    // exist), or "sqlite::memory:" for one that lives in memory until it's
-    // closed. SQLite's URI names work too, such as
-    // "sqlite:file:data.db?mode=ro" to open read-only. A statement waits up
-    // to 5 seconds for another process's lock before throwing.
+    // exist), "sqlite::memory:" for one that lives in memory until it's
+    // closed, or "postgres://user:password@host:5432/database" (options
+    // after ?: sslmode=disable|require, connect_timeout=seconds). SQLite's
+    // URI names work too, such as "sqlite:file:data.db?mode=ro" to open
+    // read-only. A SQLite statement waits up to 5 seconds for another
+    // process's lock before throwing.
     static function open(string dsn): Database {
         return new Database(__sql_open(dsn));
     }

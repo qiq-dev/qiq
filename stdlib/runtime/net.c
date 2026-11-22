@@ -16,6 +16,7 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
+#include <pthread.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -90,9 +91,27 @@ static void qiq_tls_error(int code, char *out, size_t size) {
     mbedtls_strerror(code, out, size);
 }
 
+// After a fork, the new process would otherwise draw the same random
+// numbers as its parent and every other worker: Mbed TLS's generator and
+// PSA's are both copied with the memory. Both are seeded again from the
+// system's entropy, so each process's TLS keys and nonces are its own.
+// (Connections the parent had open aren't usable in the child anyway.)
+static bool qiq_tls_forked = false;
+
+static void qiq_tls_after_fork(void) {
+    if (!qiq_tls_ready) return;
+    mbedtls_psa_crypto_free();
+    qiq_tls_forked = psa_crypto_init() != PSA_SUCCESS;
+    static const unsigned char process[] = "qiq child";
+    if (mbedtls_ctr_drbg_reseed(&qiq_random, process, sizeof process - 1) != 0) qiq_tls_forked = true;
+}
+
 static void qiq_tls_setup(void) {
+    // A reseed that failed in a forked process leaves TLS unusable there.
+    if (qiq_tls_forked) qiq_throw(QIQ_NETWORK_EXCEPTION, "TLS: could not seed the random number generator after fork");
     if (qiq_tls_ready) return;
     if (psa_crypto_init() != PSA_SUCCESS) qiq_throw(QIQ_NETWORK_EXCEPTION, "TLS: could not initialize cryptography");
+    pthread_atfork(NULL, NULL, qiq_tls_after_fork);
     mbedtls_entropy_init(&qiq_entropy);
     mbedtls_ctr_drbg_init(&qiq_random);
     static const unsigned char personal[] = "qiq";
@@ -692,6 +711,64 @@ QIQ_GUARDED_VOID(qiq_stdlib___socket_set_timeout, (int64_t handle, int64_t timeo
     QiqSocket *socket = qiq_socket(handle);
     if (timeout < 1) qiq_throw(QIQ_INVALID_ARGUMENT_EXCEPTION, "the timeout must be at least 1 second");
     socket->timeout_ms = timeout > 2000000 ? 2000000000 : (int)(timeout * 1000);
+}
+
+// ---------------------------------------------------------------------------
+// Connections for other runtime files (the PostgreSQL driver in
+// postgres.c). They use the same handles and throw NetworkException.
+
+int64_t qiq_net_connect(const char *host, int64_t port, int64_t timeout) {
+    return qiq_stdlib___socket_connect_impl(host, port, false, timeout);
+}
+
+// Starts TLS on a connected socket, for protocols that agree to it first.
+void qiq_net_start_tls(int64_t handle, const char *host) {
+    QiqSocket *socket = qiq_socket(handle);
+    qiq_tls_setup();
+    char message[600];
+    if (!qiq_tls_handshake(socket, host, message, sizeof message)) {
+        qiq_free_socket(handle);
+        qiq_throw(QIQ_NETWORK_EXCEPTION, message);
+    }
+}
+
+// How long each read and write may wait, in milliseconds; -1 for no limit.
+void qiq_net_set_timeout_ms(int64_t handle, int timeout_ms) {
+    qiq_socket(handle)->timeout_ms = timeout_ms;
+}
+
+void qiq_net_send(int64_t handle, const void *data, size_t length) {
+    qiq_send_all(qiq_socket(handle), data, length);
+}
+
+// Exactly `length` bytes into `out`.
+void qiq_net_receive(int64_t handle, void *out, size_t length) {
+    QiqSocket *socket = qiq_socket(handle);
+    unsigned char *into = out;
+    while (length > 0) {
+        if (socket->start == socket->end && !qiq_fill(socket)) {
+            qiq_throwf(QIQ_NETWORK_EXCEPTION, "%s closed the connection", socket->peer);
+        }
+        size_t available = socket->end - socket->start;
+        size_t take = available < length ? available : length;
+        memcpy(into, socket->buffer + socket->start, take);
+        socket->start += take;
+        into += take;
+        length -= take;
+    }
+}
+
+void qiq_net_close(int64_t handle) {
+    QiqSocket *socket = qiq_lookup(handle);
+    if (socket == NULL) return;
+    if (socket->open && socket->tls) mbedtls_ssl_close_notify(&socket->ssl);
+    qiq_free_socket(handle);
+}
+
+// Frees a socket without telling the other end, for one inherited from the
+// process this one was forked from: it's still the parent's connection.
+void qiq_net_abandon(int64_t handle) {
+    qiq_free_socket(handle);
 }
 
 // ---------------------------------------------------------------------------

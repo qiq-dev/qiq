@@ -1,0 +1,57 @@
+// std/sql with PostgreSQL: run with QIQ_TEST_POSTGRES=postgres://user:password@host/database
+// (it creates and drops a table named users). Types, placeholders, errors, transactions, queryAs.
+import Database, Row from "std/sql";
+import getenv, exit from "std/os";
+
+string url = getenv("QIQ_TEST_POSTGRES");
+if (url == null) {
+    print("skipped: set QIQ_TEST_POSTGRES to a postgres:// URL of a database the test may create tables in");
+    exit(0);
+}
+
+Database db = Database::open(url);
+db->executeScript("drop table if exists users; create table users (id serial primary key, name text not null, email text unique, age integer, score double precision, active boolean, avatar bytea, balance numeric(10, 2));");
+byte[] avatar = [1, 2, 255];
+int changed = db->execute("insert into users (name, email, age, score, active, avatar, balance) values (?, ?, ?, ?, ?, ?, ?)", "Ada", "ada@example.com", 36, 9.5, true, avatar, "1234.50");
+print("inserted", changed, db->lastInsertId());
+string missing = null;
+db->execute("insert into users (name, email, age, score, active) values (?, ?, ?, ?, ?)", "Lin", missing, 41, 7.25, false);
+db->execute("insert into users (name, age) values (?, ?)", "Bob", null);
+foreach (db->query("select * from users where age > ? or age is null order by id", 30) as row) {
+    print(row->getInt("id"), row->getString("name"), row->getString("email") ?? "-", row->getIntOr("age", -1), row->getDoubleOr("score", 0.0), row->getBoolOr("active", false), row->isNull("avatar"));
+}
+Row ada = db->queryOne("select avatar, balance, count(*) over () as n, sum(age) over () as total, avg(age) over () as mean from users where name = ?", "Ada");
+print(ada->getBytes("avatar"), ada->getString("balance"), ada->getDouble("balance"), ada->getInt("n"), ada->getInt("total"), ada->getDouble("mean"));
+print(ada->toMap());
+print(db->queryOne("select * from users where name = ?", "Nobody") == null);
+print(db->execute("update users set age = age + 1 where age is not null"));
+print(db->execute("select 1"));
+print(db->queryOne("select 'it''s ? not a placeholder' as a, $$also ? here$$ as b, ? as c -- and ? here", "yes")->toMap());
+print(db->queryOne("select '{\"a\": 1}'::jsonb ?? 'a' as has")->getBool("has"));
+
+try { db->execute("insert into users (name, email) values (?, ?)", "Ada2", "ada@example.com"); } catch (DatabaseException e) { print("error:", e->getMessage()); }
+try { db->query("select * from users where id = ?"); } catch (DatabaseException e) { print("error:", e->getMessage()); }
+try { db->query("select * from nope"); } catch (DatabaseException e) { print("error:", e->getMessage()); }
+try { db->execute("delete from users; delete from users"); } catch (DatabaseException e) { print("error:", e->getMessage()); }
+try { db->query("select * from users where id = $1", 1); } catch (DatabaseException e) { print("error:", e->getMessage()); }
+
+db->transaction(function(): void {
+    db->execute("insert into users (name) values (?)", "Tx1");
+});
+try {
+    db->transaction(function(): void {
+        db->execute("insert into users (name) values (?)", "Tx2");
+        throw new RuntimeException("boom");
+    });
+} catch (RuntimeException e) { print("rolled back:", e->getMessage(), db->inTransaction()); }
+print(db->queryOne("select count(*) as n from users where name like 'Tx%'")->getInt("n"));
+db->begin();
+try { db->execute("insert into users (id, name) values (1, 'dup')"); } catch (DatabaseException e) { print("in tx error:", e->getMessage()); }
+print("failed tx:", db->inTransaction());
+db->rollback();
+print("after rollback:", db->inTransaction());
+
+class User { function __construct(public int id, public string name, public int age = 0) {} }
+User[] users = db->queryAs("select id, name, age from users order by id limit ?", 2);
+print(users[0]->name, users[1]->age);
+db->close();

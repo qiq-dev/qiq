@@ -28,7 +28,7 @@ OVERVIEW = (
     "<tr><td><code>std/http</code></td><td>The <a href=\"ref.http.html\">HTTP client</a> and URL encoding</td></tr>"
     "<tr><td><code>std/http/server</code></td><td>The <a href=\"ref.http-server.html\">HTTP server</a></td></tr>"
     "<tr><td><code>std/crypto</code></td><td><a href=\"ref.crypto.html\">Hashing and encoding</a>: MD5, SHA-1, SHA-2, HMAC, hex, base64, and password hashing</td></tr>"
-    "<tr><td><code>std/sql</code></td><td>SQL databases (SQLite): the <a href=\"class.database.html\">Database</a> and <a href=\"class.row.html\">Row</a> classes</td></tr>"
+    "<tr><td><code>std/sql</code></td><td>SQL databases (SQLite and PostgreSQL): the <a href=\"class.database.html\">Database</a> and <a href=\"class.row.html\">Row</a> classes</td></tr>"
     "</tbody></table>\n"
     "<pre class=\"code\">import File, file_get_contents from \"std/file\";\nimport date from \"std/time\";</pre>\n"
     "<p>Names from these modules are free for your own code when you don't import them: a program can declare its "
@@ -2347,7 +2347,7 @@ KeyNotFoundException: map key not found
 
 
 DATABASE_CLASS = """<h1>The Database class</h1>
-<p>A connection to an SQL database, like PHP's <code>PDO</code>. qiq supports SQLite so far, which is built into every program that uses it: there's no server or library to install, and the database is a single file.</p>
+<p>A connection to an SQL database, like PHP's <code>PDO</code>: SQLite, which is built into every program that uses it, so there's no server or library to install and the database is a single file; or a <a href="#postgres">PostgreSQL</a> server, whose protocol qiq speaks itself, so there's nothing to install for it either. The same methods work with both.</p>
 <h2>Class synopsis</h2>
 <div class="synopsis"><code><span class="kw">final class</span> <span class="cls">Database</span> {<br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">static function</span> <span class="fn">open</span>(<span class="type">string</span> dsn): <span class="cls">Database</span><br>
@@ -2403,13 +2403,13 @@ db->execute("insert into students (name) values (?)", name);   // stores the nam
 <table>
 <thead><tr><th>Method</th><th>Description</th></tr></thead>
 <tbody>
-<tr><td><code>Database::open(dsn)</code></td><td>Opens a database. <code>"sqlite:path/to/file.db"</code> opens a file, relative to the directory the program runs in, creating it if it doesn't exist; <code>"sqlite::memory:"</code> makes a database in memory that lasts until it's closed. SQLite's URI file names work too, such as <code>"sqlite:file:data.db?mode=ro"</code> to open a file read-only. Throws <code>DatabaseException</code> when the file can't be opened.</td></tr>
+<tr><td><code>Database::open(dsn)</code></td><td>Opens a database. <code>"sqlite:path/to/file.db"</code> opens a file, relative to the directory the program runs in, creating it if it doesn't exist; <code>"sqlite::memory:"</code> makes a database in memory that lasts until it's closed. SQLite's URI file names work too, such as <code>"sqlite:file:data.db?mode=ro"</code> to open a file read-only. <code>"postgres://user:password@host:5432/database"</code> connects to PostgreSQL (see <a href="#postgres">below</a>). Throws <code>DatabaseException</code> when the database can't be opened or the login fails, and <code>NetworkException</code> when the server can't be reached.</td></tr>
 <tr><td><code>execute(sql, ...values)</code></td><td>Runs one statement, such as <code>INSERT</code>, <code>UPDATE</code>, <code>DELETE</code>, or <code>CREATE TABLE</code>. Returns the number of rows it inserted, changed, or deleted.</td></tr>
 <tr><td><code>query(sql, ...values)</code></td><td>Runs a query and returns all its rows as an array of <a href="class.row.html">Row</a> objects, empty when nothing matches.</td></tr>
 <tr><td><code>queryOne(sql, ...values)</code></td><td>The first row of a query, or <code>null</code> when there is none. It stops after that row, so it's the quick way to look up one record.</td></tr>
 <tr><td><code>queryAs(sql, ...values)</code>, <code>queryOneAs(sql, ...values)</code></td><td>Like <code>query</code> and <code>queryOne</code>, with each row read into an object of the class the result is used as: <code>User[] users = db-&gt;queryAs(...)</code>. See <a href="#objects">Reading rows into objects</a>.</td></tr>
 <tr><td><code>executeScript(sql)</code></td><td>Runs several statements separated by semicolons, such as a schema. They can't have placeholders. <code>execute</code>, <code>query</code>, and <code>queryOne</code> run exactly one statement and throw if the SQL has more, so a value can never smuggle in a second one.</td></tr>
-<tr><td><code>lastInsertId()</code></td><td>The id (the <code>INTEGER PRIMARY KEY</code>, or SQLite's rowid) of the last row inserted.</td></tr>
+<tr><td><code>lastInsertId()</code></td><td>The id (the <code>INTEGER PRIMARY KEY</code>, or SQLite's rowid) of the last row inserted. With PostgreSQL, the value this connection's last sequence gave (such as a <code>serial</code> or identity column's), as PDO does; <code>insert ... returning id</code> with <code>queryOne</code> says exactly which column you mean.</td></tr>
 <tr><td><code>begin()</code>, <code>commit()</code>, <code>rollback()</code></td><td>Start a transaction, save its changes, or undo them. Without a transaction, each statement is saved on its own.</td></tr>
 <tr><td><code>inTransaction()</code></td><td>Whether a transaction is open.</td></tr>
 <tr><td><code>transaction(body)</code></td><td>Runs <code>body</code> in a transaction: commits when it returns, or rolls back and rethrows when it throws.</td></tr>
@@ -2500,9 +2500,31 @@ UNIQUE constraint failed: users.email
 query: the SQL has 1 placeholder (?), but 0 values were given
 ```
 
-<h2>Using SQLite in a web server</h2>
-<p>A database can be opened before calling <a href="function.http-serve.html">http_serve</a> and used in the handler. Each worker process gets its own connection: a connection opened before the workers start is reopened in each worker the first time it's used there, and the <code>PRAGMA</code> statements it ran are run again, since settings such as <code>synchronous</code> belong to the connection rather than the file. A <code>sqlite::memory:</code> database isn't shared between workers.</p>
-<p>The workers can read at the same time, but SQLite lets one write at a time. A statement waits up to 5 seconds for another process's write to finish before throwing <code>DatabaseException</code> (<code>database is locked</code>). For a server, switch the database to write-ahead logging, which lets reads go on while a write happens, and stop waiting for the disk after every commit:</p>
+<h2 id="postgres">PostgreSQL</h2>
+<pre class="code">Database db = Database::open("postgres://app:secret@db.example.com:5432/shop");
+Row order = db->queryOne("insert into orders (customer, total) values (?, ?) returning id", customer, total);
+print("order", order->getInt("id"));</pre>
+<p>The URL is <code>postgres://user:password@host:port/database</code> (or <code>postgresql://</code>), as libpq writes it. Everything after <code>postgres://</code> is optional: the user defaults to <code>postgres</code>, the host to <code>localhost</code>, the port to 5432, and the database to the user's name. Percent-encode characters such as <code>@</code>, <code>:</code>, and <code>/</code> in the user and password (<code>p%40ss</code> for <code>p@ss</code>). Without a password in the URL, the <code>PGPASSWORD</code> environment variable is used, which keeps it out of your code. Logins use SCRAM-SHA-256 (PostgreSQL's default), MD5, or a plain password.</p>
+<table>
+<thead><tr><th>Option</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td><code>sslmode=require</code></td><td>Encrypt the connection with TLS, and check that the server's certificate is valid for its host name, against the system's CA certificates or the ones in <code>SSL_CERT_FILE</code> (libpq calls this <code>verify-full</code>, which is accepted too). This is the default for every host except the local machine.</td></tr>
+<tr><td><code>sslmode=disable</code></td><td>Don't encrypt. The default for <code>localhost</code>, <code>127.0.0.1</code>, and <code>::1</code>; use it for other hosts only on a network you trust, such as between containers on one machine.</td></tr>
+<tr><td><code>connect_timeout=10</code></td><td>Seconds to wait for the server when connecting; 10 by default. Statements have no time limit; set PostgreSQL's <code>statement_timeout</code> for one.</td></tr>
+</tbody>
+</table>
+<p>Options go after <code>?</code>, separated by <code>&amp;</code>: <code>postgres://app@10.0.0.5/shop?sslmode=disable&amp;connect_timeout=3</code>. Unlike libpq, there's no <code>prefer</code> mode that falls back to an unencrypted connection when the server doesn't offer TLS: without <code>sslmode=disable</code>, such a server is an error that says so.</p>
+<ul>
+<li>Placeholders are <code>?</code>, as with SQLite; qiq turns them into PostgreSQL's <code>$1</code>, <code>$2</code>, ..., leaving alone any <code>?</code> inside strings, quoted names, comments, and <code>$$</code>-quoted text. For PostgreSQL's own <code>?</code> operators (on <code>jsonb</code>), write <code>??</code>: <code>where tags ?? 'new'</code>.</li>
+<li>Values are sent as text that PostgreSQL reads as the type the column or function needs, as PDO does; a byte array is sent as <code>bytea</code>. Where nothing gives a type, as in <code>select ? as n</code>, the value is text: cast it, <code>select ?::int as n</code>.</li>
+<li>Columns are read by type: <code>smallint</code>, <code>integer</code>, and <code>bigint</code> with <code>getInt</code>, <code>real</code> and <code>double precision</code> with <code>getDouble</code>, <code>boolean</code> with <code>getBool</code>, <code>bytea</code> with <code>getBytes</code>, and <code>numeric</code> with <code>getString</code> (its exact digits) or <code>getDouble</code>, or <code>getInt</code> when it has no fraction (as <code>sum</code> of <code>bigint</code> gives). Everything else, such as <code>text</code>, dates, times, <code>uuid</code>, and <code>json</code>, is read with <code>getString</code>, as PostgreSQL writes it.</li>
+<li>Errors carry PostgreSQL's message and detail: <code>duplicate key value violates unique constraint "users_email_key": Key (email)=(ada@example.com) already exists.</code> After an error in a transaction, PostgreSQL refuses further statements until <code>rollback()</code>, which <code>transaction(body)</code> does for you.</li>
+<li>A connection that is lost, because the server restarted or closed it, connects again for the next statement. If a transaction was open, that statement throws instead, saying so, since the server rolled the transaction back.</li>
+</ul>
+
+<h2>Using a database in a web server</h2>
+<p>A database can be opened before calling <a href="function.http-serve.html">http_serve</a> and used in the handler. Each worker process gets its own connection: a connection opened before the workers start is opened again in each worker the first time it's used there, and the settings it made are made again, since they belong to the connection: SQLite's <code>PRAGMA</code> statements, and PostgreSQL's <code>SET</code> statements (except <code>SET LOCAL</code>). A <code>sqlite::memory:</code> database isn't shared between workers. With PostgreSQL, each worker holds one connection to the server, so 4 workers use 4 of its connections.</p>
+<p>With SQLite, the workers can read at the same time, but only one can write at a time. A statement waits up to 5 seconds for another process's write to finish before throwing <code>DatabaseException</code> (<code>database is locked</code>). For a server, switch the database to write-ahead logging, which lets reads go on while a write happens, and stop waiting for the disk after every commit:</p>
 <pre class="code">Database db = Database::open("sqlite:app.db");
 db->executeScript("pragma journal_mode = wal; pragma synchronous = normal;");
 http_serve(":8080", function(Request r, ResponseWriter w): void {
@@ -2535,9 +2557,9 @@ ROW_CLASS = """<h1>The Row class</h1>
 <thead><tr><th>Method</th><th>Reads</th><th>When the column is NULL</th></tr></thead>
 <tbody>
 <tr><td><code>getInt(column)</code></td><td>An <code>INTEGER</code></td><td>Throws</td></tr>
-<tr><td><code>getDouble(column)</code></td><td>A <code>REAL</code>, or an <code>INTEGER</code> as a double (<code>SUM</code> and <code>AVG</code> can give either)</td><td>Throws</td></tr>
+<tr><td><code>getDouble(column)</code></td><td>A <code>REAL</code>, or an <code>INTEGER</code> as a double (<code>SUM</code> and <code>AVG</code> can give either), or a PostgreSQL <code>numeric</code></td><td>Throws</td></tr>
 <tr><td><code>getBool(column)</code></td><td>An <code>INTEGER</code> that is 0 or 1, as SQLite stores booleans</td><td>Throws</td></tr>
-<tr><td><code>getString(column)</code></td><td><code>TEXT</code></td><td>Returns <code>null</code>, so <code>?? ""</code> gives a default</td></tr>
+<tr><td><code>getString(column)</code></td><td><code>TEXT</code>, or a PostgreSQL <code>numeric</code> as its exact digits</td><td>Returns <code>null</code>, so <code>?? ""</code> gives a default</td></tr>
 <tr><td><code>getBytes(column)</code></td><td>A <code>BLOB</code>, or text that isn't valid UTF-8</td><td>Returns <code>null</code></td></tr>
 <tr><td><code>getIntOr</code>, <code>getDoubleOr</code>, <code>getBoolOr(column, fallback)</code></td><td>The same as the getter</td><td>Returns <code>fallback</code></td></tr>
 <tr><td><code>isNull(column)</code></td><td colspan="2">Whether the column is NULL</td></tr>
@@ -2547,7 +2569,7 @@ ROW_CLASS = """<h1>The Row class</h1>
 </tbody>
 </table>
 <p>Column names are what the query calls them: a table's column name, or the name given with <code>AS</code>. Name computed columns, as in <code>select count(*) as n</code>; without <code>AS</code>, the name is the expression's text, <code>count(*)</code>. When two columns have the same name, as <code>id</code> often does in a join, the getters read the first; rename the others with <code>AS</code>.</p>
-<p>SQLite stores each value with its own type, whatever the column was declared as, so the getter follows the value: an <code>INTEGER</code> column that was given <code>"12"</code> holds text, which <code>getString</code> reads.</p>
+<p>SQLite stores each value with its own type, whatever the column was declared as, so the getter follows the value: an <code>INTEGER</code> column that was given <code>"12"</code> holds text, which <code>getString</code> reads. PostgreSQL's columns each have one type; see <a href="class.database.html#postgres">PostgreSQL</a> for which getter reads which.</p>
 
 <h2>Example</h2>
 ```qiq
@@ -2585,7 +2607,7 @@ CLASS_PAGES = [
     ("class.responsewriter.html", "The ResponseWriter class", "Builds the HTTP server's response to a request.", RESPONSEWRITER_CLASS),
     ("class.router.html", "The Router class", "Sends each HTTP request to a handler by method and path.", ROUTER_CLASS),
     ("class.socket.html", "The Socket class", "TCP connections, optionally encrypted with TLS, for talking to network services.", SOCKET_CLASS),
-    ("class.database.html", "The Database class", "SQL databases (SQLite): running statements with values for their placeholders, queries, and transactions.", DATABASE_CLASS),
+    ("class.database.html", "The Database class", "SQL databases (SQLite and PostgreSQL): running statements with values for their placeholders, queries, and transactions.", DATABASE_CLASS),
     ("class.row.html", "The Row class", "One row of a query's result, read by column name with typed getters.", ROW_CLASS),
     ("exception-classes.html", "Exception classes", "The exception classes thrown by the language and the standard library.", EXCEPTION_CLASSES),
 ]
