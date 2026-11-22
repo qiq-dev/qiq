@@ -9356,6 +9356,17 @@ fn stdlib_hint(name: &str) -> String {
         }
         names
     });
+    // PHP names qiq gives another name to.
+    let renamed = match name {
+        "password_hash" => Some("bcrypt_hash"),
+        "password_verify" => Some("bcrypt_verify"),
+        _ => None,
+    };
+    if let Some(qiq_name) = renamed {
+        if let Some(path) = names.get(qiq_name) {
+            return format!("; qiq's is {qiq_name}: import {qiq_name} from \"{path}\";");
+        }
+    }
     match names.get(name) {
         Some(path) => format!("; it's in the standard library: import {name} from \"{path}\";"),
         None => String::new(),
@@ -10556,6 +10567,13 @@ mod tests {
         let crypto = compile_source("import sha1, hash_hmac, hash_bytes, bin2hex from \"std/crypto\"; string a = sha1(\"x\"); string b = hash_hmac(\"sha256\", \"m\", \"k\"); string c = bin2hex(hash_bytes(\"md5\", [1]));").unwrap();
         let base64 = compile_source("import base64_encode, base64_decode_bytes from \"std/crypto\"; byte[] b = base64_decode_bytes(base64_encode(\"x\"));").unwrap();
         assert!(base64.contains("@qiq_stdlib_base64_encode(") && base64.contains("@qiq_stdlib_base64_decode_bytes("), "{base64}");
+        assert_eq!(
+            compile_source("string h = password_hash(\"pw\");").unwrap_err(),
+            "1:1: function 'password_hash' is not declared; qiq's is bcrypt_hash: import bcrypt_hash from \"std/crypto\";"
+        );
+        let passwords = compile_source("import bcrypt_hash, bcrypt_verify from \"std/crypto\"; string h = bcrypt_hash(\"pw\"); bool ok = bcrypt_verify(\"pw\", h);").unwrap();
+        // The default cost (12) is filled in at the call.
+        assert!(passwords.contains("@qiq_stdlib_bcrypt_hash(ptr") && passwords.contains(", i64 12)") && passwords.contains("@qiq_stdlib_bcrypt_verify("), "{passwords}");
         for function in ["qiq_stdlib_sha1", "qiq_stdlib_hash_hmac", "qiq_stdlib_hash_bytes", "qiq_stdlib_bin2hex"] {
             assert!(crypto.contains(&format!("@{function}(")), "{function}: {crypto}");
         }

@@ -1,6 +1,6 @@
 // Hashing with std/crypto, checked against PHP's md5, sha1, hash, and
 // hash_hmac (which print the same values).
-import md5, sha1, hash, hash_hmac, hash_bytes, bin2hex, base64_encode, base64_encode_bytes, base64_decode, base64_decode_bytes from "std/crypto";
+import md5, sha1, hash, hash_hmac, hash_bytes, bin2hex, base64_encode, base64_encode_bytes, base64_decode, base64_decode_bytes, bcrypt_hash, bcrypt_verify from "std/crypto";
 
 string[] texts = ["", "abc", "The quick brown fox jumps over the lazy dog", "héllo, 世界 😀"];
 foreach (texts as text) {
@@ -63,6 +63,49 @@ foreach (["a", "aGk==", "aG=k", "aGk=x", "a===", "aGk!", "aGké", "QQ="] as bad)
 try {
     print(base64_decode("/w=="));
 } catch (InvalidUtf8Exception e) {
+    print(e->getMessage());
+}
+
+// bcrypt: hashes made by PHP's crypt() verify, and a different password
+// doesn't (for passwords over 72 bytes, a change in the first 72).
+function checkPassword(string password, string hash): void {
+    string changed = "x" + password;
+    print(bcrypt_verify(password, hash), bcrypt_verify(changed, hash));
+}
+checkPassword("", "$2y$06$kxaMoF6Sk3QUIIVyhlVAT.oAh2dOnx6RVZ7KBxbGJHQvVSe5JnE9C");
+checkPassword("password", "$2y$05$maMq.WEGV.pFV8IwOFggee/pF6YMCR8YqltautITTO9oL9/6v3xhu");
+checkPassword("U*U", "$2y$06$Kw8dkux6dBbiUkqMoahKdertet.G/K4Yn8Wl/6ksPUbkiDoHJcF36");
+checkPassword("pässwörd", "$2y$04$beZs9eC56tQBg9u9OpZbaOAbm5nyPTUsq1Vkeh5dKXaT1dnprsbjC");
+checkPassword("pässwörd", "$2b$04$yDg5miVaurycg5ex86SdU.VPqSrzZVvkw7pDEJWoS01do1n7N6lui");
+checkPassword("pässwörd", "$2a$04$9A9PWncz3AlrVvdsTU/8YOfPpDT1QA/8mxlU.4ZCBDoHyx9rxVEQu");
+checkPassword("日本語のパスワード", "$2y$04$NwiT2aLZCsubr7xCJNXXt.cmwTnz7HVd34.pJlXb.eYHdpTRmLyCC");
+checkPassword("emoji 😀🔑", "$2y$05$woiJA.elHopaKJcr/6wvgexItdpeKHCKDAMdn8ARYOs/cSKMrdHMK");
+checkPassword("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "$2y$06$35vZZimh9Yz8OGeyRKZta.kztXcGt2Uco1Rk63Cf66KYyblrc6BUa");
+checkPassword("ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", "$2b$04$r.wqKB7.uldfZcFkX3fzzeCvrVoL8fMNsBy5JtvMBJC2RMy8X2Pk.");
+checkPassword("new\nline", "$2y$05$haj2e6iY0e7BT/HC4Hezj.IZoad7OsP8NKIgllb8.JnmVioEeD.MO");
+checkPassword("quote\"back\\slash", "$2y$06$7PWesl5oJphtBC1iF8nuZeiLN2XI/QwvGgiseT5TWB4LSiYUHUJ7C");
+checkPassword("U*U", "$2a$05$CCCCCCCCCCCCCCCCCCCCC.E5YPO9kmyuRGyh0XouQYb4YMJKvyOeW");   // OpenBSD's test vector
+// bcrypt uses only the first 72 bytes: a PHP hash of 73 "c"s verifies 72 of them.
+print(bcrypt_verify(str_repeat("c", 72), "$2b$04$r.wqKB7.uldfZcFkX3fzzeCvrVoL8fMNsBy5JtvMBJC2RMy8X2Pk."));
+// bcrypt_hash: "$2y$", the cost, a new random salt each time.
+string first = bcrypt_hash("secret", 4);
+string second = bcrypt_hash("secret", 4);
+print(len(first), substr(first, 0, 7), first != second, bcrypt_verify("secret", first), bcrypt_verify("secret", second), bcrypt_verify("Secret", first));
+print(substr(bcrypt_hash("secret"), 0, 7));
+// Not a bcrypt hash, or a damaged one: false.
+foreach (["", "secret", "$1$abc$def", "$2x$04$" + substr(first, 7), "$2y$03$" + substr(first, 7), "$2y$4$" + substr(first, 7), substr(first, 0, 59), first + "x", substr(first, 0, 40) + "!" + substr(first, 41)] as bad) {
+    print(bcrypt_verify("secret", bad));
+}
+foreach ([3, 32] as cost) {
+    try {
+        print(bcrypt_hash("secret", cost));
+    } catch (InvalidArgumentException e) {
+        print(e->getMessage());
+    }
+}
+try {
+    print(bcrypt_hash(str_repeat("é", 37)));
+} catch (InvalidArgumentException e) {
     print(e->getMessage());
 }
 

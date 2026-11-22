@@ -1,4 +1,4 @@
-// Hashing and encoding: message digests, HMACs, hex, and base64, implemented in C
+// Hashing and encoding: message digests, HMACs, hex, base64, and password hashing, implemented in C
 // (stdlib/runtime/crypto.c) with Mbed TLS.
 //
 //   import sha1, hash, hash_hmac from "std/crypto";
@@ -47,3 +47,16 @@ extern function base64_decode(string text): string;
 
 // The bytes that `text` encodes.
 extern function base64_decode_bytes(string text): byte[];
+
+// Passwords, hashed with bcrypt as PHP's password_hash does (qiq names the
+// algorithm, and has no other yet): a "$2y$" hash with a random salt, which
+// bcrypt_verify checks, as PHP's password_verify does. `cost` is the log2 of
+// the work (4 to 31): each step doubles the time, and 12 takes about a
+// quarter of a second. bcrypt only uses a password's first 72 bytes, so a
+// longer one throws InvalidArgumentException rather than being cut short.
+extern function bcrypt_hash(string password, int cost = 12): string;
+
+// Whether `password` matches `hash`, a hash from bcrypt_hash (or from
+// PHP's, or any "$2y$", "$2b$", or "$2a$" bcrypt hash). False for a hash
+// that isn't one.
+extern function bcrypt_verify(string password, string hash): bool;

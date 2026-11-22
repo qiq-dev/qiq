@@ -27,7 +27,7 @@ OVERVIEW = (
     "<tr><td><code>std/net</code></td><td>The <a href=\"class.socket.html\">Socket</a> class</td></tr>"
     "<tr><td><code>std/http</code></td><td>The <a href=\"ref.http.html\">HTTP client</a> and URL encoding</td></tr>"
     "<tr><td><code>std/http/server</code></td><td>The <a href=\"ref.http-server.html\">HTTP server</a></td></tr>"
-    "<tr><td><code>std/crypto</code></td><td><a href=\"ref.crypto.html\">Hashing and encoding</a>: MD5, SHA-1, SHA-2, HMAC, hex, and base64</td></tr>"
+    "<tr><td><code>std/crypto</code></td><td><a href=\"ref.crypto.html\">Hashing and encoding</a>: MD5, SHA-1, SHA-2, HMAC, hex, base64, and password hashing</td></tr>"
     "</tbody></table>\n"
     "<pre class=\"code\">import File, file_get_contents from \"std/file\";\nimport date from \"std/time\";</pre>\n"
     "<p>Names from these modules are free for your own code when you don't import them: a program can declare its "
@@ -1915,7 +1915,7 @@ CRYPTO = {
     "slug": "crypto",
     "title": "Hashing and encoding",
     "intro": (
-        "Message digests, HMACs, hex, and base64, from <code>std/crypto</code>, with PHP's names and results: <code>sha1(\"abc\")</code> "
+        "Message digests, HMACs, hex, base64, and password hashing, from <code>std/crypto</code>, with PHP's names and results: <code>sha1(\"abc\")</code> "
         "and <code>base64_encode(\"abc\")</code> give what they give in PHP. Text is hashed and encoded as its UTF-8 bytes. "
         "Because a qiq string must be UTF-8 text, binary data, such as a file read with <code>file_get_bytes</code>, goes "
         "through the <code>_bytes</code> functions, which take or return a <code>byte[]</code>. "
@@ -1931,7 +1931,7 @@ CRYPTO = {
 <tr><td><code>sha384</code>, <code>sha512</code></td><td>48 and 64 bytes</td><td>The same, with longer digests.</td></tr>
 </tbody>
 </table>
-<div class="note"><strong>Note:</strong> None of these is a way to store passwords: they're fast, which makes guessing quick. qiq doesn't have <code>password_hash</code> yet.</div>""",
+<div class="note"><strong>Note:</strong> None of these is a way to store passwords: they're fast, which makes guessing quick. Use <a href="function.bcrypt-hash.html">bcrypt_hash</a> and <a href="function.bcrypt-verify.html">bcrypt_verify</a>, which are slow on purpose.</div>""",
     "functions": [
         {
             "name": "md5",
@@ -2087,6 +2087,58 @@ CRYPTO = {
             "errors": ["<code>InvalidArgumentException</code> as for <code>base64_decode</code>.", NULL_STRING],
             "examples": [{"title": "Decoding bytes", "code": 'print(base64_decode_bytes("AP8Q"), base64_decode_bytes("-_8"));', "output": "[0, 255, 16] [251, 255]"}],
             "see_also": ["base64_encode_bytes", "base64_decode", "bin2hex"],
+        },
+        {
+            "name": "bcrypt_hash",
+            "purpose": "Hash a password for storing, with bcrypt",
+            "params": [
+                param("password", "string", "The password, as its UTF-8 bytes: at most 72 bytes."),
+                param("cost", "int", "How much work hashing takes, as a power of two: 4 to 31. Each step doubles the time; 12 takes about a third of a second.", "12"),
+            ],
+            "returns": "string",
+            "description": "Returns a bcrypt hash of <code>password</code> with a new random salt, in the form PHP's <code>password_hash</code> makes: 60 characters starting <code>$2y$</code> and the cost, as in <code>$2y$12$</code>. The salt and cost are part of the hash, so store the hash and nothing else, and check a password against it with <a href=\"function.bcrypt-verify.html\">bcrypt_verify</a>. Hashing the same password twice gives different hashes.",
+            "return_description": "The hash, 60 characters.",
+            "errors": [
+                "<code>InvalidArgumentException</code> if the cost isn't 4 to 31, or the password is longer than 72 bytes. bcrypt only uses the first 72 bytes; PHP ignores the rest without saying so, which makes passwords that differ only after 72 bytes match.",
+                NULL_STRING,
+            ],
+            "examples": [
+                {
+                    "title": "Storing and checking a password",
+                    "code": 'string stored = bcrypt_hash("correct horse battery staple");\nprint(len(stored), substr(stored, 0, 7));\nprint(bcrypt_verify("correct horse battery staple", stored), bcrypt_verify("Correct horse battery staple", stored));',
+                    "output": "60 $2y$12$\n1 0",
+                }
+            ],
+            "notes": [
+                "This is PHP's <code>password_hash</code> with <code>PASSWORD_BCRYPT</code> (or <code>PASSWORD_DEFAULT</code>, which is bcrypt). qiq names the algorithm in the function, and has no other password hashing yet.",
+                "The default cost is 12, as in PHP 8.4; PHP 8.3 uses 10. Choose the highest cost your server can afford per login.",
+                "Hashes from PHP's <code>password_hash</code> and <code>crypt</code> work with <code>bcrypt_verify</code>, and the other way round.",
+            ],
+            "see_also": ["bcrypt_verify", "hash_hmac"],
+        },
+        {
+            "name": "bcrypt_verify",
+            "purpose": "Check a password against a bcrypt hash",
+            "params": [
+                param("password", "string", "The password to check."),
+                param("hash", "string", "A hash from <code>bcrypt_hash</code>: a bcrypt hash starting <code>$2y$</code>, <code>$2b$</code>, or <code>$2a$</code>."),
+            ],
+            "returns": "bool",
+            "description": "Returns whether <code>password</code> is the password <code>hash</code> was made from, like PHP's <code>password_verify</code>. It hashes <code>password</code> again with the hash's salt and cost, so it takes as long as <code>bcrypt_hash</code> did, and compares the results in a way that takes the same time however much of them matches.",
+            "return_description": "<code>true</code> if the password matches; <code>false</code> if it doesn't, or if <code>hash</code> isn't a bcrypt hash.",
+            "errors": [NULL_STRING],
+            "examples": [
+                {
+                    "title": "Checking a hash made by PHP",
+                    "code": 'string hash = "$2y$05$maMq.WEGV.pFV8IwOFggee/pF6YMCR8YqltautITTO9oL9/6v3xhu";\nprint(bcrypt_verify("password", hash), bcrypt_verify("passw0rd", hash), bcrypt_verify("password", "not a hash"));',
+                    "output": "1 0 0",
+                }
+            ],
+            "notes": [
+                "This is PHP's <code>password_verify</code>, for bcrypt hashes.",
+                "As bcrypt does, only the first 72 bytes of <code>password</code> count, so hashes PHP made from longer passwords still verify.",
+            ],
+            "see_also": ["bcrypt_hash"],
         },
     ],
 }

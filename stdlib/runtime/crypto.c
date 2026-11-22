@@ -2,6 +2,7 @@
 // computed with Mbed TLS (already linked into every program for HTTPS).
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include <strings.h>
 
@@ -307,4 +308,246 @@ QIQ_GUARDED(char *, qiq_stdlib_base64_decode, NULL, (const char *text), (text)) 
     }
     result[decoded] = '\0';
     return result;
+}
+
+// ---------------------------------------------------------------------------
+// bcrypt, for bcrypt_hash and bcrypt_verify: the "$2y$" hashes PHP
+// makes, computed as PHP's crypt_blowfish computes them (including its
+// countermeasure for an old bug, which changes some "$2a$" hashes).
+
+#include <errno.h>
+#include <fcntl.h>
+#include <sys/random.h>
+#include <unistd.h>
+
+#include "blowfish_tables.h"
+
+typedef struct {
+    uint32_t p[18];
+    uint32_t s[4][256];
+} QiqBlowfish;
+
+#define QIQ_BLOWFISH_F(state, x) \
+    ((((state)->s[0][(x) >> 24] + (state)->s[1][((x) >> 16) & 0xff]) ^ (state)->s[2][((x) >> 8) & 0xff]) + (state)->s[3][(x) & 0xff])
+
+static void qiq_blowfish_encrypt(const QiqBlowfish *state, uint32_t *left, uint32_t *right) {
+    uint32_t l = *left ^ state->p[0];
+    uint32_t r = *right;
+    for (int round = 1; round <= 16; round += 2) {
+        r ^= QIQ_BLOWFISH_F(state, l) ^ state->p[round];
+        l ^= QIQ_BLOWFISH_F(state, r) ^ state->p[round + 1];
+    }
+    *left = r ^ state->p[17];
+    *right = l;
+}
+
+// Encrypts zero (or, with `salt`, the salt's words) through the state,
+// replacing the P-array and S-boxes with the output as it goes.
+static void qiq_blowfish_mix(QiqBlowfish *state, const uint32_t salt[4]) {
+    uint32_t left = 0, right = 0;
+    int word = 0;
+    uint32_t *slots = state->p;
+    for (int index = 0; index < 18 + 4 * 256; index += 2) {
+        if (salt != NULL) {
+            left ^= salt[word];
+            right ^= salt[word + 1];
+            word = (word + 2) % 4;
+        }
+        qiq_blowfish_encrypt(state, &left, &right);
+        if (index < 18) {
+            slots[index] = left;
+            slots[index + 1] = right;
+        } else {
+            int box = (index - 18) / 256, entry = (index - 18) % 256;
+            state->s[box][entry] = left;
+            state->s[box][entry + 1] = right;
+        }
+    }
+}
+
+static const char qiq_bcrypt_alphabet[] = "./ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+// bcrypt's base64: its own alphabet, no padding.
+static void qiq_bcrypt_encode(const unsigned char *data, size_t length, char *out) {
+    size_t index = 0;
+    while (index < length) {
+        unsigned c1 = data[index++];
+        *out++ = qiq_bcrypt_alphabet[c1 >> 2];
+        c1 = (c1 & 0x03) << 4;
+        if (index >= length) {
+            *out++ = qiq_bcrypt_alphabet[c1];
+            break;
+        }
+        unsigned c2 = data[index++];
+        *out++ = qiq_bcrypt_alphabet[c1 | c2 >> 4];
+        c1 = (c2 & 0x0f) << 2;
+        if (index >= length) {
+            *out++ = qiq_bcrypt_alphabet[c1];
+            break;
+        }
+        c2 = data[index++];
+        *out++ = qiq_bcrypt_alphabet[c1 | c2 >> 6];
+        *out++ = qiq_bcrypt_alphabet[c2 & 0x3f];
+    }
+}
+
+static int qiq_bcrypt_digit(char c) {
+    const char *at = c != 0 ? strchr(qiq_bcrypt_alphabet, c) : NULL;
+    return at != NULL ? (int)(at - qiq_bcrypt_alphabet) : -1;
+}
+
+// The 16 salt bytes in 22 characters of bcrypt's base64; false if one isn't.
+static bool qiq_bcrypt_decode_salt(const char *text, unsigned char salt[16]) {
+    int digits[24] = {0};
+    for (int index = 0; index < 22; index++) {
+        digits[index] = qiq_bcrypt_digit(text[index]);
+        if (digits[index] < 0) return false;
+    }
+    for (int group = 0, out = 0; out < 16; group += 4) {
+        salt[out++] = (unsigned char)(digits[group] << 2 | digits[group + 1] >> 4);
+        if (out == 16) break;
+        salt[out++] = (unsigned char)((digits[group + 1] & 0x0f) << 4 | digits[group + 2] >> 2);
+        salt[out++] = (unsigned char)((digits[group + 2] & 0x03) << 6 | digits[group + 3]);
+    }
+    return true;
+}
+
+// The 60-character hash of `password` with `salt` and `cost`, written to
+// `out` (61 bytes with the NUL), with "$2<variant>$" in front.
+static void qiq_bcrypt(const char *password, const unsigned char salt[16], int cost, char variant, char out[61]) {
+    // The key: the password and its NUL, repeated to fill 18 words.
+    // crypt_blowfish also works out the words an old bug (sign extension of
+    // bytes >= 0x80) gave; for "$2a$", where that bug and the right answer
+    // coincide in a way that matters, it flips a bit of the first P word so
+    // that the two can't be confused.
+    uint32_t key[18];
+    uint32_t sign = 0, diff = 0;
+    const char *cursor = password;
+    for (int word = 0; word < 18; word++) {
+        uint32_t correct = 0, buggy = 0;
+        for (int byte = 0; byte < 4; byte++) {
+            correct = correct << 8 | (unsigned char)*cursor;
+            buggy = buggy << 8 | (uint32_t)(int32_t)(signed char)*cursor;
+            if (byte != 0) sign |= buggy & 0x80;
+            cursor = *cursor == 0 ? password : cursor + 1;
+        }
+        diff |= correct ^ buggy;
+        key[word] = correct;
+    }
+    diff |= diff >> 16;
+    diff &= 0xffff;
+    diff += 0xffff;
+    uint32_t safety = variant == 'a' ? 0x10000 : 0;
+    sign <<= 9;
+    sign &= ~diff & safety;
+
+    uint32_t salt_words[4];
+    for (int word = 0; word < 4; word++) {
+        salt_words[word] = (uint32_t)salt[word * 4] << 24 | (uint32_t)salt[word * 4 + 1] << 16
+                         | (uint32_t)salt[word * 4 + 2] << 8 | salt[word * 4 + 3];
+    }
+
+    QiqBlowfish *state = malloc(sizeof *state);
+    if (state == NULL) qiq_fatal("out of memory");
+    memcpy(state->s, qiq_blowfish_s, sizeof state->s);
+    for (int word = 0; word < 18; word++) state->p[word] = qiq_blowfish_p[word] ^ key[word];
+    state->p[0] ^= sign;
+    qiq_blowfish_mix(state, salt_words);
+    // The expensive part: 2^cost rounds of mixing in the key, then the salt.
+    for (uint64_t round = 0; round < (UINT64_C(1) << cost); round++) {
+        for (int word = 0; word < 18; word++) state->p[word] ^= key[word];
+        qiq_blowfish_mix(state, NULL);
+        for (int word = 0; word < 18; word++) state->p[word] ^= salt_words[word % 4];
+        qiq_blowfish_mix(state, NULL);
+    }
+    // Encrypt "OrpheanBeholderScryDoubt" 64 times.
+    uint32_t text[6] = {0x4f727068, 0x65616e42, 0x65686f6c, 0x64657253, 0x63727944, 0x6f756274};
+    for (int pass = 0; pass < 64; pass++) {
+        for (int block = 0; block < 6; block += 2) qiq_blowfish_encrypt(state, &text[block], &text[block + 1]);
+    }
+    memset(state, 0, sizeof *state);
+    free(state);
+    unsigned char digest[24];
+    for (int word = 0; word < 6; word++) {
+        digest[word * 4] = (unsigned char)(text[word] >> 24);
+        digest[word * 4 + 1] = (unsigned char)(text[word] >> 16);
+        digest[word * 4 + 2] = (unsigned char)(text[word] >> 8);
+        digest[word * 4 + 3] = (unsigned char)text[word];
+    }
+    memset(key, 0, sizeof key);
+    out[0] = '$';
+    out[1] = '2';
+    out[2] = variant;
+    out[3] = '$';
+    out[4] = (char)('0' + cost / 10);
+    out[5] = (char)('0' + cost % 10);
+    out[6] = '$';
+    qiq_bcrypt_encode(salt, 16, out + 7);
+    qiq_bcrypt_encode(digest, 23, out + 29);   // bcrypt keeps 23 of the 24 bytes
+    out[60] = '\0';
+}
+
+// `length` random bytes from the kernel.
+static void qiq_random_bytes(unsigned char *out, size_t length) {
+    size_t done = 0;
+    while (done < length) {
+        ssize_t got = getrandom(out + done, length - done, 0);
+        if (got > 0) {
+            done += (size_t)got;
+        } else if (got < 0 && errno != EINTR) {
+            // Kernels before 3.17 have no getrandom.
+            int fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+            if (fd < 0) qiq_throw(QIQ_RUNTIME_EXCEPTION, "bcrypt_hash: no source of random numbers");
+            while (done < length) {
+                ssize_t read_count = read(fd, out + done, length - done);
+                if (read_count > 0) done += (size_t)read_count;
+                else if (read_count < 0 && errno == EINTR) continue;
+                else {
+                    close(fd);
+                    qiq_throw(QIQ_RUNTIME_EXCEPTION, "bcrypt_hash: no source of random numbers");
+                }
+            }
+            close(fd);
+        }
+    }
+}
+
+QIQ_GUARDED(char *, qiq_stdlib_bcrypt_hash, NULL, (const char *password, int64_t cost), (password, cost)) {
+    qiq_require_text("bcrypt_hash", password, "password");
+    if (cost < 4 || cost > 31) qiq_throwf(QIQ_INVALID_ARGUMENT_EXCEPTION, "bcrypt_hash: the cost must be 4 to 31, found %lld", (long long)cost);
+    // bcrypt only uses the first 72 bytes; rather than ignore the rest, as
+    // PHP does, say so.
+    if (strlen(password) > 72) {
+        qiq_throw(QIQ_INVALID_ARGUMENT_EXCEPTION, "bcrypt_hash: bcrypt only uses the first 72 bytes of a password, and this one is longer");
+    }
+    unsigned char salt[16];
+    qiq_random_bytes(salt, sizeof salt);
+    char hash[61];
+    qiq_bcrypt(password, salt, (int)cost, 'y', hash);
+    return qiq_string_from(hash, 60);
+}
+
+QIQ_GUARDED(bool, qiq_stdlib_bcrypt_verify, false, (const char *password, const char *hash), (password, hash)) {
+    qiq_require_text("bcrypt_verify", password, "password");
+    qiq_require_text("bcrypt_verify", hash, "hash");
+    // "$2y$10$" (or 2a, 2b), 22 characters of salt, 31 of hash.
+    if (strlen(hash) != 60 || hash[0] != '$' || hash[1] != '2' || strchr("ayb", hash[2]) == NULL || hash[2] == 0
+        || hash[3] != '$' || hash[4] < '0' || hash[4] > '3' || hash[5] < '0' || hash[5] > '9' || hash[6] != '$') {
+        return false;
+    }
+    int cost = (hash[4] - '0') * 10 + (hash[5] - '0');
+    if (cost < 4 || cost > 31) return false;
+    unsigned char salt[16];
+    if (!qiq_bcrypt_decode_salt(hash + 7, salt)) return false;
+    for (int index = 29; index < 60; index++) {
+        if (qiq_bcrypt_digit(hash[index]) < 0) return false;
+    }
+    char computed[61];
+    qiq_bcrypt(password, salt, cost, hash[2], computed);
+    // Compared in constant time, so the time taken says nothing about how
+    // much of the hash matched.
+    unsigned char difference = 0;
+    for (int index = 0; index < 60; index++) difference |= (unsigned char)(computed[index] ^ hash[index]);
+    memset(computed, 0, sizeof computed);
+    return difference == 0;
 }
