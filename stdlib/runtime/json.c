@@ -167,6 +167,11 @@ static void qiq_encode_string(QiqBuffer *out, const char *text);
 // Duration as "PT1H30M" (or "P2DT3H", "-PT0.5S").
 static void qiq_encode_time_value(QiqEncoder *encoder, const char *json, const int64_t *slots) {
     char *end;
+    if (json[1] == 'S') {
+        // A value written as one of its strings (a Url).
+        qiq_encode_string(&encoder->out, (const char *)(uintptr_t)slots[strtol(json + 2, NULL, 10)]);
+        return;
+    }
     if (json[1] == 'T') {
         int64_t micros = slots[strtol(json + 2, &end, 10)];
         const char *zone = (const char *)(uintptr_t)slots[strtol(end + 1, NULL, 10)];

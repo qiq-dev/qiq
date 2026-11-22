@@ -7650,12 +7650,13 @@ impl Emitter {
                 }
                 visited.push(class_id);
                 let class = &self.classes[class_id as usize];
-                if self.stdlib_class("DateTime") == Some(class_id) || self.stdlib_class("Duration") == Some(class_id) {
-                    return Err(format!(
-                        "json_decode can't create a {} yet: decode it as a string and read that with {}",
-                        class.name,
-                        if class.name == "DateTime" { "DateTime::parse" } else { "Duration's constructors" }
-                    ));
+                if [self.stdlib_class("DateTime"), self.stdlib_class("Duration"), self.stdlib_class("Url")].contains(&Some(class_id)) {
+                    let reader = match class.name.as_str() {
+                        "DateTime" => "DateTime::parse",
+                        "Url" => "Url::parse",
+                        _ => "Duration's constructors",
+                    };
+                    return Err(format!("json_decode can't create a {} yet: decode it as a string and read that with {reader}", class.name));
                 }
                 if class.is_interface || class.is_abstract {
                     return Err(format!(
@@ -8332,9 +8333,10 @@ impl Emitter {
         ));
         // For JSON: per class, "<field count>|" then "<name>:<slot>:<descriptor>;"
         // for each public property.
-        // std/time's DateTime and Duration are values rather than records:
-        // "!T<microseconds slot>,<zone slot>" and "!D<microseconds slot>",
-        // which json.c writes as ISO 8601 text.
+        // std/time's DateTime and Duration, and std/net's Url, are values
+        // rather than records: "!T<microseconds slot>,<zone slot>" and
+        // "!D<microseconds slot>", which json.c writes as ISO 8601 text, and
+        // "!S<string slot>", written as that string.
         let mut json = Vec::new();
         let slot_of = |fields: &[(Property, usize)], name: &str| fields.iter().find(|(property, _)| property.name == name).map(|(_, slot)| *slot);
         for class_id in 0..self.classes.len() as u32 {
@@ -8344,6 +8346,8 @@ impl Emitter {
                 text = format!("!T{},{}", slot_of(&fields, "micros").unwrap_or(0), slot_of(&fields, "zoneName").unwrap_or(0));
             } else if self.stdlib_class("Duration") == Some(class_id) {
                 text = format!("!D{}", slot_of(&fields, "micros").unwrap_or(0));
+            } else if self.stdlib_class("Url") == Some(class_id) {
+                text = format!("!S{}", slot_of(&fields, "text").unwrap_or(0));
             }
             let special = text.starts_with('!');
             for (property, slot) in fields.iter().filter(|(property, _)| property.visibility == Visibility::Public && !special) {
@@ -12104,6 +12108,11 @@ mod tests {
         assert!(compile_source("print(json_encode([1]));").unwrap().contains("@qiq_json_datetime_format = constant ptr null"));
         let message = compile_source("import DateTime from \"std/time\"; class B { public DateTime at; } B b = json_decode(\"{}\");").unwrap_err();
         assert!(message.contains("json_decode can't create a DateTime yet"), "{message}");
+        // A Url is written as its text.
+        let url = compile_source("import Url from \"std/net\"; print(json_encode([Url::parse(\"/a\")]));").unwrap();
+        assert!(url.contains("c\"!S"), "{url}");
+        let message = compile_source("import Url from \"std/net\"; Url[] u = json_decode(\"[]\");").unwrap_err();
+        assert!(message.contains("json_decode can't create a Url yet: decode it as a string and read that with Url::parse"), "{message}");
     }
 
     #[test]

@@ -1,5 +1,9 @@
-// Network connections: TCP sockets, optionally encrypted with TLS. The C
-// helpers (stdlib/runtime/net.c) are hidden; programs use the Socket class.
+// Network connections: TCP sockets, optionally encrypted with TLS, and
+// URLs. The C helpers (stdlib/runtime/net.c and url.c) are hidden; programs
+// use the Socket and Url classes.
+
+import InvalidArgumentException from "exceptions";
+import strtolower, substr, strpos, str_contains, str_starts_with, explode, implode from "string";
 
 extern function __socket_connect(string host, int port, bool tls, int timeout): int;
 extern function __socket_write(int handle, string text): void;
@@ -79,3 +83,353 @@ final class Socket {
         __socket_close(this->handle);
     }
 }
+
+// ---------------------------------------------------------------------------
+// URLs
+
+extern function __url_parse(string text): string[];
+extern function __url_escape(string text, int part): string;
+extern function __url_unescape(string raw, bool plus): string;
+extern function __url_remove_dots(string path): string;
+
+// A URL, as RFC 3986 defines it: like Go's net/url URL, but immutable, as
+// DateTime is: the methods that change something give a new Url.
+//
+//   Url search = Url::parse("https://api.example.com/v1/")->resolve("search")->withQuery("q", "café");
+//   print(search); // https://api.example.com/v1/search?q=caf%C3%A9
+//
+// The parts it returns are unescaped (path(), query(name), ...), except
+// rawPath() and rawQuery(); the ones it's given are escaped as each part
+// needs. Printing a Url, or to_string, gives it in full.
+final class Url {
+    private string schemeName;
+    private string userName;
+    private string userPassword;
+    // null when the URL has no authority (no "//"): mailto:ada@example.com
+    private string hostName;
+    private int portNumber;
+    private string pathRaw;
+    private string queryRaw;
+    private string fragmentText;
+    private string text;
+
+    private function __construct(string scheme, string user, string password, string host, int port, string rawPath, string rawQuery, string fragment) {
+        this->schemeName = scheme;
+        this->userName = user;
+        this->userPassword = password;
+        this->hostName = host;
+        this->portNumber = port;
+        this->pathRaw = rawPath;
+        this->queryRaw = rawQuery;
+        this->fragmentText = fragment;
+        this->text = this->build();
+    }
+
+    private function build(): string {
+        string out = "";
+        if (this->schemeName != null) {
+            out = this->schemeName + ":";
+        }
+        if (this->hostName != null) {
+            out += "//";
+            if (this->userName != null) {
+                out += __url_escape(this->userName, 3);
+                if (this->userPassword != null) {
+                    out += ":" + __url_escape(this->userPassword, 3);
+                }
+                out += "@";
+            }
+            if (str_contains(this->hostName, ":")) {
+                out += "[" + this->hostName + "]";
+            } else {
+                out += this->hostName;
+            }
+            if (this->portNumber != 0) {
+                out += ":" + to_string(this->portNumber);
+            }
+            if (this->pathRaw != "" && !str_starts_with(this->pathRaw, "/")) {
+                out += "/";
+            }
+        }
+        out += this->pathRaw;
+        if (this->queryRaw != null) {
+            out += "?" + this->queryRaw;
+        }
+        if (this->fragmentText != null) {
+            out += "#" + __url_escape(this->fragmentText, 2);
+        }
+        return out;
+    }
+
+    // Reads a URL, absolute ("https://example.com/a?b=c#d") or relative
+    // ("../a", "?page=2"). Characters that should have been escaped, such
+    // as a space, are accepted and escaped. Throws InvalidArgumentException
+    // for one that can't be read: a bad %-escape, a port that isn't a
+    // number from 0 to 65535, or a host with characters a host can't have.
+    static function parse(string text): Url {
+        string[] parts = __url_parse(text);
+        int port = 0;
+        if (parts[4] != null) {
+            port = to_int(parts[4]);
+        }
+        return new Url(parts[0], parts[1], parts[2], parts[3], port, parts[5], parts[6], parts[7]);
+    }
+
+    // The scheme, in lower case ("https"), or null for a relative URL.
+    function scheme(): string { return this->schemeName; }
+    // The user and password before the host, or null.
+    function user(): string { return this->userName; }
+    function password(): string { return this->userPassword; }
+    // The host without brackets ("example.com", "::1"), or null without
+    // one; "" for an empty one, as in file:///tmp/a.
+    function host(): string { return this->hostName; }
+    // The port, or 0 when the URL doesn't give one.
+    function port(): int { return this->portNumber; }
+    // The path, unescaped: "/a b/c" for /a%20b/c.
+    function path(): string { return __url_unescape(this->pathRaw, false); }
+    // The path as the URL writes it, escaped.
+    function rawPath(): string { return this->pathRaw; }
+    // What follows "?", escaped, or null when there's no "?".
+    function rawQuery(): string { return this->queryRaw; }
+    // What follows "#", unescaped, or null when there's no "#".
+    function fragment(): string { return this->fragmentText; }
+
+    // Whether it has a scheme, so it stands on its own.
+    function isAbsolute(): bool {
+        return this->schemeName != null;
+    }
+
+    // The query's name=value pairs, escaped.
+    private function pairs(): string[] {
+        string[] kept = [];
+        if (this->queryRaw == null || this->queryRaw == "") {
+            return kept;
+        }
+        foreach (explode("&", this->queryRaw) as pair) {
+            if (pair != "") {
+                array_push(kept, pair);
+            }
+        }
+        return kept;
+    }
+
+    private static function pairName(string pair): string {
+        int equals = strpos(pair, "=");
+        if (equals < 0) {
+            return __url_unescape(pair, true);
+        }
+        return __url_unescape(substr(pair, 0, equals), true);
+    }
+
+    private static function pairValue(string pair): string {
+        int equals = strpos(pair, "=");
+        if (equals < 0) {
+            return "";
+        }
+        return __url_unescape(substr(pair, equals + 1), true);
+    }
+
+    private static function pair(string name, string value): string {
+        return __url_escape(name, 1) + "=" + __url_escape(value, 1);
+    }
+
+    // The first value of the query parameter `name`, unescaped ("+" is a
+    // space), or null when there's none. "?flag" gives "" for flag.
+    function query(string name): string {
+        foreach (this->pairs() as pair) {
+            if (Url::pairName(pair) == name) {
+                return Url::pairValue(pair);
+            }
+        }
+        return null;
+    }
+
+    // Every value of the query parameter `name`, in order: ["a", "b"] for
+    // ?tag=a&tag=b.
+    function queryAll(string name): string[] {
+        string[] values = [];
+        foreach (this->pairs() as pair) {
+            if (Url::pairName(pair) == name) {
+                array_push(values, Url::pairValue(pair));
+            }
+        }
+        return values;
+    }
+
+    // The query parameters' names, each once, in the order they first come.
+    function queryNames(): string[] {
+        string[] names = [];
+        map[string, bool] seen = {};
+        foreach (this->pairs() as pair) {
+            string name = Url::pairName(pair);
+            if (!map_key_exists(name, seen)) {
+                seen[name] = true;
+                array_push(names, name);
+            }
+        }
+        return names;
+    }
+
+    private function withQueryPairs(string[] pairs): Url {
+        string raw = null;
+        if (len(pairs) > 0) {
+            raw = implode("&", pairs);
+        }
+        return new Url(this->schemeName, this->userName, this->userPassword, this->hostName, this->portNumber, this->pathRaw, raw, this->fragmentText);
+    }
+
+    // With the query parameter `name` set to `value` (escaped), in the
+    // place of its first value, without its others; at the end when it's new.
+    function withQuery(string name, string value): Url {
+        string[] pairs = [];
+        bool placed = false;
+        foreach (this->pairs() as pair) {
+            if (Url::pairName(pair) != name) {
+                array_push(pairs, pair);
+            } else if (!placed) {
+                array_push(pairs, Url::pair(name, value));
+                placed = true;
+            }
+        }
+        if (!placed) {
+            array_push(pairs, Url::pair(name, value));
+        }
+        return this->withQueryPairs(pairs);
+    }
+
+    // With another value for `name` at the end: ?tag=a then ?tag=a&tag=b.
+    function withAddedQuery(string name, string value): Url {
+        string[] pairs = this->pairs();
+        array_push(pairs, Url::pair(name, value));
+        return this->withQueryPairs(pairs);
+    }
+
+    // Without the query parameter `name` (none of its values).
+    function withoutQuery(string name): Url {
+        string[] pairs = [];
+        foreach (this->pairs() as pair) {
+            if (Url::pairName(pair) != name) {
+                array_push(pairs, pair);
+            }
+        }
+        return this->withQueryPairs(pairs);
+    }
+
+    // With the whole query replaced by `raw` (written as it goes after "?",
+    // escaped), or no query for null.
+    function withRawQuery(string raw): Url {
+        string query = null;
+        if (raw != null) {
+            query = __url_parse("?" + raw)[6];
+        }
+        return new Url(this->schemeName, this->userName, this->userPassword, this->hostName, this->portNumber, this->pathRaw, query, this->fragmentText);
+    }
+
+    // With another scheme ("https"), or none for null.
+    function withScheme(string scheme): Url {
+        string name = null;
+        if (scheme != null) {
+            name = __url_parse(scheme + ":")[0];
+            if (name == null || strtolower(scheme) != name) {
+                throw new InvalidArgumentException("Url::withScheme: \"" + scheme + "\" isn't a scheme: a letter, then letters, digits, +, -, or .");
+            }
+        }
+        return new Url(name, this->userName, this->userPassword, this->hostName, this->portNumber, this->pathRaw, this->queryRaw, this->fragmentText);
+    }
+
+    // With another user and password (not escaped), or none for null.
+    function withUser(string user, string password = null): Url {
+        if (this->hostName == null && user != null) {
+            throw new InvalidArgumentException("Url::withUser: a URL without a host can't have a user");
+        }
+        return new Url(this->schemeName, user, password, this->hostName, this->portNumber, this->pathRaw, this->queryRaw, this->fragmentText);
+    }
+
+    // With another host: a name, an IPv4 address, or an IPv6 one (without
+    // brackets). null removes the host, with the user and port.
+    function withHost(string host): Url {
+        if (host == null) {
+            return new Url(this->schemeName, null, null, null, 0, this->pathRaw, this->queryRaw, this->fragmentText);
+        }
+        string written = host;
+        if (str_contains(host, ":")) {
+            written = "[" + host + "]";
+        }
+        string[] parts = __url_parse("//" + written);
+        if (parts[3] != host || parts[4] != null || parts[5] != "") {
+            throw new InvalidArgumentException("Url::withHost: \"" + host + "\" isn't a host");
+        }
+        return new Url(this->schemeName, this->userName, this->userPassword, host, this->portNumber, this->pathRaw, this->queryRaw, this->fragmentText);
+    }
+
+    // With another port, or none for 0.
+    function withPort(int port): Url {
+        if (port < 0 || port > 65535) {
+            throw new InvalidArgumentException("Url::withPort: " + to_string(port) + " isn't a port from 0 to 65535");
+        }
+        return new Url(this->schemeName, this->userName, this->userPassword, this->hostName, port, this->pathRaw, this->queryRaw, this->fragmentText);
+    }
+
+    // With another path (unescaped: "/a b" becomes /a%20b).
+    function withPath(string path): Url {
+        return new Url(this->schemeName, this->userName, this->userPassword, this->hostName, this->portNumber, __url_escape(path, 0), this->queryRaw, this->fragmentText);
+    }
+
+    // With another fragment (unescaped), or none for null.
+    function withFragment(string fragment): Url {
+        return new Url(this->schemeName, this->userName, this->userPassword, this->hostName, this->portNumber, this->pathRaw, this->queryRaw, fragment);
+    }
+
+    // `reference` resolved against this URL, as a browser resolves a link on
+    // this page (RFC 3986, section 5.2): "/b" keeps the scheme and host,
+    // "c" replaces the last segment of the path, "../c" goes up one, "?x"
+    // keeps the path, and an absolute URL is itself.
+    function resolve(string reference): Url {
+        Url r = Url::parse(reference);
+        if (r->schemeName != null) {
+            return new Url(r->schemeName, r->userName, r->userPassword, r->hostName, r->portNumber, __url_remove_dots(r->pathRaw), r->queryRaw, r->fragmentText);
+        }
+        if (r->hostName != null) {
+            return new Url(this->schemeName, r->userName, r->userPassword, r->hostName, r->portNumber, __url_remove_dots(r->pathRaw), r->queryRaw, r->fragmentText);
+        }
+        string path = this->pathRaw;
+        string query = r->queryRaw;
+        if (r->pathRaw == "") {
+            if (query == null) {
+                query = this->queryRaw;
+            }
+        } else if (str_starts_with(r->pathRaw, "/")) {
+            path = __url_remove_dots(r->pathRaw);
+        } else {
+            path = __url_remove_dots(this->merge(r->pathRaw));
+        }
+        return new Url(this->schemeName, this->userName, this->userPassword, this->hostName, this->portNumber, path, query, r->fragmentText);
+    }
+
+    // A relative path joined to this one's directory (RFC 3986, 5.2.3).
+    private function merge(string relative): string {
+        if (this->hostName != null && this->pathRaw == "") {
+            return "/" + relative;
+        }
+        int slash = -1;
+        int next = strpos(this->pathRaw, "/");
+        while (next >= 0) {
+            slash = next;
+            next = strpos(this->pathRaw, "/", next + 1);
+        }
+        if (slash < 0) {
+            return relative;
+        }
+        return substr(this->pathRaw, 0, slash + 1) + relative;
+    }
+
+    // Whether the two are written the same way.
+    function equals(Url other): bool {
+        return other != null && this->text == other->text;
+    }
+
+    function __toString(): string {
+        return this->text;
+    }
+}
+

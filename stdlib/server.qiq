@@ -22,6 +22,7 @@ import gmdate, date, time, microtime from "date";
 import exit from "program";
 import strtolower, strtoupper, substr, strpos, str_contains, str_starts_with, str_ends_with, explode, implode, trim, string_to_bytes, bytes_to_string, htmlspecialchars from "string";
 import urldecode, rawurldecode, rawurlencode, __http_hex from "http";
+import Url from "net";
 import __socket_write, __socket_write_more, __socket_write_bytes, __socket_read_line, __socket_read_exactly, __socket_close, __socket_peer, __socket_set_timeout, __server_listen, __server_listen_unix, __server_close, __server_next, __server_keep, __server_close_idle, __server_count_request, __server_stopping, __server_cpu_count, __server_start, __server_file_info, __socket_send_file from "net";
 
 // An HTTP request received by the server.
@@ -72,6 +73,17 @@ class Request {
     }
 
     // A header's value (the name in any case), or null.
+    // The URL the client asked for: the scheme (see trustProxy in
+    // http_serve), the Host header, the path, and the query.
+    function url(): Url {
+        string host = this->header("host") ?? "localhost";
+        string target = this->rawPath;
+        if (this->rawQuery != "") {
+            target += "?" + this->rawQuery;
+        }
+        return Url::parse(this->scheme + "://" + host + target);
+    }
+
     function header(string name): string {
         return this->headers[strtolower(name)] ?? null;
     }

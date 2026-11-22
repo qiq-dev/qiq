@@ -12,7 +12,7 @@
 // Response::raiseForStatus).
 
 import InvalidArgumentException, HttpException, NetworkException from "exceptions";
-import Socket from "net";
+import Socket, Url from "net";
 import strtolower, strtoupper, substr, strpos, str_contains, str_starts_with, explode, implode, trim, string_to_bytes, bytes_to_string from "string";
 
 // The response to an HTTP request.
@@ -274,64 +274,7 @@ function __http_parse(string url): string[] {
 
 // Resolves a Location header against the URL it came from.
 function __http_resolve(string base, string location): string {
-    if (str_contains(location, "://")) {
-        return location;
-    }
-    string[] parts = __http_parse(base);
-    string origin = parts[0] + "://" + parts[4];
-    if (str_starts_with(location, "//")) {
-        return parts[0] + ":" + location;
-    }
-    if (str_starts_with(location, "/")) {
-        return origin + location;
-    }
-    string path = parts[3];
-    int query = strpos(path, "?");
-    if (query >= 0) {
-        path = substr(path, 0, query);
-    }
-    if (str_starts_with(location, "?")) {
-        return origin + path + location;
-    }
-    // Relative to the directory of the current path, with "." and ".."
-    // segments removed (RFC 3986, section 5.2).
-    int lastSlash = 0;
-    foreach (path as i => c) {
-        if (c == '/') {
-            lastSlash = i;
-        }
-    }
-    string merged = substr(path, 0, lastSlash + 1) + location;
-    string suffix = "";
-    int queryStart = strpos(merged, "?");
-    if (queryStart >= 0) {
-        suffix = substr(merged, queryStart);
-        merged = substr(merged, 0, queryStart);
-    }
-    string[] output;
-    string[] segments = explode("/", merged);
-    foreach (segments as i => segment) {
-        bool last = i == len(segments) - 1;
-        if (segment == "..") {
-            if (len(output) > 1) {
-                array_pop(output);
-            }
-            if (last) {
-                array_push(output, "");
-            }
-        } else if (segment == ".") {
-            if (last) {
-                array_push(output, "");
-            }
-        } else {
-            array_push(output, segment);
-        }
-    }
-    string resolved = implode("/", output);
-    if (!str_starts_with(resolved, "/")) {
-        resolved = "/" + resolved;
-    }
-    return origin + resolved + suffix;
+    return to_string(Url::parse(base)->resolve(location));
 }
 
 function __http_header_value(string text, string what): string {
