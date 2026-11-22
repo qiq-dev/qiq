@@ -248,6 +248,35 @@ a small shape 1
 </ul>
 <div class="note"><strong>Note:</strong> In PHP, <code>$shape instanceof Circle</code> is enough to use <code>$shape-&gt;radius</code> afterwards, since PHP checks types when the code runs. qiq checks them when it compiles, so the name says which variable has the narrower type, as in Java and C#.</div>
 
+<h2>Class names: ::class</h2>
+<p><code>ClassName::class</code> is the class's name as a string, as in PHP. The compiler checks it, so it stays right when the class is renamed, and it's the class's own name even through an alias: after <code>import Url as Link from "std/net";</code>, <code>Link::class</code> is <code>"Url"</code>. On a value, <code>value::class</code> is the name of the object's class when the program runs, which may be a subclass of the variable's type:</p>
+
+```qiq
+interface Shape { function area(): double; }
+class Circle implements Shape { function area(): double { return 3.14; } }
+class Square implements Shape { function area(): double { return 4.0; } }
+
+print(Shape::class, Circle::class);
+Shape[] shapes = [new Circle(), new Square(), new Circle()];
+map[string, int] counts = {};
+foreach (shapes as shape) {
+    counts[shape::class] = (counts[shape::class] ?? 0) + 1;
+}
+print(counts);
+```
+```output
+Shape Circle
+{"Circle" => 2, "Square" => 1}
+```
+
+<ul>
+<li>Inside a class, <code>self::class</code> is that class, <code>parent::class</code> its parent, and <code>static::class</code> the class a method was called on (see <a href="static.html">late static binding</a>): in a method <code>Model</code> declares, called on a <code>Post</code>, <code>static::class</code> is <code>"Post"</code>.</li>
+<li><code>ClassName::class</code>, <code>self::class</code>, and <code>parent::class</code> are constants, worked out by the compiler; <code>value::class</code> and <code>static::class</code> look the name up when the program runs, which takes a load.</li>
+<li><code>::class</code> on a <code>null</code> object throws <code>RuntimeException</code>, and on a value that isn't an object (<code>5::class</code>) it's a compile error.</li>
+<li>When a variable has the same name as a class, <code>Name::class</code> means the class.</li>
+<li>It gives a name only: there's no way to make an object from a string, as PHP's <code>new $name()</code> does.</li>
+</ul>
+
 <h2>Comparing objects</h2>
 <p><code>==</code> and <code>!=</code> on objects test whether two values are the same object, like PHP's <code>===</code>. Two objects with equal properties are still different objects. The two sides must be related: of the same class, a class and its subclass, or an interface and a class that implements it.</p>
 

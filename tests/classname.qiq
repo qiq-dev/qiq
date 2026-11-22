@@ -1,0 +1,37 @@
+// ::class: class names as constants (through an alias too), an object's class at run time,
+// self::class, parent::class, static::class (in a closure too), and errors.
+import Url from "std/net";
+import Url as Link from "std/net";
+class Account {
+    public string name;
+    function __construct(string name) { this->name = name; }
+}
+interface Shape { function area(): double; }
+class Circle implements Shape {
+    function area(): double { return 3.0; }
+}
+class Square implements Shape {
+    function area(): double { return 4.0; }
+}
+abstract class Model {
+    static function create(): string { return static::class + " via " + self::class; }
+    function kind(): string { return static::class; }
+    function me(): string { return this::class; }
+    function later(): function(): string { return function(): string { return static::class; }; }
+}
+class Post extends Model {
+    function parentName(): string { return parent::class; }
+}
+print(Account::class, Shape::class, Circle::class, Url::class, Link::class);
+Shape[] shapes = [new Circle(), new Square()];
+foreach (shapes as shape) { print(shape::class, shape::class + " has area " + to_string(shape->area())); }
+print(Post::create(), new Post()->kind(), new Post()->me(), new Post()->parentName(), new Post()->later()());
+print(new Account("Ada")::class, shapes[1]::class, Url::parse("/x")::class);
+map[string, int] counts = {};
+foreach (shapes as shape) { counts[shape::class] = (counts[shape::class] ?? 0) + 1; }
+print(counts);
+string Square = "a variable named like a class";
+print(Square::class);
+Shape none = null;
+try { print(none::class); } catch (RuntimeException e) { print("error:", e->getMessage()); }
+try { print(shapes[5]::class); } catch (OutOfRangeException e) { print("error:", e->getMessage()); }

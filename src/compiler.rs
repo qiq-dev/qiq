@@ -916,6 +916,11 @@ enum Expr {
     StaticCall(StaticTarget, String, Vec<Expr>),
     /// `Class::name`, `self::name`, `parent::name`, or `static::name`.
     StaticProperty(StaticTarget, String),
+    /// `X::class`, `self::class`, `parent::class`, or `static::class`: the
+    /// class's name, a constant except for static::class.
+    ClassName(StaticTarget),
+    /// `value::class`: the name of the object's class at run time.
+    ClassOf(Box<Expr>),
     /// `new static(args)`: an instance of the class the call was made on;
     /// the u32 is the class whose code contains it.
     NewStatic(u32, Vec<Expr>),
@@ -2731,11 +2736,15 @@ impl Parser {
                 self.advance();
                 Expr::Character(value)
             }
+            // A class name before `::`; a variable before `::class` (that
+            // isn't also a class's name) is the object whose class it asks.
             TokenKind::Identifier(name)
                 if matches!(
                     self.tokens.get(self.cursor + 1).map(|token| &token.kind),
                     Some(TokenKind::DoubleColon)
-                ) =>
+                ) && (name == "self"
+                    || self.class_names.contains_key(&name)
+                    || !matches!(self.tokens.get(self.cursor + 2).map(|token| &token.kind), Some(TokenKind::Class))) =>
             {
                 let target = if name == "self" {
                     let class_id = self
@@ -2803,6 +2812,15 @@ impl Parser {
             {
                 // `print(i++)`, `a[i++]`: only `i++;` on its own is allowed.
                 return Err(self.error(INCREMENT_IS_A_STATEMENT));
+            }
+            if matches!(self.current().kind, TokenKind::DoubleColon)
+                && matches!(self.tokens.get(self.cursor + 1).map(|token| &token.kind), Some(TokenKind::Class))
+            {
+                // `shape::class`: the object's class's name.
+                self.advance();
+                self.advance();
+                expression = Expr::ClassOf(Box::new(expression));
+                continue;
             }
             if matches!(self.current().kind, TokenKind::LeftParen) {
                 // Calling a function value: makeAdder(2)(3), (object->callback)(x).
@@ -2892,6 +2910,10 @@ impl Parser {
     fn parse_static_member(&mut self, target: StaticTarget) -> Result<Expr, String> {
         self.advance();
         self.expect(TokenKind::DoubleColon, "expected '::'")?;
+        if matches!(self.current().kind, TokenKind::Class) {
+            self.advance();
+            return Ok(Expr::ClassName(target));
+        }
         let member = self.expect_identifier("expected a method or property name after '::'")?;
         if !matches!(self.current().kind, TokenKind::LeftParen) {
             return Ok(Expr::StaticProperty(target, member));
@@ -3283,6 +3305,8 @@ struct Emitter {
     /// (see note_database_open): only their drivers are linked in.
     uses_postgres: bool,
     uses_mysql: bool,
+    /// Whether `value::class` or `static::class` needs the table of class names.
+    uses_class_name_table: bool,
 }
 
 /// Built-in conversion functions (see Emitter::emit_conversion).
@@ -3377,6 +3401,7 @@ impl Emitter {
             row_readers: Vec::new(),
             uses_postgres: false,
             uses_mysql: false,
+            uses_class_name_table: false,
         }
     }
 
@@ -3591,6 +3616,25 @@ impl Emitter {
             "unwind:\n  %uncaught = load ptr, ptr @qiq_pending_exception, align 8\n  %uncaught.class = load i64, ptr %uncaught, align 8\n  %uncaught.slot = getelementptr inbounds ptr, ptr @qiq_class_names, i64 %uncaught.class\n  %uncaught.name = load ptr, ptr %uncaught.slot, align 8\n  %uncaught.message = call ptr @qiq_{}_getMessage(ptr %uncaught)\n  call void @qiq_uncaught(ptr %uncaught.name, ptr %uncaught.message)\n  unreachable\n}}\n",
             exception_symbol
         ));
+        // Each class's name as a string literal, by class id, for
+        // `value::class` and `static::class`.
+        if self.uses_class_name_table {
+            let mut entries = Vec::new();
+            for (class_id, class) in self.classes.iter().enumerate() {
+                let length = class.name.len() + 1;
+                let layout = format!("{{ i64, i32, i32, [{length} x i8] }}");
+                ir.push_str(&format!(
+                    "@.classname.{class_id} = private unnamed_addr constant {layout} {{ i64 -1, i32 {STRING_KIND}, i32 0, [{length} x i8] c\"{}\\00\" }}, align 8\n",
+                    llvm_escape(class.name.as_bytes())
+                ));
+                entries.push(format!("ptr getelementptr inbounds ({layout}, ptr @.classname.{class_id}, i32 0, i32 3)"));
+            }
+            ir.push_str(&format!(
+                "@qiq_class_name_strings = private unnamed_addr constant [{} x ptr] [{}], align 8\n",
+                entries.len(),
+                entries.join(", ")
+            ));
+        }
         // DateTime's formatter for json.c, when the program has DateTimes,
         // so that programs without them leave out the time zone code.
         let datetime_used = self.stdlib_class("DateTime").is_some_and(|class_id| self.used_classes.contains(&class_id));
@@ -6461,6 +6505,18 @@ impl Emitter {
         }))
     }
 
+    /// The name of the class whose id is in `class_id`, from a table of the
+    /// classes' names as string literals (emitted when used).
+    fn emit_class_name_of(&mut self, class_id: &str, body: &mut String) -> Value {
+        self.uses_class_name_table = true;
+        let slot = self.new_register();
+        let name = self.new_register();
+        body.push_str(&format!(
+            "  {slot} = getelementptr inbounds ptr, ptr @qiq_class_name_strings, i64 {class_id}\n  {name} = load ptr, ptr {slot}, align 8\n"
+        ));
+        Value { value_type: ValueType::String, operand: name, slot: None }
+    }
+
     /// Notes which network databases a `Database::open(url)` can open: those
     /// a literal URL names, or all of them for one computed at run time.
     fn note_database_open(&mut self, target: StaticTarget, method_name: &str, arguments: &[Expr]) {
@@ -8928,6 +8984,35 @@ impl Emitter {
                     slot: None,
                 }))
             }
+            Expr::ClassName(target) => match *target {
+                StaticTarget::Class { class_id, .. } => {
+                    let name = self.classes[class_id as usize].name.clone();
+                    Ok(Value { value_type: ValueType::String, operand: self.string_literal(name.as_bytes()), slot: None })
+                }
+                StaticTarget::Parent { parent, .. } => {
+                    let name = self.classes[parent as usize].name.clone();
+                    Ok(Value { value_type: ValueType::String, operand: self.string_literal(name.as_bytes()), slot: None })
+                }
+                StaticTarget::Late { .. } => {
+                    let class_id = self.emit_called_class(body)?;
+                    Ok(self.emit_class_name_of(&class_id, body))
+                }
+            },
+            Expr::ClassOf(object_expression) => {
+                if let Expr::Variable(name) = object_expression.as_ref() {
+                    if !variables.contains_key(name) {
+                        return Err(format!("'{name}' is neither a declared or imported class nor a variable{}", stdlib_hint(name)));
+                    }
+                }
+                let object = self.emit_expression(object_expression, variables, body)?;
+                if !matches!(object.value_type, ValueType::Class(_)) {
+                    return Err(format!("::class needs an object or a class name, found {}", self.type_name(object.value_type)));
+                }
+                self.emit_null_check(&object, object_expression, "cannot read ::class of null", body);
+                let class_id = self.new_register();
+                body.push_str(&format!("  {class_id} = load i64, ptr {}, align 8\n", object.operand));
+                Ok(self.emit_class_name_of(&class_id, body))
+            }
             Expr::StaticCall(target, method_name, arguments) => {
                 let target = *target;
                 self.note_database_open(target, method_name, arguments);
@@ -10025,6 +10110,13 @@ fn expression_names(expression: &Expr, used: &mut std::collections::BTreeSet<Str
                 used.insert("this".to_string());
             }
         }
+        // static::class reads the called class from `this`.
+        Expr::ClassName(target) => {
+            if matches!(target, StaticTarget::Late { .. }) {
+                used.insert("this".to_string());
+            }
+        }
+        Expr::ClassOf(object) => expression_names(object, used, declared),
         Expr::NewStatic(_, arguments) => {
             used.insert("this".to_string());
             each(&arguments.iter().collect::<Vec<_>>(), used, declared);
@@ -12094,6 +12186,26 @@ mod tests {
         }
         // A function named fn still works: only `fn(...) =>` is an arrow function.
         assert!(compile_source("function fn(int x): int { return x; } int y = fn(2);").is_ok());
+    }
+
+    #[test]
+    fn class_names() {
+        // ClassName::class is a constant; value::class reads the object's class id.
+        let ir = compile_source("interface S {} class C implements S {} S s = new C(); string a = C::class; string b = s::class;").unwrap();
+        assert!(ir.contains("c\"C\\00\" }"), "{ir}");
+        assert!(main_ir(&ir).contains("@qiq_class_name_strings, i64"), "{ir}");
+        assert!(ir.contains("@qiq_class_name_strings = private unnamed_addr constant ["), "{ir}");
+        // Programs without value::class have no table.
+        assert!(!compile_source("class C {} print(C::class);").unwrap().contains("@qiq_class_name_strings"));
+        for (source, error) in [
+            ("int n = 5; print(n::class);", "::class needs an object or a class name, found int"),
+            ("print(Nope::class);", "'Nope' is neither a declared or imported class nor a variable"),
+            ("print(self::class);", "self:: can only be used inside a class"),
+            ("class A { function f(): string { return parent::class; } }", "parent:: requires a class that extends another"),
+        ] {
+            let message = compile_source(source).unwrap_err();
+            assert!(message.contains(error), "{source}: {message}");
+        }
     }
 
     #[test]
