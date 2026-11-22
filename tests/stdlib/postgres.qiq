@@ -1,6 +1,6 @@
 // std/sql with PostgreSQL: run with QIQ_TEST_POSTGRES=postgres://user:password@host/database
 // (it creates and drops a table named users). Types, placeholders, errors, transactions, queryAs.
-import Database, Row from "std/sql";
+import Database, Row, Cursor from "std/sql";
 import getenv, exit from "std/os";
 
 string url = getenv("QIQ_TEST_POSTGRES");
@@ -55,3 +55,19 @@ class User { function __construct(public int id, public string name, public int 
 User[] users = db->queryAs("select id, name, age from users order by id limit ?", 2);
 print(users[0]->name, users[1]->age);
 db->close();
+
+// Cursors and error codes.
+Database more = Database::open(url);
+more->executeScript("drop table if exists nums; create table nums (n int)");
+more->transaction(function(): void {
+    foreach (range(600) as i) { more->execute("insert into nums values (?)", i); }
+});
+Cursor c = more->cursor("select n from nums where n >= ? order by n", 100);
+print(c->next()->getInt("n"), len(c->fetch(300)));
+try { more->execute("delete from nums"); } catch (DatabaseException e) { print("busy:", e->getMessage()); }
+c->close();
+print("after close:", more->execute("delete from nums where n < ?", 10));
+more->executeScript("drop table if exists uniq; create table uniq (k int primary key)");
+more->execute("insert into uniq values (?)", 1);
+try { more->execute("insert into uniq values (?)", 1); } catch (UniqueViolationException e) { print("unique:", substr(e->getSqlState(), 0, 2)); }
+try { more->query("select * from no_such_table"); } catch (DatabaseException e) { print("state:", e->getSqlState()); }

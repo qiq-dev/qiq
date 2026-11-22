@@ -84,6 +84,8 @@ typedef struct {
     uint64_t fork_count;
     bool lost_in_transaction;
     bool in_io;               // talking to the server: a failure now loses the connection
+    bool streaming;           // a cursor's rows are still arriving
+    bool streaming_binary;    // as binary rows (a prepared statement's) rather than text
     char *settings;           // the SET statements it ran, to run again on a new connection
     MyCached cache[MY_CACHE];
     uint64_t clock;
@@ -226,14 +228,44 @@ static const char *my_string(MyReader *reader) {
     return (const char *)start;
 }
 
-// The message of an ERR packet (0xff, code, '#', SQLSTATE, message).
-static int my_error(QiqMysql *my, char *out, size_t size) {
+// The error of the ERR packet just read (0xff, number, '#', SQLSTATE,
+// message), for my_throw.
+typedef struct {
+    int code;
+    char state[6];
+    char message[1024];
+} MyError;
+
+static int my_error_into(QiqMysql *my, MyError *error) {
     MyReader reader = my_reader(my);
     my_int(&reader, 1);
-    int code = (int)my_int(&reader, 2);
-    if (reader.at < reader.end && *reader.at == '#') my_bytes(&reader, 6);
-    snprintf(out, size, "%.*s", (int)(reader.end - reader.at), (const char *)reader.at);
-    return code;
+    error->code = (int)my_int(&reader, 2);
+    snprintf(error->state, sizeof error->state, "HY000");
+    if (reader.at < reader.end && *reader.at == '#') {
+        my_bytes(&reader, 1);
+        snprintf(error->state, sizeof error->state, "%.5s", (const char *)my_bytes(&reader, 5));
+    }
+    snprintf(error->message, sizeof error->message, "%.*s", (int)(reader.end - reader.at), (const char *)reader.at);
+    return error->code;
+}
+
+// The message of an ERR packet, for errors while logging in.
+static int my_error(QiqMysql *my, char *out, size_t size) {
+    MyError error;
+    my_error_into(my, &error);
+    snprintf(out, size, "%s", error.message);
+    return error.code;
+}
+
+// ER_DUP_ENTRY, ER_DUP_ENTRY_WITH_KEY_NAME, and ER_DUP_KEY: the errors for a
+// duplicate in a unique key, which MySQL reports with SQLSTATE 23000 like
+// every other constraint.
+// ER_CHECK_CONSTRAINT_VIOLATED comes with SQLSTATE HY000; it's a constraint
+// like the others, so it gets 23000.
+static _Noreturn void my_throw(const MyError *error) {
+    bool unique = error->code == 1062 || error->code == 1586 || error->code == 1022;
+    const char *state = error->code == 3819 ? "23000" : error->state;
+    qiq_sql_throw(state, error->code, unique, error->message);
 }
 
 static bool my_is_eof(QiqMysql *my) {
@@ -840,6 +872,7 @@ static int64_t qiq_my_last_insert_id(QiqMysql *my) {
 }
 
 static void my_lose(QiqMysql *my) {
+    my->streaming = false;
     if (my->socket < 0) return;
     if (my->status & MY_STATUS_IN_TRANSACTION) my->lost_in_transaction = true;
     qiq_net_abandon(my->socket);
@@ -866,6 +899,7 @@ static void my_ready(QiqMysql *my) {
         my->socket = -1;
         my->fork_count = qiq_sql_forks;
         my->status = 0;
+        my->streaming = false;
         for (int i = 0; i < MY_CACHE; i++) {
             free(my->cache[i].sql);
             my->cache[i].sql = NULL;
@@ -886,7 +920,7 @@ static void my_ready(QiqMysql *my) {
 // until an EOF). Collects rows when `collect` is set (at most one when
 // `first_only`). Returns the rows changed (for an OK, when `collect` isn't
 // set) or collected; on an error, writes it to `message` and returns -1.
-static int64_t my_read_result(QiqMysql *my, bool binary, bool collect, bool first_only, char *message, size_t size, int *code) {
+static int64_t my_read_result(QiqMysql *my, bool binary, bool collect, bool first_only, MyError *error) {
     my_read(my);
     if (my->in_length == 0) my_malformed();
     if (my->in[0] == 0x00) {
@@ -894,7 +928,7 @@ static int64_t my_read_result(QiqMysql *my, bool binary, bool collect, bool firs
         return collect ? 0 : changed;
     }
     if (my->in[0] == 0xff) {
-        *code = my_error(my, message, size);
+        my_error_into(my, error);
         return -1;
     }
     MyReader reader = my_reader(my);
@@ -917,7 +951,7 @@ static int64_t my_read_result(QiqMysql *my, bool binary, bool collect, bool firs
             break;
         }
         if (my->in[0] == 0xff) {
-            *code = my_error(my, message, size);
+            my_error_into(my, error);
             return -1;
         }
         if (collect && !(first_only && rows > 0)) {
@@ -935,17 +969,16 @@ static int64_t my_text_query(QiqMysql *my, const char *sql, bool collect, bool f
     my_command(my, 0x03);
     my_put(my, sql, strlen(sql));
     my_send(my);
-    char message[1024];
-    int code = 0;
+    MyError error;
     int64_t result = 0;
     bool first = true;
     do {
-        int64_t got = my_read_result(my, false, collect && first, first_only, message, sizeof message, &code);
+        int64_t got = my_read_result(my, false, collect && first, first_only, &error);
         if (got < 0) {
             // The server stops at an error and is ready for the next command.
             my->in_io = false;
             qiq_sql_clear_results();
-            qiq_throw(QIQ_DATABASE_EXCEPTION, message);
+            my_throw(&error);
         }
         if (first) result = got;
         first = false;
@@ -997,14 +1030,14 @@ static MyCached *my_prepare(QiqMysql *my, const char *sql, const char *caller, b
     my_send(my);
     my_read(my);
     if (my->in_length > 0 && my->in[0] == 0xff) {
-        char message[1024];
-        int code = my_error(my, message, sizeof message);
+        MyError error;
+        my_error_into(my, &error);
         my->in_io = false;
-        if (code == MY_UNSUPPORTED_PS) {
+        if (error.code == MY_UNSUPPORTED_PS) {
             *unsupported = true;
             return NULL;
         }
-        qiq_throw(QIQ_DATABASE_EXCEPTION, message);
+        my_throw(&error);
     }
     MyReader reader = my_reader(my);
     my_int(&reader, 1);
@@ -1030,6 +1063,54 @@ static MyCached *my_prepare(QiqMysql *my, const char *sql, const char *caller, b
     return oldest;
 }
 
+// Sends COM_STMT_EXECUTE for `statement` with the pending values: no
+// cursor, one run, and the values in binary.
+static void my_send_execute(QiqMysql *my, MyCached *statement, const char *caller) {
+    size_t given = qiq_sql_pending_count;
+    if ((size_t)statement->params != given) {
+        qiq_throwf(QIQ_DATABASE_EXCEPTION, "%s: the SQL has %d placeholder%s (?), but %zu value%s given", caller, statement->params,
+                   statement->params == 1 ? "" : "s", given, given == 1 ? " was" : "s were");
+    }
+    my_command(my, 0x17);
+    my_put_int(my, statement->id, 4);
+    my_put_byte(my, 0);
+    my_put_int(my, 1, 4);
+    if (given > 0) {
+        size_t bitmap_at = my->out_length;
+        for (size_t i = 0; i < (given + 7) / 8; i++) my_put_byte(my, 0);
+        my_put_byte(my, 1); // types follow
+        for (size_t i = 0; i < given; i++) {
+            QiqSqlValue value = qiq_sql_pending[i];
+            bool null = value.type == 'n' || ((value.type == 's' || value.type == 'a') && value.payload == 0);
+            if (null) my->out[bitmap_at + i / 8] |= (unsigned char)(1 << (i % 8));
+            unsigned char type = null ? MY_NULL : value.type == 'd' ? MY_DOUBLE : value.type == 's' ? MY_VAR_STRING : value.type == 'a' ? MY_BLOB : MY_LONGLONG;
+            my_put_byte(my, type);
+            my_put_byte(my, 0);
+        }
+        for (size_t i = 0; i < given; i++) {
+            QiqSqlValue value = qiq_sql_pending[i];
+            if (value.type == 'n' || ((value.type == 's' || value.type == 'a') && value.payload == 0)) continue;
+            if (value.type == 's') {
+                const char *text = (const char *)(uintptr_t)value.payload;
+                size_t length = strlen(text);
+                my_put_lenenc(my, length);
+                my_put(my, text, length);
+            } else if (value.type == 'a') {
+                void *array = (void *)(uintptr_t)value.payload;
+                my_put_lenenc(my, (uint64_t)QIQ_ARRAY_LENGTH(array));
+                my_put(my, QIQ_ARRAY_DATA(array), (size_t)QIQ_ARRAY_LENGTH(array));
+            } else if (value.type == 'b') {
+                my_put_int(my, value.payload ? 1 : 0, 8);
+            } else {
+                my_put_int(my, value.payload, 8); // the int's or double's bits
+            }
+        }
+    }
+    qiq_sql_drop_pending();
+    my->in_io = true;
+    my_send(my);
+}
+
 static int64_t qiq_my_run(QiqMysql *my, const char *sql, int64_t mode, const char *caller) {
     jmp_buf environment;
     jmp_buf *previous = qiq_guard_enter(&environment);
@@ -1050,67 +1131,158 @@ static int64_t qiq_my_run(QiqMysql *my, const char *sql, int64_t mode, const cha
         result = my_text_query(my, sql, mode != 0, mode == 2);
         my->in_io = false;
     } else {
-        if ((size_t)statement->params != given) {
-            qiq_throwf(QIQ_DATABASE_EXCEPTION, "%s: the SQL has %d placeholder%s (?), but %zu value%s given", caller, statement->params,
-                       statement->params == 1 ? "" : "s", given, given == 1 ? " was" : "s were");
-        }
-        // COM_STMT_EXECUTE: the statement, no cursor, one run, and the values.
-        my_command(my, 0x17);
-        my_put_int(my, statement->id, 4);
-        my_put_byte(my, 0);
-        my_put_int(my, 1, 4);
-        if (given > 0) {
-            size_t bitmap_at = my->out_length;
-            for (size_t i = 0; i < (given + 7) / 8; i++) my_put_byte(my, 0);
-            my_put_byte(my, 1); // types follow
-            for (size_t i = 0; i < given; i++) {
-                QiqSqlValue value = qiq_sql_pending[i];
-                bool null = value.type == 'n' || ((value.type == 's' || value.type == 'a') && value.payload == 0);
-                if (null) my->out[bitmap_at + i / 8] |= (unsigned char)(1 << (i % 8));
-                unsigned char type = null ? MY_NULL : value.type == 'd' ? MY_DOUBLE : value.type == 's' ? MY_VAR_STRING : value.type == 'a' ? MY_BLOB : MY_LONGLONG;
-                my_put_byte(my, type);
-                my_put_byte(my, 0);
-            }
-            for (size_t i = 0; i < given; i++) {
-                QiqSqlValue value = qiq_sql_pending[i];
-                if (value.type == 'n' || ((value.type == 's' || value.type == 'a') && value.payload == 0)) continue;
-                if (value.type == 's') {
-                    const char *text = (const char *)(uintptr_t)value.payload;
-                    size_t length = strlen(text);
-                    my_put_lenenc(my, length);
-                    my_put(my, text, length);
-                } else if (value.type == 'a') {
-                    void *array = (void *)(uintptr_t)value.payload;
-                    my_put_lenenc(my, (uint64_t)QIQ_ARRAY_LENGTH(array));
-                    my_put(my, QIQ_ARRAY_DATA(array), (size_t)QIQ_ARRAY_LENGTH(array));
-                } else if (value.type == 'b') {
-                    my_put_int(my, value.payload ? 1 : 0, 8);
-                } else {
-                    my_put_int(my, value.payload, 8); // the int's or double's bits
-                }
-            }
-        }
-        qiq_sql_drop_pending();
-        my->in_io = true;
-        my_send(my);
-        char message[1024];
-        int code = 0;
-        result = my_read_result(my, true, mode != 0, mode == 2, message, sizeof message, &code);
+        my_send_execute(my, statement, caller);
+        MyError error;
+        result = my_read_result(my, true, mode != 0, mode == 2, &error);
         bool failed = result < 0;
         // A procedure's further results, which nothing reads.
         while (!failed && (my->status & MY_STATUS_MORE_RESULTS)) {
-            if (my_read_result(my, true, false, false, message, sizeof message, &code) < 0) failed = true;
+            if (my_read_result(my, true, false, false, &error) < 0) failed = true;
         }
         my->in_io = false;
         if (failed) {
             qiq_sql_clear_results();
-            qiq_throw(QIQ_DATABASE_EXCEPTION, message);
+            my_throw(&error);
         }
     }
     qiq_sql_drop_pending();
     my_remember_settings(my, sql);
     qiq_guard_leave(previous);
     return result;
+}
+
+// ---------------------------------------------------------------------------
+// Cursors: the rows are read off the connection as they're asked for.
+
+static void qiq_my_open_cursor(QiqMysql *my, const char *sql, const char *caller) {
+    jmp_buf environment;
+    jmp_buf *previous = qiq_guard_enter(&environment);
+    if (setjmp(environment)) {
+        my_failed(my);
+        qiq_rethrow(previous);
+    }
+    my_ready(my);
+    bool unsupported;
+    MyCached *statement = my_prepare(my, sql, caller, &unsupported);
+    if (statement == NULL) {
+        if (qiq_sql_pending_count > 0) qiq_throwf(QIQ_DATABASE_EXCEPTION, "%s: MySQL can't take values for this kind of statement", caller);
+        my_command(my, 0x03);
+        my_put(my, sql, strlen(sql));
+        my->in_io = true;
+        my_send(my);
+    } else {
+        my_send_execute(my, statement, caller);
+    }
+    my->streaming_binary = statement != NULL;
+    // The first response: an OK (no rows), an error, or the columns.
+    my_read(my);
+    if (my->in_length == 0) my_malformed();
+    if (my->in[0] == 0x00) {
+        my_ok(my);
+        // Further results (a procedure's) are read and dropped.
+        MyError error;
+        while (my->status & MY_STATUS_MORE_RESULTS) {
+            if (my_read_result(my, my->streaming_binary, false, false, &error) < 0) {
+                my->in_io = false;
+                my_throw(&error);
+            }
+        }
+    } else if (my->in[0] == 0xff) {
+        MyError error;
+        my_error_into(my, &error);
+        my->in_io = false;
+        my_throw(&error);
+    } else {
+        MyReader reader = my_reader(my);
+        uint64_t columns = my_lenenc(&reader, NULL);
+        my->column_count = 0;
+        for (uint64_t i = 0; i < columns; i++) {
+            my_read(my);
+            my_read_column(my);
+        }
+        my_read(my); // EOF after the columns
+        my->streaming = true;
+    }
+    my->in_io = false;
+    qiq_guard_leave(previous);
+}
+
+// Reads the end of a cursor's result: the further results a procedure can
+// have, then the connection is free.
+static void my_finish_stream(QiqMysql *my) {
+    my_eof(my);
+    my->streaming = false;
+    MyError error;
+    while (my->status & MY_STATUS_MORE_RESULTS) {
+        if (my_read_result(my, my->streaming_binary, false, false, &error) < 0) {
+            my->in_io = false;
+            my_throw(&error);
+        }
+    }
+}
+
+static int64_t qiq_my_fetch(QiqMysql *my, int64_t count) {
+    if (!my->streaming || my->socket < 0 || my->fork_count != qiq_sql_forks) {
+        my->streaming = false;
+        return 0;
+    }
+    jmp_buf environment;
+    jmp_buf *previous = qiq_guard_enter(&environment);
+    if (setjmp(environment)) {
+        my_failed(my);
+        qiq_rethrow(previous);
+    }
+    my->in_io = true;
+    int64_t rows = 0;
+    while (rows < count) {
+        my_read(my);
+        if (my_is_eof(my)) {
+            my_finish_stream(my);
+            break;
+        }
+        if (my->in_length > 0 && my->in[0] == 0xff) {
+            MyError error;
+            my_error_into(my, &error);
+            my->streaming = false;
+            my->in_io = false;
+            qiq_sql_clear_results();
+            my_throw(&error);
+        }
+        if (my->streaming_binary) my_read_binary_row(my);
+        else my_read_text_row(my);
+        rows++;
+    }
+    my->in_io = false;
+    qiq_guard_leave(previous);
+    return rows;
+}
+
+static void qiq_my_close_cursor(QiqMysql *my) {
+    if (!my->streaming || my->socket < 0 || my->fork_count != qiq_sql_forks) {
+        my->streaming = false;
+        return;
+    }
+    jmp_buf environment;
+    jmp_buf *previous = qiq_guard_enter(&environment);
+    if (setjmp(environment)) {
+        my_failed(my);
+        qiq_rethrow(previous);
+    }
+    my->in_io = true;
+    // The rows left are read and dropped.
+    for (;;) {
+        my_read(my);
+        if (my_is_eof(my)) {
+            my_finish_stream(my);
+            break;
+        }
+        if (my->in_length > 0 && my->in[0] == 0xff) {
+            my->streaming = false;
+            break;
+        }
+    }
+    my->in_io = false;
+    qiq_guard_leave(previous);
 }
 
 const QiqSqlDriver qiq_mysql_driver = {
@@ -1120,4 +1292,7 @@ const QiqSqlDriver qiq_mysql_driver = {
     .last_insert_id = (int64_t (*)(void *))qiq_my_last_insert_id,
     .in_transaction = (bool (*)(void *))qiq_my_in_transaction,
     .close = (void (*)(void *))qiq_my_close,
+    .open_cursor = (void (*)(void *, const char *, const char *))qiq_my_open_cursor,
+    .fetch = (int64_t (*)(void *, int64_t))qiq_my_fetch,
+    .close_cursor = (void (*)(void *))qiq_my_close_cursor,
 };

@@ -1,0 +1,71 @@
+// std/sql with SQLite: Cursor (next, fetch, close, while other statements run) and error codes
+// (getSqlState, getCode, ConstraintViolationException, UniqueViolationException).
+import Database, Row, Cursor from "std/sql";
+
+// Cursors.
+Database db = Database::open("sqlite::memory:");
+db->executeScript("drop table if exists nums; create table nums (n int, label varchar(20))");
+db->transaction(function(): void {
+    foreach (range(1000) as i) { db->execute("insert into nums values (?, ?)", i, "n" + to_string(i)); }
+});
+Cursor c = db->cursor("select n, label from nums where n >= ? order by n", 10);
+Row first = c->next();
+print(first->getInt("n"), first->getString("label"));
+Row[] some = c->fetch(3);
+print(len(some), some[0]->getInt("n"), some[2]->getInt("n"));
+int total = 0;
+int count = 0;
+Row row = c->next();
+while (row != null) { total += row->getInt("n"); count++; row = c->next(); }
+print(count, total, c->next() == null, len(c->fetch(5)));
+c->close();
+// a big batch, and stopping early
+Cursor d = db->cursor("select n from nums order by n");
+print(len(d->fetch(600)), len(d->fetch(600)), len(d->fetch(600)));
+Cursor early = db->cursor("select n from nums order by n");
+print(early->next()->getInt("n"));
+early->close();
+early->close();
+print("after close:", early->next() == null);
+print("db usable:", db->queryOne("select count(*) as c from nums")->getInt("c"));
+// a statement with no rows
+Cursor f = db->cursor("update nums set label = ? where n = ?", "x", 1);
+print("update cursor:", f->next() == null, db->queryOne("select label from nums where n = 1")->getString("label"));
+try { db->cursor("select * from nums where n = ?"); } catch (DatabaseException ex) { print("error:", ex->getMessage()); }
+try { db->cursor("select * from nope"); } catch (DatabaseException ex) { print("error:", ex->getMessage()); }
+// another statement while a cursor is open
+Cursor g = db->cursor("select n from nums order by n");
+g->next();
+try { print("during:", db->queryOne("select 7 as seven")->getInt("seven")); } catch (DatabaseException ex) { print("during error:", ex->getMessage()); }
+g->close();
+print("after:", db->queryOne("select 8 as eight")->getInt("eight"));
+Cursor h = db->cursor("select n from nums");
+h->next();
+db->close();
+try { h->next(); h->next(); print("h ok"); } catch (DatabaseException ex) { print("h error:", ex->getMessage()); }
+
+// Error codes.
+db = Database::open("sqlite::memory:");
+db->executeScript("pragma foreign_keys = on; create table teams (id integer primary key); create table users (id integer primary key, email text unique, name text not null, age int check (age >= 0), team int references teams(id));");
+db->execute("insert into users (email, name) values (?, ?)", "ada@example.com", "Ada");
+function attempt(Database db, string sql, string email, string name, int age, int team): void {
+    try {
+        db->execute(sql, email, name, age, team);
+    } catch (UniqueViolationException e) {
+        print("unique:", e->getSqlState(), e->getCode(), e->getMessage());
+    } catch (ConstraintViolationException e) {
+        print("constraint:", e->getSqlState(), e->getCode(), e->getMessage());
+    } catch (DatabaseException e) {
+        print("other:", e->getSqlState(), e->getCode(), e->getMessage());
+    }
+}
+string insert = "insert into users (email, name, age, team) values (?, ?, ?, nullif(?, 0))";
+attempt(db, insert, "ada@example.com", "Ada2", 1, 0);
+string noname = null;
+attempt(db, insert, "b@example.com", noname, 1, 0);
+attempt(db, insert, "c@example.com", "C", -1, 0);
+attempt(db, insert, "d@example.com", "D", 1, 99);
+attempt(db, "insert into nope values (?, ?, ?, ?)", "e", "E", 1, 0);
+DatabaseException mine = new DatabaseException("my own", 7);
+print(mine->getSqlState(), mine->getCode());
+try { db->query("select 1 where 1 = ?"); } catch (DatabaseException e) { print(e->getSqlState(), e->getMessage()); }

@@ -3161,7 +3161,7 @@ struct FinallyContext {
 
 /// Exception classes the runtime raises, indexed by QiqExceptionKind in
 /// stdlib/runtime/qiq_runtime.h; keep the two lists in the same order.
-const RUNTIME_EXCEPTION_CLASSES: [&str; 13] = [
+const RUNTIME_EXCEPTION_CLASSES: [&str; 15] = [
     "RuntimeException",
     "ArithmeticException",
     "DivisionByZeroException",
@@ -3175,6 +3175,8 @@ const RUNTIME_EXCEPTION_CLASSES: [&str; 13] = [
     "JsonException",
     "NetworkException",
     "DatabaseException",
+    "ConstraintViolationException",
+    "UniqueViolationException",
 ];
 
 /// Where `break` and `continue` go. Loops have both; a switch only has a

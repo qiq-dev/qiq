@@ -17,7 +17,7 @@
 // the SQL text, so they can't change what the statement does (SQL
 // injection). Errors throw DatabaseException.
 
-import Exception, DatabaseException from "exceptions";
+import Exception, DatabaseException, InvalidArgumentException from "exceptions";
 import implode, str_contains from "string";
 
 extern function __sql_open(string dsn): int;
@@ -34,6 +34,9 @@ extern function __sql_texts(): string[];
 extern function __sql_blobs(): byte[];
 extern function __sql_blob_starts(): int[];
 extern function __sql_slice(byte[] data, int start, int end): byte[];
+extern function __sql_cursor(int handle, string sql): int;
+extern function __sql_fetch(int cursor, int count): int;
+extern function __sql_close_cursor(int cursor): void;
 
 // The cells of a query's rows, shared by its Row objects. Each cell has a
 // kind (1 int, 2 double, 3 string, 4 bytes, 5 NULL, 6 decimal: PostgreSQL's
@@ -236,6 +239,91 @@ final class Row {
     }
 }
 
+// The rows of a query, read a batch at a time rather than all at once, for
+// results too big to hold in memory. From Database::cursor.
+//
+//   Cursor rows = db->cursor("select * from events where day = ?", day);
+//   Row row = rows->next();
+//   while (row != null) {
+//       ...
+//       row = rows->next();
+//   }
+//
+// A cursor closes itself after its last row; close() stops early. With
+// PostgreSQL and MySQL, the rows come from the connection as they're read,
+// so the database can't run another statement until they've all been read
+// or the cursor is closed (doing so throws DatabaseException).
+final class Cursor {
+    private int handle;
+    // Rows next() has read ahead.
+    private Row[] batch;
+    private int at;
+    private bool closed;
+
+    function __construct(int handle) {
+        this->handle = handle;
+        this->closed = false;
+        this->batch = [];
+        this->at = 0;
+    }
+
+    private function read(int count): Row[] {
+        if (this->closed) {
+            return [];
+        }
+        int fetched = __sql_fetch(this->handle, count);
+        __Result result = new __Result();
+        int width = len(result->columns);
+        Row[] rows = new Row[fetched];
+        foreach (range(fetched) as index) {
+            rows[index] = new Row(result, index * width);
+        }
+        return rows;
+    }
+
+    // The next row, or null after the last.
+    function next(): Row {
+        if (this->at == len(this->batch)) {
+            this->batch = this->read(256);
+            this->at = 0;
+            if (len(this->batch) == 0) {
+                return null;
+            }
+        }
+        Row row = this->batch[this->at];
+        this->at++;
+        return row;
+    }
+
+    // Up to `count` more rows: fewer only at the end, and none after it.
+    function fetch(int count): Row[] {
+        if (count < 1) {
+            throw new InvalidArgumentException("Cursor::fetch: the count must be at least 1");
+        }
+        Row[] rows = [];
+        while (this->at < len(this->batch) && len(rows) < count) {
+            array_push(rows, this->batch[this->at]);
+            this->at++;
+        }
+        if (len(rows) == count) {
+            return rows;
+        }
+        foreach (this->read(count - len(rows)) as row) {
+            array_push(rows, row);
+        }
+        return rows;
+    }
+
+    // Stops reading: the rest of the rows are skipped. Closing twice, or
+    // after the last row, does nothing.
+    function close(): void {
+        __sql_close_cursor(this->handle);
+        this->closed = true;
+        this->batch = [];
+        this->at = 0;
+    }
+}
+
 // A connection to a database.
 final class Database {
     private int handle;
@@ -284,6 +372,12 @@ final class Database {
             return null;
         }
         return new Row(result, 0);
+    }
+
+    // Runs a query with values for its placeholders and returns a Cursor
+    // that reads its rows a batch at a time.
+    function cursor(string sql, ...): Cursor {
+        return new Cursor(__sql_cursor(this->handle, sql));
     }
 
     // Runs several statements separated by semicolons, such as a schema;

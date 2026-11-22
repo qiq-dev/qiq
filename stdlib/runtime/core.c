@@ -59,6 +59,33 @@ void qiq_guard_leave(jmp_buf *previous) {
     qiq_guard = previous;
 }
 
+// A database error's details, from qiq_set_database_error until the
+// DatabaseException being raised takes them.
+static bool qiq_database_error_set = false;
+static char qiq_database_error_state[6];
+static int64_t qiq_database_error_number;
+
+void qiq_set_database_error(const char *state, int64_t code) {
+    snprintf(qiq_database_error_state, sizeof qiq_database_error_state, "%s", state != NULL && state[0] != '\0' ? state : "HY000");
+    qiq_database_error_number = code;
+    qiq_database_error_set = true;
+}
+
+bool qiq_stdlib___database_error_pending(void) {
+    return qiq_database_error_set;
+}
+
+int64_t qiq_stdlib___database_error_code(void) {
+    return qiq_database_error_number;
+}
+
+// The pending error's SQLSTATE, which it then stops being, or HY000.
+char *qiq_stdlib___database_error_state(void) {
+    const char *state = qiq_database_error_set ? qiq_database_error_state : "HY000";
+    qiq_database_error_set = false;
+    return qiq_string_from(state, strlen(state));
+}
+
 _Noreturn void qiq_rethrow(jmp_buf *previous) {
     qiq_guard = previous;
     if (previous == NULL) qiq_fatal("internal error: an exception was rethrown with no handler");

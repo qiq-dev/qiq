@@ -28,7 +28,7 @@ OVERVIEW = (
     "<tr><td><code>std/http</code></td><td>The <a href=\"ref.http.html\">HTTP client</a> and URL encoding</td></tr>"
     "<tr><td><code>std/http/server</code></td><td>The <a href=\"ref.http-server.html\">HTTP server</a></td></tr>"
     "<tr><td><code>std/crypto</code></td><td><a href=\"ref.crypto.html\">Hashing and encoding</a>: MD5, SHA-1, SHA-2, HMAC, hex, base64, and password hashing</td></tr>"
-    "<tr><td><code>std/sql</code></td><td>SQL databases (SQLite, PostgreSQL, MySQL, and MariaDB): the <a href=\"class.database.html\">Database</a> and <a href=\"class.row.html\">Row</a> classes</td></tr>"
+    "<tr><td><code>std/sql</code></td><td>SQL databases (SQLite, PostgreSQL, MySQL, and MariaDB): the <a href=\"class.database.html\">Database</a>, <a href=\"class.row.html\">Row</a>, and <a href=\"class.cursor.html\">Cursor</a> classes</td></tr>"
     "</tbody></table>\n"
     "<pre class=\"code\">import File, file_get_contents from \"std/file\";\nimport date from \"std/time\";</pre>\n"
     "<p>Names from these modules are free for your own code when you don't import them: a program can declare its "
@@ -2285,6 +2285,8 @@ EXCEPTION_CLASSES = """<h1>Exception classes</h1>
 │   │   ├── PermissionDeniedException
 │   │   └── NetworkException
 │   ├── DatabaseException
+│   │   └── ConstraintViolationException
+│   │       └── UniqueViolationException
 │   ├── KeyNotFoundException
 │   ├── OutOfRangeException
 │   └── InvalidUtf8Exception
@@ -2310,7 +2312,9 @@ EXCEPTION_CLASSES = """<h1>Exception classes</h1>
 <tr><td><code>IOException</code></td><td>Reading or writing a file failed for a reason other than the two below, such as reading a directory.</td></tr>
 <tr><td><code>FileNotFoundException</code></td><td>A path given to a file function doesn't exist.</td></tr>
 <tr><td><code>PermissionDeniedException</code></td><td>The operating system denied access to a file.</td></tr>
-<tr><td><code>DatabaseException</code></td><td>A <a href="class.database.html">database</a> couldn't be opened or rejected a statement (an SQL error, a broken constraint, a missing table, a lock held for more than 5 seconds), the wrong number of values was given for a statement's placeholders, or a <a href="class.row.html">Row</a> getter was asked for a column that doesn't exist or holds another type.</td></tr>
+<tr><td><code>DatabaseException</code></td><td>A <a href="class.database.html">database</a> couldn't be opened or rejected a statement (an SQL error, a broken constraint, a missing table, a lock held for more than 5 seconds), the wrong number of values was given for a statement's placeholders, or a <a href="class.row.html">Row</a> getter was asked for a column that doesn't exist or holds another type. <code>getSqlState()</code> gives the SQLSTATE and <code>getCode()</code> the database's error number; see <a href="class.database.html">Errors</a>.</td></tr>
+<tr><td><code>ConstraintViolationException</code></td><td>A statement broke a constraint: <code>NOT NULL</code>, <code>CHECK</code>, a foreign key, or a unique key. A subclass of <code>DatabaseException</code>.</td></tr>
+<tr><td><code>UniqueViolationException</code></td><td>A row would duplicate another's value in a unique key or primary key. A subclass of <code>ConstraintViolationException</code>.</td></tr>
 <tr><td><code>KeyNotFoundException</code></td><td>A map lookup used a key that isn't in the map.</td></tr>
 <tr><td><code>OutOfRangeException</code></td><td>An array index is below 0 or not less than the array's length.</td></tr>
 <tr><td><code>InvalidUtf8Exception</code></td><td>Bytes or file contents that should be text aren't valid UTF-8.</td></tr>
@@ -2356,6 +2360,7 @@ DATABASE_CLASS = """<h1>The Database class</h1>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">queryOne</span>(<span class="type">string</span> sql, ...values): <span class="cls">Row</span><br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">queryAs</span>(<span class="type">string</span> sql, ...values): <span class="cls">T</span>[]<br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">queryOneAs</span>(<span class="type">string</span> sql, ...values): <span class="cls">T</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">cursor</span>(<span class="type">string</span> sql, ...values): <span class="cls">Cursor</span><br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">executeScript</span>(<span class="type">string</span> sql): <span class="type">void</span><br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">lastInsertId</span>(): <span class="type">int</span><br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">begin</span>(): <span class="type">void</span><br>
@@ -2408,6 +2413,7 @@ db->execute("insert into students (name) values (?)", name);   // stores the nam
 <tr><td><code>query(sql, ...values)</code></td><td>Runs a query and returns all its rows as an array of <a href="class.row.html">Row</a> objects, empty when nothing matches.</td></tr>
 <tr><td><code>queryOne(sql, ...values)</code></td><td>The first row of a query, or <code>null</code> when there is none. It stops after that row, so it's the quick way to look up one record.</td></tr>
 <tr><td><code>queryAs(sql, ...values)</code>, <code>queryOneAs(sql, ...values)</code></td><td>Like <code>query</code> and <code>queryOne</code>, with each row read into an object of the class the result is used as: <code>User[] users = db-&gt;queryAs(...)</code>. See <a href="#objects">Reading rows into objects</a>.</td></tr>
+<tr><td><code>cursor(sql, ...values)</code></td><td>Runs a query and returns a <a href="class.cursor.html">Cursor</a>, which reads its rows a batch at a time: for results too big to hold in memory at once.</td></tr>
 <tr><td><code>executeScript(sql)</code></td><td>Runs several statements separated by semicolons, such as a schema. They can't have placeholders. <code>execute</code>, <code>query</code>, and <code>queryOne</code> run exactly one statement and throw if the SQL has more, so a value can never smuggle in a second one.</td></tr>
 <tr><td><code>lastInsertId()</code></td><td>The id (the <code>INTEGER PRIMARY KEY</code>, or SQLite's rowid) of the last row inserted. With PostgreSQL, the value this connection's last sequence gave (such as a <code>serial</code> or identity column's), as PDO does; <code>insert ... returning id</code> with <code>queryOne</code> says exactly which column you mean. With MySQL, the last <code>AUTO_INCREMENT</code> value this connection generated, as <code>LAST_INSERT_ID()</code> gives.</td></tr>
 <tr><td><code>begin()</code>, <code>commit()</code>, <code>rollback()</code></td><td>Start a transaction, save its changes, or undo them. Without a transaction, each statement is saved on its own.</td></tr>
@@ -2479,7 +2485,37 @@ lin 50
 <p>The failed transfer had already added 500 to Ada's balance when the second update failed; rolling back undid it.</p>
 
 <h2>Errors</h2>
-<p>Everything that goes wrong throws <code>DatabaseException</code>, with SQLite's message: an SQL syntax error, a missing table or column, a broken <code>UNIQUE</code>, <code>NOT NULL</code>, <code>CHECK</code>, or foreign key constraint, or the wrong number of values for the placeholders.</p>
+<p>Everything that goes wrong throws <code>DatabaseException</code>, with the database's message: an SQL syntax error, a missing table or column, a broken <code>UNIQUE</code>, <code>NOT NULL</code>, <code>CHECK</code>, or foreign key constraint, or the wrong number of values for the placeholders. Two subclasses say which kind of constraint failed, the same way for every database:</p>
+<ul>
+<li><code>UniqueViolationException</code>: the row would duplicate another's value in a unique key or primary key, as when an email address is already registered.</li>
+<li><code>ConstraintViolationException</code>, which <code>UniqueViolationException</code> extends: any broken constraint (<code>NOT NULL</code>, <code>CHECK</code>, a foreign key, or a unique key).</li>
+</ul>
+<p><code>getSqlState()</code> gives the standard five-character SQLSTATE, such as <code>23505</code> for a duplicate key in PostgreSQL or <code>42P01</code> for a missing table (<code>HY000</code>, a general error, when there's no more specific one), and <code>getCode()</code> the database's own error number: SQLite's extended result code, or MySQL's error number, such as 1062 for a duplicate entry (PostgreSQL has none, so it's 0). SQLSTATEs differ between databases (MySQL reports every constraint as <code>23000</code>), so catch the subclasses to handle a kind of error portably.</p>
+```qiq
+Database db = Database::open("sqlite::memory:");
+db->execute("create table users (email text unique not null)");
+db->execute("insert into users values (?)", "ada@example.com");
+
+function register(Database db, string email): string {
+    try {
+        db->execute("insert into users values (?)", email);
+        return "welcome";
+    } catch (UniqueViolationException e) {
+        return "that email is already registered";
+    } catch (ConstraintViolationException e) {
+        return "invalid: " + e->getMessage() + " (" + e->getSqlState() + ")";
+    }
+}
+print(register(db, "lin@example.com"));
+print(register(db, "ada@example.com"));
+string none = null;
+print(register(db, none));
+```
+```output
+welcome
+that email is already registered
+invalid: NOT NULL constraint failed: users.email (23502)
+```
 ```qiq
 Database db = Database::open("sqlite::memory:");
 db->execute("create table users (email text unique)");
@@ -2612,6 +2648,66 @@ column 'stock' is NULL; check with isNull first, or read it with a fallback, as 
 ```
 """
 
+CURSOR_CLASS = """<h1>The Cursor class</h1>
+<p>The rows of a query, read a batch at a time rather than all at once, from <a href="class.database.html">Database</a>'s <code>cursor</code>. Use it for results too big to hold in memory: reading a million rows with <code>query</code> took 190 MB, and with a cursor under 1 MB.</p>
+<h2>Class synopsis</h2>
+<div class="synopsis"><code><span class="kw">final class</span> <span class="cls">Cursor</span> {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">next</span>(): <span class="cls">Row</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">fetch</span>(<span class="type">int</span> count): <span class="cls">Row</span>[]<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">close</span>(): <span class="type">void</span><br>
+}</code></div>
+<table>
+<thead><tr><th>Method</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>next()</code></td><td>The next <a href="class.row.html">Row</a>, or <code>null</code> after the last. It reads ahead 256 rows at a time, so each call is quick.</td></tr>
+<tr><td><code>fetch(count)</code></td><td>Up to <code>count</code> more rows: fewer only at the end, and an empty array after it. Throws <code>InvalidArgumentException</code> for a count below 1.</td></tr>
+<tr><td><code>close()</code></td><td>Stops reading; the rest of the rows are skipped. A cursor closes itself after its last row, and closing twice does nothing.</td></tr>
+</tbody>
+</table>
+<h2>Example</h2>
+```qiq
+Database db = Database::open("sqlite::memory:");
+db->execute("create table events (id integer primary key, kind text)");
+db->transaction(function(): void {
+    foreach (range(1000) as i) {
+        string kind = "view";
+        if (i % 3 == 0) {
+            kind = "click";
+        }
+        db->execute("insert into events (kind) values (?)", kind);
+    }
+});
+
+Cursor rows = db->cursor("select id, kind from events where kind = ? order by id", "click");
+int clicks = 0;
+Row row = rows->next();
+while (row != null) {
+    clicks++;
+    row = rows->next();
+}
+print("clicks:", clicks);
+
+// In batches, stopping early.
+Cursor batches = db->cursor("select id from events order by id");
+Row[] batch = batches->fetch(400);
+while (len(batch) > 0) {
+    print("batch of", len(batch), "starting at", batch[0]->getInt("id"));
+    if (batch[0]->getInt("id") > 400) {
+        batches->close();
+    }
+    batch = batches->fetch(400);
+}
+```
+```output
+clicks: 334
+batch of 400 starting at 1
+batch of 400 starting at 401
+```
+<h2>Cursors and the connection</h2>
+<p>With SQLite, a cursor has its own statement, so the database can run other statements, and other cursors, while it's open. With PostgreSQL and MySQL, the rows come from the connection as they're read, as with libpq's single-row mode and unbuffered MySQL queries, so that database can't run anything else until the cursor has read its last row or been closed: another statement throws <code>DatabaseException</code>. Closing a network cursor early still reads the rest of its rows from the server (and drops them); to stop sooner, ask for fewer rows with <code>LIMIT</code>. Open a second <code>Database</code> for statements to run while reading.</p>
+<p>A cursor that's no longer used isn't closed until the program ends, or its database is closed, so close one you stop reading early, in a <code>finally</code> block when the reading can throw.</p>
+"""
+
 # Pages for standard library classes: (href, title, summary, html).
 CLASS_PAGES = [
     ("class.file.html", "The File class", "Reading and writing files a line or a chunk at a time, including standard input and output.", FILE_CLASS),
@@ -2622,5 +2718,6 @@ CLASS_PAGES = [
     ("class.socket.html", "The Socket class", "TCP connections, optionally encrypted with TLS, for talking to network services.", SOCKET_CLASS),
     ("class.database.html", "The Database class", "SQL databases (SQLite, PostgreSQL, MySQL, and MariaDB): running statements with values for their placeholders, queries, and transactions.", DATABASE_CLASS),
     ("class.row.html", "The Row class", "One row of a query's result, read by column name with typed getters.", ROW_CLASS),
+    ("class.cursor.html", "The Cursor class", "A query's rows, read a batch at a time, for results too big to hold in memory.", CURSOR_CLASS),
     ("exception-classes.html", "Exception classes", "The exception classes thrown by the language and the standard library.", EXCEPTION_CLASSES),
 ]

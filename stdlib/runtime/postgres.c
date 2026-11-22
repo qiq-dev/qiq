@@ -45,6 +45,7 @@ struct QiqPostgres {
     uint64_t fork_count;      // qiq_sql_forks when it connected
     bool lost_in_transaction; // the connection was lost with a transaction open
     bool in_io;               // talking to the server: a failure now loses the connection
+    bool streaming;           // a cursor's rows are still arriving
     char *settings;           // the SET statements it ran, to run again on a new connection
     // The message being written, and the one being read.
     unsigned char *out;
@@ -805,6 +806,7 @@ static void pg_ready(QiqPostgres *pg) {
         pg->socket = -1;
         pg->fork_count = qiq_sql_forks;
         pg->status = 'I';
+        pg->streaming = false;
     }
     if (pg->lost_in_transaction) {
         pg->lost_in_transaction = false;
@@ -820,6 +822,7 @@ static void pg_ready(QiqPostgres *pg) {
 
 // Gives up a connection that failed; the next statement connects again.
 static void pg_lose(QiqPostgres *pg) {
+    pg->streaming = false;
     if (pg->socket < 0) return;
     if (pg->status != 'I') pg->lost_in_transaction = true;
     qiq_net_abandon(pg->socket);
@@ -858,7 +861,7 @@ static void pg_simple_query(QiqPostgres *pg, const char *sql) {
             }
         }
     }
-    if (failed) qiq_throw(QIQ_DATABASE_EXCEPTION, message);
+    if (failed) qiq_sql_throw(state, 0, strcmp(state, "23505") == 0, message);
 }
 
 void qiq_pg_script(QiqPostgres *pg, const char *sql) {
@@ -882,21 +885,14 @@ static void pg_format_double(double value, char *out, size_t size) {
     else snprintf(out, size, "%.17g", value);
 }
 
-int64_t qiq_pg_run(QiqPostgres *pg, const char *sql, int64_t mode, const char *caller) {
-    // Changed after setjmp and read by its handler, so volatile.
-    char *volatile text = NULL;
-    jmp_buf environment;
-    jmp_buf *previous = qiq_guard_enter(&environment);
-    if (setjmp(environment)) {
-        free(text);
-        pg_failed(pg);
-        qiq_rethrow(previous);
-    }
-    pg_ready(pg);
+// Sends `sql` with the pending values: Parse, Bind, Describe, Execute (all
+// the rows, or one for mode 2), and Sync, in one write.
+static void pg_send_statement(QiqPostgres *pg, const char *sql, int64_t mode, const char *caller) {
     size_t expected;
-    text = pg_placeholders(sql, &expected, caller);
+    char *text = pg_placeholders(sql, &expected, caller);
     size_t given = qiq_sql_pending_count;
     if (expected != given) {
+        free(text);
         qiq_throwf(QIQ_DATABASE_EXCEPTION, "%s: the SQL has %zu placeholder%s (?), but %zu value%s given", caller, expected,
                    expected == 1 ? "" : "s", given, given == 1 ? " was" : "s were");
     }
@@ -915,7 +911,6 @@ int64_t qiq_pg_run(QiqPostgres *pg, const char *sql, int64_t mode, const char *c
     }
     pg_end(pg, at);
     free(text);
-    text = NULL;
     // Bind: text values, except bytes, which go as they are.
     at = pg_begin(pg, 'B');
     pg_put_string(pg, "");
@@ -981,9 +976,19 @@ int64_t qiq_pg_run(QiqPostgres *pg, const char *sql, int64_t mode, const char *c
     at = pg_begin(pg, 'S');
     pg_end(pg, at);
     qiq_sql_drop_pending();
-
     pg->in_io = true;
     pg_flush(pg);
+}
+
+int64_t qiq_pg_run(QiqPostgres *pg, const char *sql, int64_t mode, const char *caller) {
+    jmp_buf environment;
+    jmp_buf *previous = qiq_guard_enter(&environment);
+    if (setjmp(environment)) {
+        pg_failed(pg);
+        qiq_rethrow(previous);
+    }
+    pg_ready(pg);
+    pg_send_statement(pg, sql, mode, caller);
     int64_t rows = 0, changes = 0;
     char message[1024] = "", state[6] = "";
     bool failed = false, empty = false;
@@ -1018,7 +1023,7 @@ int64_t qiq_pg_run(QiqPostgres *pg, const char *sql, int64_t mode, const char *c
                 pg_lose(pg);
                 pg->in_io = false;
                 qiq_sql_clear_results();
-                qiq_throw(QIQ_DATABASE_EXCEPTION, message);
+                qiq_sql_throw(state, 0, false, message);
             }
             break;
         default: // ParseComplete, BindComplete, NoData, PortalSuspended, notices
@@ -1032,11 +1037,118 @@ int64_t qiq_pg_run(QiqPostgres *pg, const char *sql, int64_t mode, const char *c
         if (strcmp(state, "42601") == 0 && strstr(message, "multiple commands") != NULL) {
             qiq_throwf(QIQ_DATABASE_EXCEPTION, "%s runs one SQL statement, but this has more; run several with executeScript", caller);
         }
-        qiq_throw(QIQ_DATABASE_EXCEPTION, message);
+        qiq_sql_throw(state, 0, strcmp(state, "23505") == 0, message);
     }
     pg_remember_settings(pg, sql);
     qiq_guard_leave(previous);
     return mode == 0 ? changes : rows;
+}
+
+// ---------------------------------------------------------------------------
+// Cursors: the rows are read off the connection as they're asked for.
+
+static void qiq_pg_open_cursor(QiqPostgres *pg, const char *sql, const char *caller) {
+    jmp_buf environment;
+    jmp_buf *previous = qiq_guard_enter(&environment);
+    if (setjmp(environment)) {
+        pg_failed(pg);
+        qiq_rethrow(previous);
+    }
+    pg_ready(pg);
+    pg_send_statement(pg, sql, 1, caller);
+    pg->type_count = 0;
+    char message[1024] = "", state[6] = "";
+    bool failed = false;
+    // Up to the columns; a statement without rows (or an error) runs to the end.
+    for (;;) {
+        char type = pg_read(pg);
+        if (type == 'T' && !failed) {
+            pg_read_columns(pg);
+            pg->streaming = true;
+            break;
+        }
+        if (type == 'Z') {
+            pg->status = pg->in_length > 0 ? (char)pg->in[0] : 'I';
+            break;
+        }
+        if (type == 'E' && !failed) {
+            failed = true;
+            if (pg_error_text(pg, message, sizeof message, state)) {
+                pg_lose(pg);
+                break;
+            }
+        }
+    }
+    pg->in_io = false;
+    if (failed) {
+        qiq_sql_clear_results();
+        qiq_sql_throw(state, 0, strcmp(state, "23505") == 0, message);
+    }
+    qiq_guard_leave(previous);
+}
+
+static int64_t qiq_pg_fetch(QiqPostgres *pg, int64_t count) {
+    if (!pg->streaming || pg->socket < 0 || pg->fork_count != qiq_sql_forks) {
+        pg->streaming = false;
+        return 0;
+    }
+    jmp_buf environment;
+    jmp_buf *previous = qiq_guard_enter(&environment);
+    if (setjmp(environment)) {
+        pg_failed(pg);
+        qiq_rethrow(previous);
+    }
+    pg->in_io = true;
+    int64_t rows = 0;
+    char message[1024] = "", state[6] = "";
+    bool failed = false;
+    while (failed || rows < count) {
+        char type = pg_read(pg);
+        if (type == 'Z') {
+            pg->status = pg->in_length > 0 ? (char)pg->in[0] : 'I';
+            pg->streaming = false;
+            break;
+        }
+        if (failed) continue;
+        if (type == 'D') {
+            pg_read_row(pg);
+            rows++;
+        } else if (type == 'E') {
+            failed = true;
+            if (pg_error_text(pg, message, sizeof message, state)) {
+                pg_lose(pg);
+                break;
+            }
+        }
+    }
+    pg->in_io = false;
+    if (failed) {
+        pg->streaming = false;
+        qiq_sql_clear_results();
+        qiq_sql_throw(state, 0, strcmp(state, "23505") == 0, message);
+    }
+    qiq_guard_leave(previous);
+    return rows;
+}
+
+static void qiq_pg_close_cursor(QiqPostgres *pg) {
+    if (!pg->streaming || pg->socket < 0 || pg->fork_count != qiq_sql_forks) {
+        pg->streaming = false;
+        return;
+    }
+    jmp_buf environment;
+    jmp_buf *previous = qiq_guard_enter(&environment);
+    if (setjmp(environment)) {
+        pg_failed(pg);
+        qiq_rethrow(previous);
+    }
+    pg->in_io = true;
+    // The rows left, and the end, are read and dropped.
+    while (pg_read(pg) != 'Z') {}
+    pg->status = pg->in_length > 0 ? (char)pg->in[0] : 'I';
+    pg->streaming = false;
+    pg->in_io = false;
+    qiq_guard_leave(previous);
 }
 
 // ---------------------------------------------------------------------------
@@ -1059,4 +1171,7 @@ const QiqSqlDriver qiq_postgres_driver = {
     .last_insert_id = (int64_t (*)(void *))qiq_pg_last_insert_id,
     .in_transaction = (bool (*)(void *))qiq_pg_in_transaction,
     .close = (void (*)(void *))qiq_pg_close,
+    .open_cursor = (void (*)(void *, const char *, const char *))qiq_pg_open_cursor,
+    .fetch = (int64_t (*)(void *, int64_t))qiq_pg_fetch,
+    .close_cursor = (void (*)(void *))qiq_pg_close_cursor,
 };

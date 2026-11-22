@@ -48,6 +48,7 @@ typedef struct {
     sqlite3 *db;              // NULL for other databases, and when the slot is free
     const QiqSqlDriver *driver; // for a network database, its driver
     void *pg;                 // and its connection (NULL otherwise)
+    int64_t streaming;        // a network connection's cursor still reading rows, or 0
     char *filename;           // to reopen it after a fork
     char *pragmas;            // the PRAGMA statements it ran, to run again then
     uint32_t generation;
@@ -59,6 +60,10 @@ typedef struct {
 static QiqSqlConnection *qiq_sql_connections;
 static size_t qiq_sql_connection_count;
 uint64_t qiq_sql_forks;
+
+static sqlite3_stmt *qiq_sql_prepare(QiqSqlConnection *connection, const char *sql, const char *caller, bool keep);
+static void qiq_sql_bind(sqlite3_stmt *statement, sqlite3_destructor_type keep);
+static void qiq_sql_close_cursors(int64_t connection);
 
 static void *qiq_sql_grow(void *data, size_t *capacity, size_t needed, size_t size) {
     if (needed <= *capacity) return data;
@@ -164,6 +169,42 @@ void qiq_sql_add_column(const char *name, size_t length) {
 
 int64_t qiq_sql_first_int(void) {
     return qiq_sql_cells > 0 && qiq_sql_kinds[0] == QIQ_SQL_INT ? qiq_sql_values[0] : 0;
+}
+
+// ---------------------------------------------------------------------------
+// Errors
+
+_Noreturn void qiq_sql_throw(const char *state, int64_t code, bool unique, const char *message) {
+    QiqExceptionKind kind = QIQ_DATABASE_EXCEPTION;
+    if (state != NULL && state[0] == '2' && state[1] == '3') kind = unique ? QIQ_UNIQUE_VIOLATION_EXCEPTION : QIQ_CONSTRAINT_VIOLATION_EXCEPTION;
+    qiq_set_database_error(state, code);
+    qiq_throw(kind, message);
+}
+
+// A SQLite error, with the SQLSTATE for its extended result code where
+// there's a standard one.
+static _Noreturn void qiq_sqlite_throw(int code, const char *message) {
+    const char *state = "HY000";
+    bool unique = false;
+    switch (code) {
+    case SQLITE_CONSTRAINT_UNIQUE:
+    case SQLITE_CONSTRAINT_PRIMARYKEY:
+        state = "23505";
+        unique = true;
+        break;
+    case SQLITE_CONSTRAINT_NOTNULL:
+        state = "23502";
+        break;
+    case SQLITE_CONSTRAINT_FOREIGNKEY:
+        state = "23503";
+        break;
+    case SQLITE_CONSTRAINT_CHECK:
+        state = "23514";
+        break;
+    default:
+        if ((code & 0xff) == SQLITE_CONSTRAINT) state = "23000";
+    }
+    qiq_sql_throw(state, code, unique, message);
 }
 
 // ---------------------------------------------------------------------------
@@ -441,6 +482,7 @@ static void qiq_sql_remember(QiqSqlConnection *connection, sqlite3_stmt *stateme
 QIQ_GUARDED_VOID(qiq_stdlib___sql_close, (int64_t handle), (handle)) {
     QiqSqlConnection *connection = qiq_sql_find(handle);
     if (connection == NULL) return;
+    qiq_sql_close_cursors(handle);
     if (connection->pg != NULL) {
         connection->driver->close(connection->pg);
     } else if (connection->fork_count == qiq_sql_forks) {
@@ -459,15 +501,214 @@ QIQ_GUARDED_VOID(qiq_stdlib___sql_close, (int64_t handle), (handle)) {
 }
 
 // ---------------------------------------------------------------------------
+// Cursors: a statement whose rows are read a batch at a time, for results
+// too big to hold at once. A SQLite cursor keeps its own prepared statement;
+// a network database's streams its rows from the connection, which can't
+// run anything else until they've been read or the cursor is closed.
+// Handles work like connections'.
+
+typedef struct {
+    int64_t connection;       // its database's handle
+    sqlite3_stmt *statement;  // SQLite's, or NULL
+    char **columns;           // the column names
+    size_t column_count;
+    bool open;                // rows may be left
+    uint32_t generation;
+} QiqSqlCursor;
+
+static QiqSqlCursor *qiq_sql_cursors;
+static size_t qiq_sql_cursor_count;
+
+static void qiq_sql_check_idle(QiqSqlConnection *connection) {
+    if (connection->streaming == 0) return;
+    qiq_sql_drop_pending();
+    qiq_throw(QIQ_DATABASE_EXCEPTION,
+              "a cursor is still reading rows from this database: read them all, or close() it, before running another statement");
+}
+
+static QiqSqlCursor *qiq_sql_find_cursor(int64_t handle) {
+    size_t slot = (size_t)(uint32_t)handle;
+    uint32_t generation = (uint32_t)((uint64_t)handle >> 32);
+    if (slot == 0 || slot > qiq_sql_cursor_count) return NULL;
+    QiqSqlCursor *cursor = &qiq_sql_cursors[slot - 1];
+    return cursor->generation == generation && cursor->columns != NULL ? cursor : NULL;
+}
+
+// Ends a cursor: finalizes SQLite's statement, and for a network database,
+// reads what's left (when `drain`) and frees the connection for other work.
+static void qiq_sql_end_cursor(QiqSqlCursor *cursor, bool drain) {
+    if (!cursor->open) return;
+    cursor->open = false;
+    if (cursor->statement != NULL) {
+        sqlite3_finalize(cursor->statement);
+        cursor->statement = NULL;
+    }
+    QiqSqlConnection *connection = qiq_sql_find(cursor->connection);
+    if (connection != NULL && connection->pg != NULL && connection->streaming != 0) {
+        connection->streaming = 0;
+        if (drain) connection->driver->close_cursor(connection->pg);
+    }
+}
+
+// Frees a cursor's slot (and names) once it's closed.
+static void qiq_sql_free_cursor(QiqSqlCursor *cursor) {
+    for (size_t i = 0; i < cursor->column_count; i++) free(cursor->columns[i]);
+    free(cursor->columns);
+    uint32_t generation = cursor->generation + 1;
+    memset(cursor, 0, sizeof *cursor);
+    cursor->generation = generation;
+}
+
+// When a database closes: its cursors end, without reading the rest.
+static void qiq_sql_close_cursors(int64_t connection) {
+    for (size_t i = 0; i < qiq_sql_cursor_count; i++) {
+        QiqSqlCursor *cursor = &qiq_sql_cursors[i];
+        if (cursor->columns != NULL && cursor->connection == connection) {
+            qiq_sql_end_cursor(cursor, false);
+            qiq_sql_free_cursor(cursor);
+        }
+    }
+}
+
+QIQ_GUARDED(int64_t, qiq_stdlib___sql_cursor, 0, (int64_t handle, const char *sql), (handle, sql)) {
+    qiq_sql_clear_results();
+    QiqSqlConnection *connection = qiq_sql_find(handle) != NULL ? qiq_sql_connection(handle) : NULL;
+    if (connection == NULL) {
+        qiq_sql_drop_pending();
+        qiq_throw(QIQ_DATABASE_EXCEPTION, "the database is closed");
+    }
+    sqlite3_stmt *statement = NULL;
+    if (connection->pg != NULL) {
+        qiq_sql_check_idle(connection);
+        // Sends the statement and reads the columns into the buffers.
+        connection->driver->open_cursor(connection->pg, sql, "cursor");
+    } else {
+        jmp_buf environment;
+        jmp_buf *previous = qiq_guard_enter(&environment);
+        if (setjmp(environment)) {
+            qiq_guard_leave(previous);
+            qiq_sql_drop_pending();
+            return 0;
+        }
+        statement = qiq_sql_prepare(connection, sql, "cursor", false);
+        qiq_guard_leave(previous);
+        int expected = sqlite3_bind_parameter_count(statement);
+        if ((size_t)expected != qiq_sql_pending_count) {
+            size_t given = qiq_sql_pending_count;
+            qiq_sql_drop_pending();
+            sqlite3_finalize(statement);
+            qiq_throwf(QIQ_DATABASE_EXCEPTION, "cursor: the SQL has %d placeholder%s (?), but %zu value%s given", expected,
+                       expected == 1 ? "" : "s", given, given == 1 ? " was" : "s were");
+        }
+        // Copied: the statement outlives the values.
+        qiq_sql_bind(statement, SQLITE_TRANSIENT);
+        qiq_sql_drop_pending();
+        for (int column = 0; column < sqlite3_column_count(statement); column++) {
+            const char *name = sqlite3_column_name(statement, column);
+            qiq_sql_add_column(name, strlen(name));
+        }
+    }
+    size_t slot = 0;
+    while (slot < qiq_sql_cursor_count && qiq_sql_cursors[slot].columns != NULL) slot++;
+    if (slot == qiq_sql_cursor_count) {
+        QiqSqlCursor *grown = realloc(qiq_sql_cursors, (slot + 1) * sizeof(QiqSqlCursor));
+        if (grown == NULL) qiq_fatal("out of memory");
+        qiq_sql_cursors = grown;
+        memset(&qiq_sql_cursors[slot], 0, sizeof(QiqSqlCursor));
+        qiq_sql_cursor_count++;
+    }
+    QiqSqlCursor *cursor = &qiq_sql_cursors[slot];
+    cursor->connection = handle;
+    cursor->statement = statement;
+    cursor->open = true;
+    cursor->column_count = qiq_sql_column_count;
+    cursor->columns = malloc((qiq_sql_column_count + 1) * sizeof(char *));
+    if (cursor->columns == NULL) qiq_fatal("out of memory");
+    for (size_t i = 0; i < qiq_sql_column_count; i++) {
+        cursor->columns[i] = strdup(qiq_sql_columns[i]);
+        if (cursor->columns[i] == NULL) qiq_fatal("out of memory");
+    }
+    qiq_sql_clear_results();
+    int64_t id = (int64_t)((uint64_t)cursor->generation << 32 | (uint64_t)(slot + 1));
+    if (connection->pg != NULL) connection->streaming = id;
+    return id;
+}
+
+// Reads up to `count` more rows into the buffers; fewer means the end, after
+// which the cursor is closed.
+QIQ_GUARDED(int64_t, qiq_stdlib___sql_fetch, 0, (int64_t handle, int64_t count), (handle, count)) {
+    qiq_sql_clear_results();
+    QiqSqlCursor *cursor = qiq_sql_find_cursor(handle);
+    if (cursor == NULL) qiq_throw(QIQ_DATABASE_EXCEPTION, "the cursor's database is closed");
+    if (count < 1) qiq_throw(QIQ_INVALID_ARGUMENT_EXCEPTION, "Cursor::fetch: the count must be at least 1");
+    for (size_t i = 0; i < cursor->column_count; i++) qiq_sql_add_column(cursor->columns[i], strlen(cursor->columns[i]));
+    if (!cursor->open) return 0;
+    int64_t rows = 0;
+    if (cursor->statement != NULL) {
+        int code = SQLITE_ROW;
+        while (rows < count && (code = sqlite3_step(cursor->statement)) == SQLITE_ROW) {
+            qiq_sql_add_row(cursor->statement, (int)cursor->column_count);
+            rows++;
+        }
+        if (code != SQLITE_ROW) {
+            QiqSqlConnection *connection = qiq_sql_find(cursor->connection);
+            int error = connection != NULL ? sqlite3_extended_errcode(connection->db) : 0;
+            char message[512];
+            snprintf(message, sizeof message, "%s", connection != NULL ? sqlite3_errmsg(connection->db) : "the database is closed");
+            qiq_sql_end_cursor(cursor, false);
+            if (code != SQLITE_DONE) {
+                qiq_sql_clear_results();
+                qiq_sqlite_throw(error, message);
+            }
+        }
+        return rows;
+    }
+    QiqSqlConnection *connection = qiq_sql_find(cursor->connection);
+    if (connection == NULL || connection->streaming != handle) {
+        cursor->open = false;
+        return 0;
+    }
+    jmp_buf environment;
+    jmp_buf *previous = qiq_guard_enter(&environment);
+    if (setjmp(environment)) {
+        // An error ends the cursor; the driver has already read to the end.
+        cursor->open = false;
+        connection->streaming = 0;
+        qiq_rethrow(previous);
+    }
+    rows = connection->driver->fetch(connection->pg, count);
+    qiq_guard_leave(previous);
+    if (rows < count) {
+        cursor->open = false;
+        connection->streaming = 0;
+    }
+    return rows;
+}
+
+QIQ_GUARDED_VOID(qiq_stdlib___sql_close_cursor, (int64_t handle), (handle)) {
+    QiqSqlCursor *cursor = qiq_sql_find_cursor(handle);
+    if (cursor == NULL) return;
+    jmp_buf environment;
+    jmp_buf *previous = qiq_guard_enter(&environment);
+    if (setjmp(environment)) {
+        qiq_sql_free_cursor(cursor);
+        qiq_rethrow(previous);
+    }
+    qiq_sql_end_cursor(cursor, true);
+    qiq_guard_leave(previous);
+    qiq_sql_free_cursor(cursor);
+}
+
+// ---------------------------------------------------------------------------
 // Running statements.
 
 // A prepared statement for `sql`, from the cache or newly prepared and
 // added to it (evicting the least recently used). `caller` names the method
 // for errors.
-static sqlite3_stmt *qiq_sql_prepare(QiqSqlConnection *connection, const char *sql, const char *caller) {
+static sqlite3_stmt *qiq_sql_prepare(QiqSqlConnection *connection, const char *sql, const char *caller, bool keep) {
     connection->clock++;
     QiqSqlCached *oldest = &connection->cache[0];
-    for (int index = 0; index < QIQ_SQL_CACHE; index++) {
+    for (int index = 0; keep && index < QIQ_SQL_CACHE; index++) {
         QiqSqlCached *cached = &connection->cache[index];
         if (cached->sql != NULL && strcmp(cached->sql, sql) == 0) {
             cached->used = connection->clock;
@@ -479,7 +720,7 @@ static sqlite3_stmt *qiq_sql_prepare(QiqSqlConnection *connection, const char *s
     sqlite3_stmt *statement = NULL;
     const char *tail = NULL;
     if (sqlite3_prepare_v3(connection->db, sql, -1, SQLITE_PREPARE_PERSISTENT, &statement, &tail) != SQLITE_OK) {
-        qiq_throw(QIQ_DATABASE_EXCEPTION, sqlite3_errmsg(connection->db));
+        qiq_sqlite_throw(sqlite3_extended_errcode(connection->db), sqlite3_errmsg(connection->db));
     }
     if (statement == NULL) qiq_throwf(QIQ_DATABASE_EXCEPTION, "%s: the SQL has no statement to run", caller);
     // Anything after the statement must be only spaces and comments.
@@ -498,6 +739,7 @@ static sqlite3_stmt *qiq_sql_prepare(QiqSqlConnection *connection, const char *s
             qiq_throw(QIQ_DATABASE_EXCEPTION, message);
         }
     }
+    if (!keep) return statement;
     char *copy = strdup(sql);
     if (copy == NULL) qiq_fatal("out of memory");
     if (oldest->sql != NULL) {
@@ -508,7 +750,9 @@ static sqlite3_stmt *qiq_sql_prepare(QiqSqlConnection *connection, const char *s
     return statement;
 }
 
-static void qiq_sql_bind(sqlite3_stmt *statement) {
+// Binds the pending values. With SQLITE_STATIC, they must stay alive until
+// the statement is reset; SQLITE_TRANSIENT copies them.
+static void qiq_sql_bind(sqlite3_stmt *statement, sqlite3_destructor_type keep) {
     for (size_t index = 0; index < qiq_sql_pending_count; index++) {
         QiqSqlValue value = qiq_sql_pending[index];
         int at = (int)index + 1;
@@ -521,14 +765,14 @@ static void qiq_sql_bind(sqlite3_stmt *statement) {
         }
         case 's':
             if (value.payload == 0) sqlite3_bind_null(statement, at);
-            else sqlite3_bind_text(statement, at, (const char *)(uintptr_t)value.payload, -1, SQLITE_STATIC);
+            else sqlite3_bind_text(statement, at, (const char *)(uintptr_t)value.payload, -1, keep);
             break;
         case 'a': {
             void *array = (void *)(uintptr_t)value.payload;
             if (array == NULL) sqlite3_bind_null(statement, at);
             // A null pointer would bind NULL rather than an empty blob.
             else if (QIQ_ARRAY_LENGTH(array) == 0) sqlite3_bind_zeroblob(statement, at, 0);
-            else sqlite3_bind_blob64(statement, at, QIQ_ARRAY_DATA(array), (sqlite3_uint64)QIQ_ARRAY_LENGTH(array), SQLITE_STATIC);
+            else sqlite3_bind_blob64(statement, at, QIQ_ARRAY_DATA(array), (sqlite3_uint64)QIQ_ARRAY_LENGTH(array), keep);
             break;
         }
         case 'n':
@@ -551,7 +795,10 @@ QIQ_GUARDED(int64_t, qiq_stdlib___sql_run, 0, (int64_t handle, const char *sql, 
         qiq_sql_drop_pending();
         qiq_throw(QIQ_DATABASE_EXCEPTION, "the database is closed");
     }
-    if (connection->pg != NULL) return connection->driver->run(connection->pg, sql, mode, caller);
+    if (connection->pg != NULL) {
+        qiq_sql_check_idle(connection);
+        return connection->driver->run(connection->pg, sql, mode, caller);
+    }
     sqlite3_stmt *statement;
     {
         // Prepare errors throw from inside; the pending values go first.
@@ -562,7 +809,7 @@ QIQ_GUARDED(int64_t, qiq_stdlib___sql_run, 0, (int64_t handle, const char *sql, 
             qiq_sql_drop_pending();
             return 0;
         }
-        statement = qiq_sql_prepare(connection, sql, caller);
+        statement = qiq_sql_prepare(connection, sql, caller, true);
         qiq_guard_leave(previous);
     }
     int expected = sqlite3_bind_parameter_count(statement);
@@ -572,7 +819,7 @@ QIQ_GUARDED(int64_t, qiq_stdlib___sql_run, 0, (int64_t handle, const char *sql, 
         qiq_throwf(QIQ_DATABASE_EXCEPTION, "%s: the SQL has %d placeholder%s (?), but %zu value%s given", caller, expected,
                    expected == 1 ? "" : "s", given, given == 1 ? " was" : "s were");
     }
-    qiq_sql_bind(statement);
+    qiq_sql_bind(statement, SQLITE_STATIC);
     int columns = sqlite3_column_count(statement);
     if (mode != 0) {
         qiq_sql_columns = qiq_sql_grow(qiq_sql_columns, &qiq_sql_columns_capacity, (size_t)columns, sizeof(char *));
@@ -596,6 +843,7 @@ QIQ_GUARDED(int64_t, qiq_stdlib___sql_run, 0, (int64_t handle, const char *sql, 
     // A statement that changes nothing (a SELECT) would report the last change's count.
     int64_t result = mode != 0 ? rows : sqlite3_stmt_readonly(statement) ? 0 : (int64_t)sqlite3_changes64(connection->db);
     char message[512];
+    int error = code != SQLITE_DONE ? sqlite3_extended_errcode(connection->db) : 0;
     if (code != SQLITE_DONE) snprintf(message, sizeof message, "%s", sqlite3_errmsg(connection->db));
     if (code == SQLITE_DONE) qiq_sql_remember(connection, statement);
     sqlite3_reset(statement);
@@ -603,7 +851,7 @@ QIQ_GUARDED(int64_t, qiq_stdlib___sql_run, 0, (int64_t handle, const char *sql, 
     qiq_sql_drop_pending();
     if (code != SQLITE_DONE) {
         qiq_sql_clear_results();
-        qiq_throw(QIQ_DATABASE_EXCEPTION, message);
+        qiq_sqlite_throw(error, message);
     }
     return result;
 }
@@ -612,6 +860,7 @@ QIQ_GUARDED(int64_t, qiq_stdlib___sql_run, 0, (int64_t handle, const char *sql, 
 QIQ_GUARDED_VOID(qiq_stdlib___sql_execute_script, (int64_t handle, const char *sql), (handle, sql)) {
     QiqSqlConnection *connection = qiq_sql_connection(handle);
     if (connection->pg != NULL) {
+        qiq_sql_check_idle(connection);
         connection->driver->script(connection->pg, sql);
         return;
     }
@@ -619,16 +868,17 @@ QIQ_GUARDED_VOID(qiq_stdlib___sql_execute_script, (int64_t handle, const char *s
     while (*next != '\0') {
         sqlite3_stmt *statement = NULL;
         if (sqlite3_prepare_v2(connection->db, next, -1, &statement, &next) != SQLITE_OK) {
-            qiq_throw(QIQ_DATABASE_EXCEPTION, sqlite3_errmsg(connection->db));
+            qiq_sqlite_throw(sqlite3_extended_errcode(connection->db), sqlite3_errmsg(connection->db));
         }
         if (statement == NULL) break; // only spaces and comments were left
         int code;
         while ((code = sqlite3_step(statement)) == SQLITE_ROW) {}
         if (code != SQLITE_DONE) {
             char message[512];
+            int error = sqlite3_extended_errcode(connection->db);
             snprintf(message, sizeof message, "%s", sqlite3_errmsg(connection->db));
             sqlite3_finalize(statement);
-            qiq_throw(QIQ_DATABASE_EXCEPTION, message);
+            qiq_sqlite_throw(error, message);
         }
         qiq_sql_remember(connection, statement);
         sqlite3_finalize(statement);
@@ -637,7 +887,10 @@ QIQ_GUARDED_VOID(qiq_stdlib___sql_execute_script, (int64_t handle, const char *s
 
 QIQ_GUARDED(int64_t, qiq_stdlib___sql_last_insert_id, 0, (int64_t handle), (handle)) {
     QiqSqlConnection *connection = qiq_sql_connection(handle);
-    if (connection->pg != NULL) return connection->driver->last_insert_id(connection->pg);
+    if (connection->pg != NULL) {
+        qiq_sql_check_idle(connection);
+        return connection->driver->last_insert_id(connection->pg);
+    }
     return (int64_t)sqlite3_last_insert_rowid(connection->db);
 }
 

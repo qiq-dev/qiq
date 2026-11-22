@@ -20,6 +20,12 @@ extern QiqSqlValue *qiq_sql_pending;
 extern size_t qiq_sql_pending_count;
 void qiq_sql_drop_pending(void);
 
+// Throws the exception for a database error: UniqueViolationException
+// when `unique`, ConstraintViolationException for another SQLSTATE in class
+// 23, and DatabaseException otherwise, with the SQLSTATE and the database's
+// error number.
+_Noreturn void qiq_sql_throw(const char *state, int64_t code, bool unique, const char *message);
+
 // Increases in each process forked after the first database was opened.
 extern uint64_t qiq_sql_forks;
 
@@ -50,6 +56,14 @@ typedef struct {
     int64_t (*last_insert_id)(void *connection);
     bool (*in_transaction)(void *connection);
     void (*close)(void *connection);
+    // Cursors, one at a time per connection: open_cursor sends the
+    // statement with the pending values and reads its columns into the
+    // buffers; fetch reads up to `count` rows into them (fewer at the end,
+    // where the connection is free again); close_cursor reads and drops the
+    // rest.
+    void (*open_cursor)(void *connection, const char *sql, const char *caller);
+    int64_t (*fetch)(void *connection, int64_t count);
+    void (*close_cursor)(void *connection);
 } QiqSqlDriver;
 
 extern const QiqSqlDriver qiq_postgres_driver; // postgres.c

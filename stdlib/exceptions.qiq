@@ -9,6 +9,8 @@
 // │   │   ├── PermissionDeniedException
 // │   │   └── NetworkException
 // │   ├── DatabaseException
+// │   │   └── ConstraintViolationException
+// │   │       └── UniqueViolationException
 // │   ├── KeyNotFoundException
 // │   ├── OutOfRangeException
 // │   └── InvalidUtf8Exception
@@ -53,8 +55,39 @@ class NetworkException extends IOException {}
 
 // A database couldn't be opened, or rejected a statement: an SQL syntax
 // error, a broken constraint, a missing table, or the wrong number of
-// values for the placeholders (std/sql).
-class DatabaseException extends RuntimeException {}
+// values for the placeholders (std/sql). getSqlState() is the standard
+// five-character SQLSTATE ("42P01"; "HY000" for a general error) and
+// getCode() the database's own error number (SQLite's extended result
+// code, MySQL's error number; 0 for PostgreSQL, which has none).
+class DatabaseException extends RuntimeException {
+    protected string sqlState;
+
+    function __construct(string message = "", int code = 0) {
+        parent::__construct(message, code);
+        // Raised by the runtime: the database's code and SQLSTATE; otherwise
+        // the state is HY000, a general error.
+        if (__database_error_pending()) {
+            this->code = __database_error_code();
+        }
+        this->sqlState = __database_error_state();
+    }
+
+    function getSqlState(): string {
+        return this->sqlState;
+    }
+}
+
+// A statement broke a constraint (SQLSTATE class 23): NOT NULL, CHECK, a
+// foreign key, or a unique key.
+class ConstraintViolationException extends DatabaseException {}
+
+// A row would duplicate another's value in a unique key or primary key.
+class UniqueViolationException extends ConstraintViolationException {}
+
+// The details of the database error the runtime is raising (core.c).
+extern function __database_error_pending(): bool;
+extern function __database_error_code(): int;
+extern function __database_error_state(): string;
 
 // A map lookup used a key that is not in the map.
 class KeyNotFoundException extends RuntimeException {}

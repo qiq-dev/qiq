@@ -23,12 +23,18 @@ typedef enum {
     QIQ_JSON_EXCEPTION = 10,
     QIQ_NETWORK_EXCEPTION = 11,
     QIQ_DATABASE_EXCEPTION = 12,
+    QIQ_CONSTRAINT_VIOLATION_EXCEPTION = 13,
+    QIQ_UNIQUE_VIOLATION_EXCEPTION = 14,
 } QiqExceptionKind;
 
 // Raises a qiq exception of `kind` and abandons the current runtime call: the
 // guarded entry point (see QIQ_GUARDED) returns a placeholder, and compiled
 // code sees the pending exception right after the call.
 _Noreturn void qiq_throw(QiqExceptionKind kind, const char *message);
+
+// Records a database error's SQLSTATE and number for the DatabaseException
+// about to be raised, whose constructor takes them (core.c).
+void qiq_set_database_error(const char *state, int64_t code);
 
 // Like qiq_throw, with a printf-style message.
 _Noreturn void qiq_throwf(QiqExceptionKind kind, const char *format, ...);
