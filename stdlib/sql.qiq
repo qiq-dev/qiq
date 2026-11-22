@@ -327,9 +327,13 @@ final class Cursor {
 // A connection to a database.
 final class Database {
     private int handle;
+    // How many transaction() calls are running inside another, each with
+    // its savepoint.
+    private int savepoints;
 
     private function __construct(int handle) {
         this->handle = handle;
+        this->savepoints = 0;
     }
 
     // Opens a database: "sqlite:path/to/file.db" (created if it doesn't
@@ -412,8 +416,29 @@ final class Database {
     }
 
     // Runs `body` in a transaction: commits when it returns, or rolls back
-    // and rethrows when it throws.
+    // and rethrows when it throws. Inside another transaction, it uses a
+    // savepoint instead: when `body` throws, only its own changes are rolled
+    // back, and the outer transaction carries on (or not) as its code
+    // decides; when it returns, its changes become part of the outer one.
     function transaction(function(): void body): void {
+        if (this->inTransaction()) {
+            this->savepoints++;
+            string name = "qiq_savepoint_" + to_string(this->savepoints);
+            try {
+                this->execute("SAVEPOINT " + name);
+                try {
+                    body();
+                } catch (Exception e) {
+                    this->execute("ROLLBACK TO SAVEPOINT " + name);
+                    this->execute("RELEASE SAVEPOINT " + name);
+                    throw e;
+                }
+                this->execute("RELEASE SAVEPOINT " + name);
+            } finally {
+                this->savepoints--;
+            }
+            return;
+        }
         this->begin();
         try {
             body();

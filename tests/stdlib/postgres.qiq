@@ -71,3 +71,68 @@ more->executeScript("drop table if exists uniq; create table uniq (k int primary
 more->execute("insert into uniq values (?)", 1);
 try { more->execute("insert into uniq values (?)", 1); } catch (UniqueViolationException e) { print("unique:", substr(e->getSqlState(), 0, 2)); }
 try { more->query("select * from no_such_table"); } catch (DatabaseException e) { print("state:", e->getSqlState()); }
+
+// Nested transactions: transaction() inside another uses a savepoint.
+Database nest = Database::open(url);
+nest->executeScript("drop table if exists items; create table items (name varchar(20) primary key)");
+function nestedNames(Database nest): string {
+    string out = "";
+    foreach (nest->query("select name from items order by name") as row) { out += row->getString("name") + " "; }
+    return out;
+}
+// The inner part fails; the outer carries on.
+nest->transaction(function(): void {
+    nest->execute("insert into items values (?)", "a");
+    try {
+        nest->transaction(function(): void {
+            nest->execute("insert into items values (?)", "b");
+            nest->execute("insert into items values (?)", "a");   // duplicate
+        });
+    } catch (UniqueViolationException e) { print("inner rolled back:", nest->inTransaction()); }
+    nest->execute("insert into items values (?)", "c");
+});
+print(nestedNames(nest), nest->inTransaction());
+// The inner part succeeds; the outer fails: everything rolls back.
+try {
+    nest->transaction(function(): void {
+        nest->transaction(function(): void { nest->execute("insert into items values (?)", "d"); });
+        nest->transaction(function(): void {
+            nest->transaction(function(): void { nest->execute("insert into items values (?)", "e"); });
+        });
+        throw new RuntimeException("outer fails");
+    });
+} catch (RuntimeException e) { print(e->getMessage(), nest->inTransaction()); }
+print(nestedNames(nest));
+// begin() by hand, then transaction() inside it.
+nest->begin();
+nest->transaction(function(): void { nest->execute("insert into items values (?)", "f"); });
+nest->commit();
+print(nestedNames(nest));
+
+// The statement cache: more statements than it holds, a table changing under one, DEALLOCATE.
+Database cached = Database::open(url);
+cached->executeScript("drop table if exists t; create table t (a int, b text); insert into t values (1, 'x')");
+// More statements than the cache holds, twice round.
+int total = 0;
+foreach (range(2) as round) { foreach (range(20) as i) { total += cached->queryOne("select ? + " + to_string(i) + " as n", 1)->getInt("n"); } }
+print("cycled:", total, cached->queryOne("select count(*) as n from pg_prepared_statements")->getInt("n"));
+print(cached->queryOne("select * from t")->toMap());
+// The table changes under a cached select *: prepared again.
+cached->execute("alter table t add column c int default 7");
+print(cached->queryOne("select * from t")->toMap());
+// The server drops every prepared statement.
+cached->executeScript("deallocate all");
+print("after deallocate:", cached->queryOne("select * from t where a = ?", 1)->getString("b"));
+// A byte array where a string was: a separate statement.
+cached->execute("create temporary table blobs (v bytea)");
+byte[] data = [0, 255];
+cached->execute("insert into blobs values (?)", data);
+string none = null;
+cached->execute("insert into blobs values (?)", none);
+print("blobs:", cached->queryOne("select count(*) as n from blobs")->getInt("n"), cached->queryOne("select v from blobs where v is not null")->getBytes("v"));
+// In a transaction, a stale statement fails once, then works after rollback.
+cached->begin();
+cached->execute("alter table t add column d int default 8");
+try { cached->queryOne("select * from t"); print("in tx: ok"); } catch (DatabaseException e) { print("in tx:", e->getSqlState(), e->getMessage()); }
+cached->rollback();
+print(cached->queryOne("select * from t")->toMap());

@@ -4,7 +4,10 @@
 //
 // Each statement is one round trip in the extended query protocol: Parse
 // (with the `?` placeholders rewritten as $1, $2, ...), Bind (the values,
-// sent separately from the SQL), Describe, Execute, and Sync. Results come
+// sent separately from the SQL), Describe, Execute, and Sync. Statements
+// are prepared by name, and each connection keeps its most recently used
+// ones, keyed by their SQL text, so running one again skips the Parse (and
+// the server's planning). Results come
 // back as text and are converted by column type: integers, floats, and
 // booleans to the cells Row's getters read, numeric to a decimal kept as
 // its exact text, bytea to bytes, and everything else to text.
@@ -35,6 +38,15 @@ enum {
     PG_FLOAT4 = 700, PG_FLOAT8 = 701, PG_NUMERIC = 1700,
 };
 
+#define PG_CACHE 16
+
+typedef struct {
+    char *sql;                // NULL when the entry is unused
+    char *bytes;              // which values were byte arrays ('1') or not ('0'), as Parse typed them
+    char name[24];
+    uint64_t used;
+} PgCached;
+
 struct QiqPostgres {
     int64_t socket;           // -1 when not connected
     char *host, *user, *password, *database;
@@ -55,6 +67,11 @@ struct QiqPostgres {
     // The result columns' types.
     int32_t *types;
     size_t type_count, types_capacity;
+    // Prepared statements, and the one being prepared until the server's
+    // ParseComplete says it exists.
+    PgCached cache[PG_CACHE];
+    PgCached parsing;
+    uint64_t clock, statements;
 };
 
 static void *pg_grow(void *data, size_t *capacity, size_t needed, size_t size) {
@@ -390,9 +407,11 @@ static void pg_until_ready(QiqPostgres *pg) {
 }
 
 static void pg_simple_query(QiqPostgres *pg, const char *sql);
+static void pg_forget_statements(QiqPostgres *pg);
 
 // Connects, logs in, and runs the remembered SET statements.
 static void pg_connect(QiqPostgres *pg) {
+    pg_forget_statements(pg);
     pg->socket = qiq_net_connect(pg->host, pg->port, pg->connect_timeout);
     pg->status = 'I';
     if (pg->tls) {
@@ -471,7 +490,37 @@ static int pg_hex_digit(char c) {
     return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
 }
 
+static void pg_forget_statement(PgCached *cached) {
+    free(cached->sql);
+    free(cached->bytes);
+    memset(cached, 0, sizeof *cached);
+}
+
+// When the server's statements are gone: a new connection, or after
+// DEALLOCATE or DISCARD.
+static void pg_forget_statements(QiqPostgres *pg) {
+    for (int i = 0; i < PG_CACHE; i++) pg_forget_statement(&pg->cache[i]);
+    pg_forget_statement(&pg->parsing);
+}
+
+// The server prepared the statement being parsed: it joins the cache.
+static void pg_parsed(QiqPostgres *pg) {
+    if (pg->parsing.sql == NULL) return;
+    PgCached *slot = &pg->cache[0];
+    for (int i = 0; i < PG_CACHE; i++) {
+        if (pg->cache[i].sql == NULL) {
+            slot = &pg->cache[i];
+            break;
+        }
+        if (pg->cache[i].used < slot->used) slot = &pg->cache[i];
+    }
+    pg_forget_statement(slot); // its Close went before the Parse
+    *slot = pg->parsing;
+    memset(&pg->parsing, 0, sizeof pg->parsing);
+}
+
 static void pg_free(QiqPostgres *pg) {
+    pg_forget_statements(pg);
     free(pg->host);
     free(pg->user);
     free(pg->password);
@@ -673,8 +722,9 @@ static bool pg_is_session_setting(const char *sql, size_t length) {
     return strcmp(word, "local") != 0 && strcmp(word, "transaction") != 0;
 }
 
-// Remembers the SET statements among `sql`'s, to run again on a new
-// connection; SET LOCAL and SET TRANSACTION last only for a transaction.
+// After `sql` has run: remembers its SET statements, to run again on a new
+// connection (SET LOCAL and SET TRANSACTION last only for a transaction),
+// and forgets the prepared statements when it dropped the server's.
 static void pg_remember_settings(QiqPostgres *pg, const char *sql) {
     size_t start = 0, length = strlen(sql);
     for (size_t i = 0; i <= length;) {
@@ -686,6 +736,11 @@ static void pg_remember_settings(QiqPostgres *pg, const char *sql) {
         if (i == length || sql[i] == ';') {
             const char *statement = sql + start;
             size_t size = i - start;
+            // DEALLOCATE and DISCARD drop the server's prepared statements.
+            size_t word_at = 0;
+            char first[16];
+            pg_word(statement, size, &word_at, first, sizeof first);
+            if (strcmp(first, "deallocate") == 0 || strcmp(first, "discard") == 0) pg_forget_statements(pg);
             if (pg_is_session_setting(statement, size)) {
                 size_t old = pg->settings != NULL ? strlen(pg->settings) : 0;
                 char *grown = realloc(pg->settings, old + size + 3);
@@ -896,25 +951,67 @@ static void pg_send_statement(QiqPostgres *pg, const char *sql, int64_t mode, co
         qiq_throwf(QIQ_DATABASE_EXCEPTION, "%s: the SQL has %zu placeholder%s (?), but %zu value%s given", caller, expected,
                    expected == 1 ? "" : "s", given, given == 1 ? " was" : "s were");
     }
-    // Parse, with the values' types: bytea for bytes, sent as they are, and
-    // otherwise unknown, so the server reads the text as whatever type the
-    // column, operator, or function needs (as PDO and libpq-based drivers
-    // do). Typing ints as bigint would rule out functions that take an
-    // integer, such as pg_terminate_backend.
-    size_t at = pg_begin(pg, 'P');
-    pg_put_string(pg, "");
-    pg_put_string(pg, text);
-    pg_put_int16(pg, (int)given);
-    for (size_t i = 0; i < given; i++) {
-        char type = qiq_sql_pending[i].type;
-        pg_put_int32(pg, type == 'a' ? PG_BYTEA : 0);
+    // A prepared statement for this SQL, with byte arrays in the same places.
+    char *bytes = malloc(given + 1);
+    if (bytes == NULL) qiq_fatal("out of memory");
+    for (size_t i = 0; i < given; i++) bytes[i] = qiq_sql_pending[i].type == 'a' ? '1' : '0';
+    bytes[given] = '\0';
+    pg->clock++;
+    PgCached *cached = NULL;
+    for (int i = 0; i < PG_CACHE; i++) {
+        if (pg->cache[i].sql != NULL && strcmp(pg->cache[i].sql, sql) == 0 && strcmp(pg->cache[i].bytes, bytes) == 0) {
+            cached = &pg->cache[i];
+            break;
+        }
     }
-    pg_end(pg, at);
+    size_t at;
+    const char *name;
+    if (cached != NULL) {
+        cached->used = pg->clock;
+        name = cached->name;
+        free(bytes);
+    } else {
+        // When the cache is full, the least recently used statement is
+        // closed first, in the same round trip.
+        PgCached *oldest = NULL;
+        for (int i = 0; i < PG_CACHE; i++) {
+            if (pg->cache[i].sql == NULL) {
+                oldest = NULL;
+                break;
+            }
+            if (oldest == NULL || pg->cache[i].used < oldest->used) oldest = &pg->cache[i];
+        }
+        if (oldest != NULL) {
+            at = pg_begin(pg, 'C');
+            pg_put_byte(pg, 'S');
+            pg_put_string(pg, oldest->name);
+            pg_end(pg, at);
+            pg_forget_statement(oldest);
+        }
+        pg_forget_statement(&pg->parsing);
+        pg->parsing.sql = strdup(sql);
+        if (pg->parsing.sql == NULL) qiq_fatal("out of memory");
+        pg->parsing.bytes = bytes;
+        pg->parsing.used = pg->clock;
+        snprintf(pg->parsing.name, sizeof pg->parsing.name, "qiq_%llu", (unsigned long long)++pg->statements);
+        name = pg->parsing.name;
+        // Parse, with the values' types: bytea for bytes, sent as they are,
+        // and otherwise unknown, so the server reads the text as whatever
+        // type the column, operator, or function needs (as PDO and
+        // libpq-based drivers do). Typing ints as bigint would rule out
+        // functions that take an integer, such as pg_terminate_backend.
+        at = pg_begin(pg, 'P');
+        pg_put_string(pg, name);
+        pg_put_string(pg, text);
+        pg_put_int16(pg, (int)given);
+        for (size_t i = 0; i < given; i++) pg_put_int32(pg, qiq_sql_pending[i].type == 'a' ? PG_BYTEA : 0);
+        pg_end(pg, at);
+    }
     free(text);
     // Bind: text values, except bytes, which go as they are.
     at = pg_begin(pg, 'B');
     pg_put_string(pg, "");
-    pg_put_string(pg, "");
+    pg_put_string(pg, name);
     pg_put_int16(pg, (int)given);
     for (size_t i = 0; i < given; i++) pg_put_int16(pg, qiq_sql_pending[i].type == 'a' ? 1 : 0);
     pg_put_int16(pg, (int)given);
@@ -975,9 +1072,15 @@ static void pg_send_statement(QiqPostgres *pg, const char *sql, int64_t mode, co
     pg_end(pg, at);
     at = pg_begin(pg, 'S');
     pg_end(pg, at);
-    qiq_sql_drop_pending();
     pg->in_io = true;
     pg_flush(pg);
+}
+
+// Whether a failure is the server not having (or no longer being able to
+// use) a cached statement: after DEALLOCATE or DISCARD, or after a table it
+// reads changed its columns. Running it again prepares it again.
+static bool pg_stale_statement(const char *state, const char *message) {
+    return strcmp(state, "26000") == 0 || (strcmp(state, "0A000") == 0 && strstr(message, "cached plan") != NULL);
 }
 
 int64_t qiq_pg_run(QiqPostgres *pg, const char *sql, int64_t mode, const char *caller) {
@@ -988,50 +1091,68 @@ int64_t qiq_pg_run(QiqPostgres *pg, const char *sql, int64_t mode, const char *c
         qiq_rethrow(previous);
     }
     pg_ready(pg);
-    pg_send_statement(pg, sql, mode, caller);
     int64_t rows = 0, changes = 0;
     char message[1024] = "", state[6] = "";
     bool failed = false, empty = false;
-    pg->type_count = 0;
-    for (;;) {
-        char type = pg_read(pg);
-        if (type == 'Z') {
-            pg->status = pg->in_length > 0 ? (char)pg->in[0] : 'I';
-            break;
-        }
-        if (failed) continue; // the server skips to the Sync
-        switch (type) {
-        case 'T':
-            if (mode != 0) pg_read_columns(pg);
-            break;
-        case 'D':
-            if (mode != 0) {
-                pg_read_row(pg);
-                rows++;
+    for (int attempt = 0;; attempt++) {
+        pg_send_statement(pg, sql, mode, caller);
+        rows = changes = 0;
+        failed = empty = false;
+        pg->type_count = 0;
+        for (;;) {
+            char type = pg_read(pg);
+            if (type == 'Z') {
+                pg->status = pg->in_length > 0 ? (char)pg->in[0] : 'I';
+                break;
             }
-            break;
-        case 'C':
-            changes = pg_changes((const char *)pg->in);
-            break;
-        case 'I':
-            empty = true;
-            break;
-        case 'E':
-            failed = true;
-            if (pg_error_text(pg, message, sizeof message, state)) {
-                // The server is closing the connection, and says why.
-                pg_lose(pg);
-                pg->in_io = false;
-                qiq_sql_clear_results();
-                qiq_sql_throw(state, 0, false, message);
+            if (failed) continue; // the server skips to the Sync
+            switch (type) {
+            case 'T':
+                if (mode != 0) pg_read_columns(pg);
+                break;
+            case 'D':
+                if (mode != 0) {
+                    pg_read_row(pg);
+                    rows++;
+                }
+                break;
+            case 'C':
+                changes = pg_changes((const char *)pg->in);
+                break;
+            case 'I':
+                empty = true;
+                break;
+            case 'E':
+                failed = true;
+                if (pg_error_text(pg, message, sizeof message, state)) {
+                    // The server is closing the connection, and says why.
+                    pg_lose(pg);
+                    pg->in_io = false;
+                    qiq_sql_clear_results();
+                    qiq_sql_throw(state, 0, false, message);
+                }
+                break;
+            case '1':
+                pg_parsed(pg);
+                break;
+            default: // BindComplete, NoData, PortalSuspended, notices
+                break;
             }
-            break;
-        default: // ParseComplete, BindComplete, NoData, PortalSuspended, notices
-            break;
         }
+        pg->in_io = false;
+        // A cached statement the server no longer has: prepared again, once,
+        // when no transaction would be left aborted by the failure.
+        if (failed && attempt == 0 && pg->status == 'I' && pg_stale_statement(state, message)) {
+            pg_forget_statements(pg);
+            qiq_sql_clear_results();
+            continue;
+        }
+        break;
     }
-    pg->in_io = false;
+    qiq_sql_drop_pending();
     if (failed || empty) {
+        // A stale statement in a transaction: prepared again next time.
+        if (failed && pg_stale_statement(state, message)) pg_forget_statements(pg);
         qiq_sql_clear_results();
         if (empty) qiq_throwf(QIQ_DATABASE_EXCEPTION, "%s: the SQL has no statement to run", caller);
         if (strcmp(state, "42601") == 0 && strstr(message, "multiple commands") != NULL) {
@@ -1062,6 +1183,7 @@ static void qiq_pg_open_cursor(QiqPostgres *pg, const char *sql, const char *cal
     // Up to the columns; a statement without rows (or an error) runs to the end.
     for (;;) {
         char type = pg_read(pg);
+        if (type == '1') pg_parsed(pg);
         if (type == 'T' && !failed) {
             pg_read_columns(pg);
             pg->streaming = true;
@@ -1080,7 +1202,10 @@ static void qiq_pg_open_cursor(QiqPostgres *pg, const char *sql, const char *cal
         }
     }
     pg->in_io = false;
+    qiq_sql_drop_pending();
     if (failed) {
+        // A stale statement is prepared again next time.
+        if (pg_stale_statement(state, message)) pg_forget_statements(pg);
         qiq_sql_clear_results();
         qiq_sql_throw(state, 0, strcmp(state, "23505") == 0, message);
     }

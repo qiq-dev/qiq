@@ -2418,7 +2418,7 @@ db->execute("insert into students (name) values (?)", name);   // stores the nam
 <tr><td><code>lastInsertId()</code></td><td>The id (the <code>INTEGER PRIMARY KEY</code>, or SQLite's rowid) of the last row inserted. With PostgreSQL, the value this connection's last sequence gave (such as a <code>serial</code> or identity column's), as PDO does; <code>insert ... returning id</code> with <code>queryOne</code> says exactly which column you mean. With MySQL, the last <code>AUTO_INCREMENT</code> value this connection generated, as <code>LAST_INSERT_ID()</code> gives.</td></tr>
 <tr><td><code>begin()</code>, <code>commit()</code>, <code>rollback()</code></td><td>Start a transaction, save its changes, or undo them. Without a transaction, each statement is saved on its own.</td></tr>
 <tr><td><code>inTransaction()</code></td><td>Whether a transaction is open.</td></tr>
-<tr><td><code>transaction(body)</code></td><td>Runs <code>body</code> in a transaction: commits when it returns, or rolls back and rethrows when it throws.</td></tr>
+<tr><td><code>transaction(body)</code></td><td>Runs <code>body</code> in a transaction: commits when it returns, or rolls back and rethrows when it throws. Inside another transaction, it uses a savepoint, so only <code>body</code>'s own changes roll back (see <a href="#nested">Nested transactions</a>).</td></tr>
 <tr><td><code>close()</code></td><td>Closes the connection. Closing twice does nothing; using the database afterwards throws <code>DatabaseException</code>. A program's open databases are closed when it ends.</td></tr>
 </tbody>
 </table>
@@ -2483,6 +2483,33 @@ ada 70
 lin 50
 ```
 <p>The failed transfer had already added 500 to Ada's balance when the second update failed; rolling back undid it.</p>
+
+<h3 id="nested">Nested transactions</h3>
+<p>A <code>transaction</code> inside another (or inside a <code>begin()</code> you called) doesn't start a new transaction: it sets a savepoint. When its body throws, the changes it made are rolled back to the savepoint and the exception goes on; the outer transaction can catch it and carry on, or let it go and roll back everything. When its body returns, its changes become part of the outer transaction, saved when that commits. So a function can use <code>transaction</code> whether or not its caller already has one.</p>
+```qiq
+Database db = Database::open("sqlite::memory:");
+db->execute("create table orders (id integer primary key, item text unique)");
+
+function addOrder(Database db, string item): bool {
+    try {
+        db->transaction(function(): void {
+            db->execute("insert into orders (item) values (?)", item);
+        });
+        return true;
+    } catch (UniqueViolationException e) {
+        return false;
+    }
+}
+db->transaction(function(): void {
+    print(addOrder(db, "pen"), addOrder(db, "ink"), addOrder(db, "pen"));
+});
+print(db->queryOne("select count(*) as n from orders")->getInt("n"));
+```
+```output
+1 1 0
+2
+```
+<p>The savepoints work the same way in SQLite, PostgreSQL, and MySQL. In PostgreSQL, rolling back to a savepoint is also how a transaction recovers from a failed statement, which otherwise blocks every statement after it until <code>rollback()</code>.</p>
 
 <h2>Errors</h2>
 <p>Everything that goes wrong throws <code>DatabaseException</code>, with the database's message: an SQL syntax error, a missing table or column, a broken <code>UNIQUE</code>, <code>NOT NULL</code>, <code>CHECK</code>, or foreign key constraint, or the wrong number of values for the placeholders. Two subclasses say which kind of constraint failed, the same way for every database:</p>
@@ -2555,6 +2582,7 @@ print("order", order->getInt("id"));</pre>
 <li>Values are sent as text that PostgreSQL reads as the type the column or function needs, as PDO does; a byte array is sent as <code>bytea</code>. Where nothing gives a type, as in <code>select ? as n</code>, the value is text: cast it, <code>select ?::int as n</code>.</li>
 <li>Columns are read by type: <code>smallint</code>, <code>integer</code>, and <code>bigint</code> with <code>getInt</code>, <code>real</code> and <code>double precision</code> with <code>getDouble</code>, <code>boolean</code> with <code>getBool</code>, <code>bytea</code> with <code>getBytes</code>, and <code>numeric</code> with <code>getString</code> (its exact digits) or <code>getDouble</code>, or <code>getInt</code> when it has no fraction (as <code>sum</code> of <code>bigint</code> gives). Everything else, such as <code>text</code>, dates, times, <code>uuid</code>, and <code>json</code>, is read with <code>getString</code>, as PostgreSQL writes it.</li>
 <li>Errors carry PostgreSQL's message and detail: <code>duplicate key value violates unique constraint "users_email_key": Key (email)=(ada@example.com) already exists.</code> After an error in a transaction, PostgreSQL refuses further statements until <code>rollback()</code>, which <code>transaction(body)</code> does for you.</li>
+<li>Statements are prepared by name, and each connection keeps its 16 most recently used ones, so running one again skips PostgreSQL's parsing and planning: a point query took 20 µs rather than 30, and a query with a join or grouping about 40% less. When a table a cached statement reads changes its columns, or something drops the server's prepared statements (<code>DEALLOCATE</code>, <code>DISCARD</code>), the statement is prepared again and run again; inside a transaction it can't be run again, so that statement throws once. A connection pooler in front of PostgreSQL must support prepared statements: PgBouncer does from version 1.21, with <code>max_prepared_statements</code> set.</li>
 <li>A connection that is lost, because the server restarted or closed it, connects again for the next statement. If a transaction was open, that statement throws instead, saying so, since the server rolled the transaction back.</li>
 </ul>
 

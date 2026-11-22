@@ -82,3 +82,40 @@ more->executeScript("drop table if exists uniq; create table uniq (k int primary
 more->execute("insert into uniq values (?)", 1);
 try { more->execute("insert into uniq values (?)", 1); } catch (UniqueViolationException e) { print("unique:", substr(e->getSqlState(), 0, 2)); }
 try { more->query("select * from no_such_table"); } catch (DatabaseException e) { print("state:", e->getSqlState()); }
+
+// Nested transactions: transaction() inside another uses a savepoint.
+Database nest = Database::open(url);
+nest->executeScript("drop table if exists items; create table items (name varchar(20) primary key)");
+function nestedNames(Database nest): string {
+    string out = "";
+    foreach (nest->query("select name from items order by name") as row) { out += row->getString("name") + " "; }
+    return out;
+}
+// The inner part fails; the outer carries on.
+nest->transaction(function(): void {
+    nest->execute("insert into items values (?)", "a");
+    try {
+        nest->transaction(function(): void {
+            nest->execute("insert into items values (?)", "b");
+            nest->execute("insert into items values (?)", "a");   // duplicate
+        });
+    } catch (UniqueViolationException e) { print("inner rolled back:", nest->inTransaction()); }
+    nest->execute("insert into items values (?)", "c");
+});
+print(nestedNames(nest), nest->inTransaction());
+// The inner part succeeds; the outer fails: everything rolls back.
+try {
+    nest->transaction(function(): void {
+        nest->transaction(function(): void { nest->execute("insert into items values (?)", "d"); });
+        nest->transaction(function(): void {
+            nest->transaction(function(): void { nest->execute("insert into items values (?)", "e"); });
+        });
+        throw new RuntimeException("outer fails");
+    });
+} catch (RuntimeException e) { print(e->getMessage(), nest->inTransaction()); }
+print(nestedNames(nest));
+// begin() by hand, then transaction() inside it.
+nest->begin();
+nest->transaction(function(): void { nest->execute("insert into items values (?)", "f"); });
+nest->commit();
+print(nestedNames(nest));
