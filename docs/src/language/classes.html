@@ -27,11 +27,38 @@ Ada (36)
 ```
 
 <ul>
-<li>Properties start at zero, <code>false</code>, or <code>null</code> until assigned; they can't have initializers in the declaration (use the constructor).</li>
+<li>Properties without a default (see below) start at zero, <code>false</code>, or <code>null</code> until assigned.</li>
 <li>A constructor has no return type. A class without a constructor is created with <code>new ClassName()</code>.</li>
 <li>Objects are references: assigning or passing one shares it.</li>
 <li>Printing an object prints its class name.</li>
 </ul>
+
+<h3>Default values</h3>
+<p>A property can have a default, which every new object starts with. Defaults are set before the constructor runs, so the constructor can use or change them:</p>
+
+```qiq
+class Cart {
+    public string currency = "EUR";
+    public int discount = 0;
+    public string[] items = [];
+    public map[string, int] quantities = {};
+
+    function add(string item): void {
+        array_push(this->items, item);
+        this->quantities[item] = (this->quantities[item] ?? 0) + 1;
+    }
+}
+Cart mine = new Cart();
+Cart yours = new Cart();
+mine->add("tea");
+mine->add("tea");
+print(mine->currency, mine->items, mine->quantities, yours->items);
+```
+```output
+EUR ["tea", "tea"] {"tea" => 2} []
+```
+
+<p>A default must be a constant: a literal, a class constant, <code>null</code>, or an array or map literal made of those. Set anything else, such as a value worked out from the constructor's arguments, in the constructor. Each object gets its own copy of a default array or map, so <code>yours</code> above has no items. Subclasses get their parents' defaults too.</p>
 
 <h2>Visibility</h2>
 <p>Each property and method is <code>public</code>, <code>protected</code>, or <code>private</code>:</p>
@@ -108,6 +135,102 @@ It says ...
 ```
 
 <p>Calls to methods that no subclass overrides are compiled as direct calls; the others look up the object's class in a table, so overriding costs one extra load per call.</p>
+
+<h2>Constants</h2>
+<p><code>const</code> declares a value fixed when the program is compiled, read as <code>ClassName::NAME</code>, or <code>self::NAME</code> inside the class. The type comes from the value, or can be given: <code>const int LIMIT = 10;</code>. Constants can be <code>int</code>, <code>double</code>, <code>bool</code>, <code>byte</code>, <code>string</code>, or <code>char</code>, and their value is a literal or another constant.</p>
+
+```qiq
+class Http {
+    const OK = 200;
+    const int NOT_FOUND = 404;
+    const string AGENT = "qiq";
+    const DEFAULT_STATUS = Http::OK;
+    private const SECRET = "s3cret";
+
+    public int status = Http::DEFAULT_STATUS;
+
+    function hint(): string {
+        return self::AGENT + "/" + substr(self::SECRET, 0, 2);
+    }
+}
+class Api extends Http {}
+Http response = new Http();
+print(Http::OK, Http::NOT_FOUND, Api::AGENT, response->status, response->hint());
+```
+```output
+200 404 qiq 200 qiq/s3
+```
+
+<ul>
+<li>Constants are public unless declared <code>private</code> (only the class's own code can read them) or <code>protected</code> (its subclasses too).</li>
+<li>Subclasses, and classes implementing an interface that declares constants, read them through their own name: <code>Api::AGENT</code>. A subclass can't declare a constant its parent already has, so <code>self::</code> and <code>static::</code> always mean the same value.</li>
+<li>Assigning to a constant is a compile error, and so are arrays and maps as constants, since arrays and maps can be changed in place. For a fixed list, use a <code>static</code> property or a function that returns it.</li>
+</ul>
+
+<h2>Checking an object's class: instanceof</h2>
+<p><code>value instanceof ClassName</code> is <code>true</code> when <code>value</code> is an object of that class, of a subclass, or (for an interface name) of a class implementing it, and <code>false</code> otherwise, including for <code>null</code>. In an <code>if</code> condition, a name after the class binds the object as that class for the <code>if</code> branch, so its own properties and methods can be used:</p>
+
+```qiq
+interface Shape {
+    function area(): double;
+}
+class Circle implements Shape {
+    public double radius;
+    function __construct(double radius) { this->radius = radius; }
+    function area(): double { return 3.14159 * this->radius * this->radius; }
+}
+class Square implements Shape {
+    public double side;
+    function __construct(double side) { this->side = side; }
+    function area(): double { return this->side * this->side; }
+}
+
+function describe(Shape shape): string {
+    if (shape instanceof Circle circle) {
+        return "a circle of radius " + to_string(circle->radius);
+    } else if (shape instanceof Square square && square->side > 2.0) {
+        return "a big square";
+    } else {
+        return "a small shape";
+    }
+}
+Shape[] shapes = [new Circle(1.5), new Square(3.0), new Square(1.0)];
+foreach (shapes as shape) {
+    print(describe(shape), shape instanceof Square);
+}
+```
+```output
+a circle of radius 1.5 0
+a big square 1
+a small shape 1
+```
+
+<ul>
+<li>The name is a new variable, visible only in the <code>if</code> branch, and in conditions after the check that are joined to it by <code>&amp;&amp;</code>, as with <code>square-&gt;side</code> above. A condition can bind several names: <code>if (a instanceof Circle c &amp;&amp; b instanceof Square s)</code>.</li>
+<li>A name can only be given in an <code>if</code> condition, on its own or joined by <code>&amp;&amp;</code>. Elsewhere (in a <code>while</code>, after <code>!</code>, with <code>||</code>), use <code>instanceof</code> without a name.</li>
+<li>The value checked is evaluated once, even when it's a call.</li>
+<li>Checking for a class that can't be related, such as <code>circle instanceof Square</code> when neither class extends the other, is a compile error.</li>
+</ul>
+<div class="note"><strong>Note:</strong> In PHP, <code>$shape instanceof Circle</code> is enough to use <code>$shape-&gt;radius</code> afterwards, since PHP checks types when the code runs. qiq checks them when it compiles, so the name says which variable has the narrower type, as in Java and C#.</div>
+
+<h2>Comparing objects</h2>
+<p><code>==</code> and <code>!=</code> on objects test whether two values are the same object, like PHP's <code>===</code>. Two objects with equal properties are still different objects. The two sides must be related: of the same class, a class and its subclass, or an interface and a class that implements it.</p>
+
+```qiq
+class Node {
+    public int value;
+    public Node next;
+    function __construct(int value) { this->value = value; }
+}
+Node first = new Node(1);
+Node copy = new Node(1);
+Node same = first;
+first->next = first;
+print(first == same, first == copy, first->next == first, copy->next == null);
+```
+```output
+1 0 1 1
+```
 
 <h2>Abstract classes</h2>
 <p>An <code>abstract</code> class can't be instantiated, and may declare <code>abstract</code> methods, which have no body and must be implemented by concrete subclasses. Calls to abstract methods run the object's own implementation, which is the template-method pattern:</p>

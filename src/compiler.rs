@@ -746,6 +746,23 @@ struct Property {
     name: String,
     value_type: ValueType,
     visibility: Visibility,
+    /// `type name = value;`: a constant expression stored when an object is
+    /// created, before the constructor runs; and where it's written.
+    default: Option<Expr>,
+    default_at: (usize, usize),
+}
+
+/// `const [type] NAME = value;` in a class or interface: a value fixed at
+/// compile time, read as `Class::NAME` or `self::NAME`.
+#[derive(Debug, Clone)]
+struct Constant {
+    name: String,
+    /// The declared type, or None to take it from the value.
+    declared: Option<ValueType>,
+    visibility: Visibility,
+    value: Expr,
+    line: usize,
+    column: usize,
 }
 
 /// `static type name [= literal];`: one value per declaring class.
@@ -774,6 +791,7 @@ struct ClassDef {
     symbol: String,
     properties: Vec<Property>,
     static_properties: Vec<StaticProperty>,
+    constants: Vec<Constant>,
     methods: Vec<Function>,
     /// Where the class's name is, for errors about the class as a whole.
     line: usize,
@@ -814,6 +832,14 @@ struct Module {
 
 #[derive(Debug, Clone)]
 enum Expr {
+    /// `value instanceof Class [name]`: whether `value` is an object of that
+    /// class (or a subclass, or one implementing that interface). A name
+    /// binds the object as that class, and is only allowed in an if
+    /// condition, which the parser rewrites (see parse_if).
+    InstanceOf(Box<Expr>, u32, Option<String>),
+    /// The value of an expression known to be an object of class `u32`
+    /// (made by the parser after an instanceof check).
+    Downcast(Box<Expr>, u32),
     Number(i64),
     /// The 1 that `x++` and `x--` add or subtract, in the type of `x` (an
     /// int or a double); only ever the right side of a Binary.
@@ -1191,6 +1217,24 @@ impl Parser {
         Ok(function)
     }
 
+    /// `const [type] NAME = value;`, from the word `const`. The value is
+    /// checked when the program is compiled (see constant_value).
+    fn parse_constant(&mut self, visibility: Visibility) -> Result<Constant, String> {
+        self.advance(); // const
+        // A type, unless the name comes straight after `const`.
+        let typed = !matches!(
+            (self.tokens.get(self.cursor).map(|token| &token.kind), self.tokens.get(self.cursor + 1).map(|token| &token.kind)),
+            (Some(TokenKind::Identifier(_)), Some(TokenKind::Equals))
+        );
+        let declared = if typed { Some(self.parse_value_type()?) } else { None };
+        let (line, column) = (self.current().line, self.current().column);
+        let name = self.expect_identifier("expected the constant's name")?;
+        self.expect(TokenKind::Equals, "expected '=' and the constant's value")?;
+        let value = self.parse_expression()?;
+        self.expect(TokenKind::Semicolon, "expected ';' after the constant")?;
+        Ok(Constant { name, declared, visibility, value, line, column })
+    }
+
     /// Parses a parameter's default value: a literal of the parameter's type.
     fn parse_parameter_default(&mut self, value_type: ValueType, name: &str) -> Result<Expr, String> {
         let start = self.cursor;
@@ -1375,6 +1419,7 @@ impl Parser {
 
         let mut properties = Vec::new();
         let mut static_properties = Vec::new();
+        let mut constants: Vec<Constant> = Vec::new();
         let mut methods = Vec::new();
         while !matches!(self.current().kind, TokenKind::RightBrace | TokenKind::End) {
             // Modifiers, in any order: abstract, final, static, and one visibility.
@@ -1401,6 +1446,19 @@ impl Parser {
                     return Err(self.error("a member modifier is repeated (or given two visibilities)"));
                 }
                 self.advance();
+            }
+            if matches!(&self.current().kind, TokenKind::Identifier(word) if word == "const") {
+                if is_static_method || is_abstract_method || is_final_method {
+                    return Err(self.error("a constant can't be static, abstract, or final: it's already fixed"));
+                }
+                let constant = self.parse_constant(explicit_visibility.unwrap_or(Visibility::Public))?;
+                if constants.iter().any(|existing| existing.name == constant.name)
+                    || static_properties.iter().any(|property: &StaticProperty| property.name == constant.name)
+                {
+                    return Err(format!("{}:{}: '{}' is already declared in class '{name}'", constant.line, constant.column, constant.name));
+                }
+                constants.push(constant);
+                continue;
             }
             if matches!(self.current().kind, TokenKind::Function) && !self.at_function_type() {
                 let start = self.error("");
@@ -1460,6 +1518,7 @@ impl Parser {
                 let property_name = self.expect_identifier("expected property name")?;
                 if properties.iter().any(|property: &Property| property.name == property_name)
                     || static_properties.iter().any(|property: &StaticProperty| property.name == property_name)
+                    || (is_static_method && constants.iter().any(|constant| constant.name == property_name))
                 {
                     return Err(self.error(&format!("property '{property_name}' is already declared")));
                 }
@@ -1479,11 +1538,22 @@ impl Parser {
                     });
                     continue;
                 }
+                // A default: checked to be a constant of the right type when
+                // the program is compiled (see check_constant_value).
+                let default_at = (self.current().line, self.current().column);
+                let default = if matches!(self.current().kind, TokenKind::Equals) {
+                    self.advance();
+                    Some(self.parse_expression()?)
+                } else {
+                    None
+                };
                 self.expect(TokenKind::Semicolon, "expected ';' after class property")?;
                 properties.push(Property {
                     name: property_name,
                     value_type,
                     visibility: explicit_visibility.unwrap_or(Visibility::Private),
+                    default,
+                    default_at,
                 });
             }
         }
@@ -1501,6 +1571,7 @@ impl Parser {
             name,
             properties,
             static_properties,
+            constants,
             methods,
             line,
             column,
@@ -1562,7 +1633,25 @@ impl Parser {
         self.expect(TokenKind::LeftBrace, "expected '{' after interface name")?;
 
         let mut methods: Vec<Function> = Vec::new();
+        let mut constants: Vec<Constant> = Vec::new();
         while !matches!(self.current().kind, TokenKind::RightBrace | TokenKind::End) {
+            let at_const = |parser: &Self| matches!(&parser.current().kind, TokenKind::Identifier(word) if word == "const");
+            if at_const(self) || (matches!(self.current().kind, TokenKind::Public) && matches!(self.tokens.get(self.cursor + 1).map(|token| &token.kind), Some(TokenKind::Identifier(word)) if word == "const")) {
+                if matches!(self.current().kind, TokenKind::Public) {
+                    self.advance();
+                }
+                let constant = self.parse_constant(Visibility::Public)?;
+                if constants.iter().any(|existing| existing.name == constant.name) {
+                    return Err(format!("{}:{}: '{}' is already declared in interface '{name}'", constant.line, constant.column, constant.name));
+                }
+                constants.push(constant);
+                continue;
+            }
+            if matches!(self.current().kind, TokenKind::Private | TokenKind::Protected)
+                && matches!(self.tokens.get(self.cursor + 1).map(|token| &token.kind), Some(TokenKind::Identifier(word)) if word == "const")
+            {
+                return Err(self.error("interface constants must be public"));
+            }
             match self.current().kind {
                 TokenKind::Public => self.advance(),
                 TokenKind::Private | TokenKind::Protected => {
@@ -1581,7 +1670,7 @@ impl Parser {
             }
             self.reject_fn_keyword()?;
             if !matches!(self.current().kind, TokenKind::Function) {
-                return Err(self.error("interfaces can only declare method signatures"));
+                return Err(self.error("interfaces can only declare method signatures and constants"));
             }
             if matches!(
                 self.tokens.get(self.cursor + 1).map(|token| &token.kind),
@@ -1610,6 +1699,7 @@ impl Parser {
             module: self.module,
             properties: Vec::new(),
             static_properties: Vec::new(),
+            constants,
             methods,
             line,
             column,
@@ -1767,7 +1857,7 @@ impl Parser {
                 self.expect(TokenKind::Semicolon, "expected ';' after continue")?;
                 Ok(StatementKind::Continue)
             }
-            TokenKind::If => self.parse_if(),
+            TokenKind::If => self.parse_if(before),
             TokenKind::Foreach => self.parse_foreach(),
             TokenKind::While => self.parse_while(),
             TokenKind::Switch => self.parse_switch(),
@@ -1831,7 +1921,8 @@ impl Parser {
         }
     }
 
-    fn parse_if(&mut self) -> Result<StatementKind, String> {
+    fn parse_if(&mut self, before: &mut Vec<StatementKind>) -> Result<StatementKind, String> {
+        let at = (self.current().line, self.current().column);
         self.advance();
         self.expect(TokenKind::LeftParen, "expected '(' after 'if'")?;
         let condition = self.parse_expression()?;
@@ -1848,11 +1939,128 @@ impl Parser {
         } else {
             Vec::new()
         };
-        Ok(StatementKind::If {
-            condition,
-            then_body,
-            else_body,
-        })
+        self.bind_instanceof(condition, then_body, else_body, at, before)
+    }
+
+    /// `if (... && value instanceof Class name && ...) { then } else { else }`
+    /// as statements without bindings. On its own, a binding just declares
+    /// `Class name` from the checked value at the start of the then branch.
+    /// Joined with other conditions by &&, the condition is worked out first,
+    /// in nested ifs (so && still stops at the first false part): each
+    /// binding is declared for the parts after it and saved in a hidden
+    /// variable, and a hidden flag records whether every part held. Then
+    /// `if (flag) { Class name = saved; then } else { else }`, an ordinary
+    /// if-else, so that a function returning in both branches is seen to
+    /// return. The value checked is evaluated once. Statements that go
+    /// before the result are added to `before`.
+    fn bind_instanceof(
+        &mut self,
+        condition: Expr,
+        then_body: Vec<Statement>,
+        else_body: Vec<Statement>,
+        at: (usize, usize),
+        before: &mut Vec<StatementKind>,
+    ) -> Result<StatementKind, String> {
+        fn flatten(condition: Expr, parts: &mut Vec<Expr>) {
+            match condition {
+                Expr::Logical(LogicalOp::And, left, right) => {
+                    flatten(*left, parts);
+                    flatten(*right, parts);
+                }
+                other => parts.push(other),
+            }
+        }
+        let statement = |kind: StatementKind| Statement { kind, line: at.0, column: at.1 };
+        let mut parts = Vec::new();
+        flatten(condition, &mut parts);
+        if !parts.iter().any(|part| matches!(part, Expr::InstanceOf(_, _, Some(_)))) {
+            let condition = parts
+                .into_iter()
+                .reduce(|left, right| Expr::Logical(LogicalOp::And, Box::new(left), Box::new(right)))
+                .expect("a condition has a part");
+            return Ok(StatementKind::If { condition, then_body, else_body });
+        }
+        // Only a binding: check, and declare the name in the then branch.
+        if parts.len() == 1 {
+            let Some(Expr::InstanceOf(value, class_id, Some(name))) = parts.pop() else { unreachable!() };
+            let checked = self.evaluate_once(*value, before);
+            let mut then_with_binding = vec![statement(StatementKind::Declare(
+                ValueType::Class(class_id),
+                name,
+                Expr::Downcast(Box::new(checked.clone()), class_id),
+            ))];
+            then_with_binding.extend(then_body);
+            return Ok(StatementKind::If {
+                condition: Expr::InstanceOf(Box::new(checked), class_id, None),
+                then_body: then_with_binding,
+                else_body,
+            });
+        }
+        // The flag, and a saved object for each binding.
+        self.next_hidden += 1;
+        let flag = format!("#{}", self.next_hidden);
+        before.push(StatementKind::Declare(ValueType::Bool, flag.clone(), Expr::Boolean(false)));
+        let mut bindings: Vec<(String, u32, String)> = Vec::new();   // name, class, saved in
+        for part in &parts {
+            if let Expr::InstanceOf(_, class_id, Some(name)) = part {
+                self.next_hidden += 1;
+                let saved = format!("#{}", self.next_hidden);
+                before.push(StatementKind::Declare(ValueType::Class(*class_id), saved.clone(), Expr::Null));
+                bindings.push((name.clone(), *class_id, saved));
+            }
+        }
+        // Innermost first: when every part held, set the flag.
+        let mut inner = vec![statement(StatementKind::Assign(flag.clone(), Expr::Boolean(true)))];
+        let mut binding_index = bindings.len();
+        for part in parts.into_iter().rev() {
+            let kind = match part {
+                Expr::InstanceOf(value, class_id, Some(name)) => {
+                    binding_index -= 1;
+                    let saved = bindings[binding_index].2.clone();
+                    let mut steps = Vec::new();
+                    let checked = self.evaluate_once(*value, &mut steps);
+                    let mut bound = vec![
+                        statement(StatementKind::Declare(
+                            ValueType::Class(class_id),
+                            name.clone(),
+                            Expr::Downcast(Box::new(checked.clone()), class_id),
+                        )),
+                        statement(StatementKind::Assign(saved, Expr::Variable(name))),
+                    ];
+                    bound.extend(inner);
+                    steps.push(StatementKind::If {
+                        condition: Expr::InstanceOf(Box::new(checked), class_id, None),
+                        then_body: bound,
+                        else_body: Vec::new(),
+                    });
+                    inner = steps.into_iter().map(statement).collect();
+                    continue;
+                }
+                condition => StatementKind::If { condition, then_body: inner, else_body: Vec::new() },
+            };
+            inner = vec![statement(kind)];
+        }
+        before.extend(inner.into_iter().map(|statement| statement.kind));
+        // The branches, with the names bound from the saved objects.
+        let mut then_with_bindings: Vec<Statement> = bindings
+            .into_iter()
+            .map(|(name, class_id, saved)| statement(StatementKind::Declare(ValueType::Class(class_id), name, Expr::Variable(saved))))
+            .collect();
+        then_with_bindings.extend(then_body);
+        Ok(StatementKind::If { condition: Expr::Variable(flag), then_body: then_with_bindings, else_body })
+    }
+
+    /// `value` as an expression that can be evaluated more than once: itself
+    /// if evaluating it has no effects, otherwise a hidden variable it's
+    /// saved in first (by a statement added to `steps`).
+    fn evaluate_once(&mut self, value: Expr, steps: &mut Vec<StatementKind>) -> Expr {
+        if is_pure(&value) {
+            return value;
+        }
+        self.next_hidden += 1;
+        let hidden = format!("#{}", self.next_hidden);
+        steps.push(StatementKind::Assign(hidden.clone(), value));
+        Expr::Variable(hidden)
     }
 
     fn parse_try(&mut self) -> Result<StatementKind, String> {
@@ -2182,7 +2390,8 @@ impl Parser {
             return Ok(Expr::Not(Box::new(operand)));
         }
         if !matches!(self.current().kind, TokenKind::Minus) {
-            return self.parse_power();
+            let operand = self.parse_power()?;
+            return self.parse_instanceof(operand);
         }
         self.advance();
         // A negative literal is folded into the number, which is how the
@@ -2198,6 +2407,27 @@ impl Parser {
         }
         let operand = self.parse_unary()?;
         Ok(Expr::Negate(Box::new(operand)))
+    }
+
+    /// `operand instanceof Class [name]`, if that follows.
+    fn parse_instanceof(&mut self, operand: Expr) -> Result<Expr, String> {
+        if !matches!(&self.current().kind, TokenKind::Identifier(word) if word == "instanceof") {
+            return Ok(operand);
+        }
+        self.advance();
+        let class_name = self.expect_identifier("expected a class or interface name after instanceof")?;
+        let class_id = *self.class_names.get(&class_name).ok_or_else(|| {
+            self.error(&format!("type '{class_name}' is not declared or imported{}", stdlib_hint(&class_name)))
+        })?;
+        let binding = match &self.current().kind {
+            TokenKind::Identifier(name) if name != "instanceof" => {
+                let name = name.clone();
+                self.advance();
+                Some(name)
+            }
+            _ => None,
+        };
+        Ok(Expr::InstanceOf(Box::new(operand), class_id, binding))
     }
 
     fn parse_power(&mut self) -> Result<Expr, String> {
@@ -2869,6 +3099,8 @@ struct Emitter {
     /// Abstract methods called through dynamic dispatch, as (declaring type, method name).
     /// Each one gets a dispatch table indexed by class id.
     dispatch_tables: Vec<(u32, String)>,
+    /// Classes `instanceof` tests for, each with a table of which class ids are it.
+    instanceof_tables: Vec<u32>,
     /// Dispatched calls that omit optional arguments, as (declaring type,
     /// method name, indices of the supplied parameters). Each gets a dispatch
     /// table of adapters that fill in the defaults of the class whose method runs.
@@ -2963,6 +3195,7 @@ impl Emitter {
             finally_stack: Vec::new(),
             module_is_stdlib: modules.iter().map(|module| module.is_stdlib).collect(),
             dispatch_tables: Vec::new(),
+            instanceof_tables: Vec::new(),
             adapter_tables: Vec::new(),
             entry_allocas: String::new(),
         }
@@ -2970,6 +3203,7 @@ impl Emitter {
 
     fn emit_program(mut self, program: &Program) -> Result<String, String> {
         self.validate_class_contracts()?;
+        self.validate_constants_and_defaults()?;
         let is_stdlib = |function: &Function| program.modules[function.module as usize].is_stdlib;
         let mut functions_ir = String::new();
         for function in program.functions.iter().filter(|function| !is_stdlib(function)) {
@@ -3096,6 +3330,13 @@ impl Emitter {
                 functions_ir.push('\n');
             }
         }
+        for class_id in 0..self.classes.len() as u32 {
+            if !self.classes[class_id as usize].is_interface && self.has_property_defaults(class_id) {
+                let ir = self.emit_defaults_function(class_id)?;
+                functions_ir.push_str(&ir);
+                functions_ir.push('\n');
+            }
+        }
         functions_ir.push_str(&std::mem::take(&mut self.closure_functions));
         let static_globals = self.emit_static_property_globals()?;
 
@@ -3119,6 +3360,24 @@ impl Emitter {
         ir.push_str("@qiq_pending_exception = external global ptr\n");
         for (owner, method_name) in &self.dispatch_tables {
             ir.push_str(&self.emit_dispatch_table(*owner, method_name, None));
+        }
+        // instanceof: for each class tested, a byte per class id, 1 for the
+        // classes that are it (it, its subclasses, or implementers).
+        if !self.instanceof_tables.is_empty() {
+            ir.push_str(&format!("@qiq_no_object = private unnamed_addr constant i64 {}\n", self.classes.len()));
+        }
+        for &target in &self.instanceof_tables {
+            let members = self.subtypes_of(target);
+            // One more entry than there are classes, for null (qiq_no_object).
+            let entries: Vec<String> = (0..=self.classes.len() as u32)
+                .map(|class_id| format!("i8 {}", u8::from(members.contains(&class_id))))
+                .collect();
+            ir.push_str(&format!(
+                "@qiq_is.{} = private unnamed_addr constant [{} x i8] [{}]\n",
+                self.classes[target as usize].symbol,
+                entries.len(),
+                entries.join(", ")
+            ));
         }
         for (owner, method_name, supplied) in &self.adapter_tables {
             ir.push_str(&self.emit_dispatch_table(*owner, method_name, Some(supplied)));
@@ -3693,6 +3952,9 @@ impl Emitter {
                     terminated = true;
                 }
                 StatementKind::AssignStatic(target, name, value_expression) => {
+                    if let Some((owner, _)) = self.find_constant(Self::static_target_class(*target), name) {
+                        return Err(format!("can't assign to constant {}::{name}", self.classes[owner as usize].name));
+                    }
                     let (address, property) = self.emit_static_property_address(*target, name, &mut body)?;
                     let value = self.emit_expecting(value_expression, Some(property.value_type), &variables, &mut body)?;
                     if !self.is_assignable(property.value_type, value.value_type) {
@@ -4428,6 +4690,27 @@ impl Emitter {
                 slot: None,
             });
         }
+        if let (ValueType::Class(a), ValueType::Class(b)) = (left.value_type, right.value_type) {
+            // `==` and `!=` on objects: the same object (PHP's ===), for two
+            // values of the same class or of related ones (a class and its
+            // subclass, or an interface and a class implementing it).
+            let related = a == b || self.is_subclass(a, b) || self.is_subclass(b, a);
+            if !related {
+                return Err(format!(
+                    "comparison requires related types, found {} and {}: an object of one can never be the other",
+                    self.type_name(left.value_type),
+                    self.type_name(right.value_type)
+                ));
+            }
+            let predicate = match operator {
+                CompareOp::Equal => "eq",
+                CompareOp::NotEqual => "ne",
+                _ => return Err(format!("{} values support only == and != comparisons", self.type_name(left.value_type))),
+            };
+            let register = self.new_register();
+            body.push_str(&format!("  {register} = icmp {predicate} ptr {}, {}\n", left.operand, right.operand));
+            return Ok(Value { value_type: ValueType::Bool, operand: register, slot: None });
+        }
         if left.value_type != right.value_type {
             return Err(format!(
                 "comparison requires matching types, found {} and {}",
@@ -4494,9 +4777,10 @@ impl Emitter {
             ValueType::Array(_) | ValueType::Map(_) => {
                 return self.emit_contents_comparison(left, operator, right, body);
             }
-            ValueType::Class(_) | ValueType::Function(_) => {
+            ValueType::Function(_) => {
                 return Err(format!("{} values can only be compared with null", self.type_name(left.value_type)));
             }
+            ValueType::Class(_) => unreachable!("objects are compared above"),
             ValueType::Null => match operator {
                 CompareOp::Equal => "eq",
                 CompareOp::NotEqual => "ne",
@@ -4766,7 +5050,7 @@ impl Emitter {
         }
         let class_id = self.add_synthetic_class(
             "{cell}",
-            vec![Property { name: "value".to_string(), value_type, visibility: Visibility::Private }],
+            vec![Property { name: "value".to_string(), value_type, visibility: Visibility::Private, default: None, default_at: (0, 0) }],
         );
         self.cell_classes.push((value_type, class_id));
         class_id
@@ -4785,6 +5069,7 @@ impl Emitter {
             symbol: format!("synthetic{class_id}"),
             properties,
             static_properties: Vec::new(),
+            constants: Vec::new(),
             methods: Vec::new(),
             line: 0,
             column: 0,
@@ -5090,6 +5375,216 @@ impl Emitter {
     }
 
     /// The class a StaticTarget is checked against at compile time.
+    /// The constant `name` of a class, from it, a parent, or an interface:
+    /// the class or interface declaring it, and the constant.
+    fn find_constant(&self, class_id: u32, name: &str) -> Option<(u32, Constant)> {
+        let class = self.classes.get(class_id as usize)?;
+        if let Some(constant) = class.constants.iter().find(|constant| constant.name == name) {
+            return Some((class_id, constant.clone()));
+        }
+        class
+            .parent_class
+            .iter()
+            .chain(class.interfaces.iter())
+            .find_map(|&super_id| self.find_constant(super_id, name))
+    }
+
+    /// A constant's value, as a literal, and its type. The value is a
+    /// literal or another constant; `depth` stops a constant that refers to
+    /// itself.
+    fn constant_value(&self, owner: u32, constant: &Constant, depth: usize) -> Result<(Expr, ValueType), String> {
+        let at = format!("{}:{}: ", constant.line, constant.column);
+        if depth > 64 {
+            return Err(format!("{at}constant '{}' is defined in terms of itself", constant.name));
+        }
+        let (literal, literal_type) = match &constant.value {
+            Expr::Number(_) => (constant.value.clone(), ValueType::Int),
+            Expr::Decimal(_) => (constant.value.clone(), ValueType::Double),
+            Expr::Negate(inner) if matches!(**inner, Expr::Decimal(_)) => {
+                let Expr::Decimal(value) = **inner else { unreachable!() };
+                (Expr::Decimal(-value), ValueType::Double)
+            }
+            Expr::Boolean(_) => (constant.value.clone(), ValueType::Bool),
+            Expr::Text(_) => (constant.value.clone(), ValueType::String),
+            Expr::Character(_) => (constant.value.clone(), ValueType::Char),
+            Expr::StaticProperty(target, name) => {
+                let class_id = Self::static_target_class(*target);
+                let (other_owner, other) = self.find_constant(class_id, name).ok_or_else(|| {
+                    format!("{at}'{}::{name}' isn't a constant: a constant's value must be a literal or another constant", self.classes[class_id as usize].name)
+                })?;
+                if other.visibility == Visibility::Private && other_owner != owner {
+                    return Err(format!("{at}constant '{name}' is private to '{}'", self.classes[other_owner as usize].name));
+                }
+                self.constant_value(other_owner, &other, depth + 1)?
+            }
+            _ => {
+                return Err(format!(
+                    "{at}constant '{}' must be a literal (int, double, bool, string, or char) or another constant",
+                    constant.name
+                ))
+            }
+        };
+        match constant.declared {
+            None => Ok((literal, literal_type)),
+            Some(ValueType::Byte) => match literal {
+                Expr::Number(number) if (0..=255).contains(&number) => Ok((literal, ValueType::Byte)),
+                _ => Err(format!("{at}constant '{}' must be a byte (0 to 255)", constant.name)),
+            },
+            Some(declared) if self.is_assignable(declared, literal_type) && declared.is_scalar() => Ok((literal, declared)),
+            Some(declared) if !declared.is_scalar() => Err(format!(
+                "{at}constant '{}' can't be {}: constants are ints, doubles, bools, bytes, strings, or chars",
+                constant.name,
+                self.type_name(declared)
+            )),
+            Some(declared) => Err(format!(
+                "{at}constant '{}' is declared {}, but its value is {}",
+                constant.name,
+                self.type_name(declared),
+                self.type_name(literal_type)
+            )),
+        }
+    }
+
+    /// Checks that `default`, a property's default, is a constant of type
+    /// `expected`: a literal, a class constant, null for a reference, or an
+    /// array or map literal of those.
+    fn check_constant_value(&self, default: &Expr, expected: ValueType, owner: u32, at: &str, name: &str) -> Result<(), String> {
+        let mismatch = |this: &Self, found: ValueType| {
+            Err(format!(
+                "{at}the default for '{name}' must be {}, found {}",
+                this.type_name(expected),
+                this.type_name(found)
+            ))
+        };
+        let scalar = |this: &Self, found: ValueType| {
+            if this.is_assignable(expected, found) { Ok(()) } else { mismatch(this, found) }
+        };
+        match default {
+            Expr::Number(number) if expected == ValueType::Byte => {
+                if (0..=255).contains(number) {
+                    Ok(())
+                } else {
+                    Err(format!("{at}the default for '{name}' must be a byte (0 to 255), found {number}"))
+                }
+            }
+            Expr::Number(_) => scalar(self, ValueType::Int),
+            Expr::Decimal(_) => scalar(self, ValueType::Double),
+            Expr::Negate(inner) if matches!(**inner, Expr::Decimal(_)) => scalar(self, ValueType::Double),
+            Expr::Boolean(_) => scalar(self, ValueType::Bool),
+            Expr::Text(_) => scalar(self, ValueType::String),
+            Expr::Character(_) => scalar(self, ValueType::Char),
+            Expr::Null if is_reference(expected) => Ok(()),
+            Expr::Null => mismatch(self, ValueType::Null),
+            Expr::StaticProperty(target, constant_name) => {
+                let class_id = Self::static_target_class(*target);
+                let Some((constant_owner, constant)) = self.find_constant(class_id, constant_name) else {
+                    return Err(format!("{at}the default for '{name}' must be a constant, and '{constant_name}' isn't one"));
+                };
+                if constant.visibility == Visibility::Private && constant_owner != owner {
+                    return Err(format!("{at}constant '{constant_name}' is private to '{}'", self.classes[constant_owner as usize].name));
+                }
+                let (_, found) = self.constant_value(constant_owner, &constant, 0)?;
+                scalar(self, found)
+            }
+            Expr::ArrayLiteral(elements) => match self.element_of(expected) {
+                Some(element) => {
+                    for item in elements {
+                        self.check_constant_value(item, element, owner, at, name)?;
+                    }
+                    Ok(())
+                }
+                None => Err(format!("{at}the default for '{name}' must be {}, found an array", self.type_name(expected))),
+            },
+            Expr::MapLiteral(entries) => match expected {
+                ValueType::Map(type_id) => {
+                    let map = self.map_types[type_id as usize];
+                    for (key, value) in entries {
+                        self.check_constant_value(key, map.key_type, owner, at, name)?;
+                        self.check_constant_value(value, map.value_type, owner, at, name)?;
+                    }
+                    Ok(())
+                }
+                _ => Err(format!("{at}the default for '{name}' must be {}, found a map", self.type_name(expected))),
+            },
+            _ => Err(format!(
+                "{at}the default for '{name}' must be a constant: a literal, a class constant, or an array or map of those (set other values in the constructor)"
+            )),
+        }
+    }
+
+    /// Checks every class's constants and property defaults, so mistakes are
+    /// reported where they're written, whether or not the class is used.
+    fn validate_constants_and_defaults(&self) -> Result<(), String> {
+        for class_id in 0..self.classes.len() as u32 {
+            let class = &self.classes[class_id as usize];
+            for constant in &class.constants {
+                let at = format!("{}:{}: ", constant.line, constant.column);
+                let checked = (|| {
+                    self.constant_value(class_id, constant, 0)?;
+                    // Not redeclared: a subclass sees its parents' constants,
+                    // so `static::NAME` and `self::NAME` always agree.
+                    for &super_id in class.parent_class.iter().chain(class.interfaces.iter()) {
+                        if let Some((owner, _)) = self.find_constant(super_id, &constant.name) {
+                            return Err(format!(
+                                "{at}constant '{}' is already declared in '{}'",
+                                constant.name,
+                                self.classes[owner as usize].name
+                            ));
+                        }
+                    }
+                    if let Some((owner, _)) = class.parent_class.and_then(|parent| self.find_static_property(parent, &constant.name)) {
+                        return Err(format!(
+                            "{at}'{}' is already a static property of '{}'",
+                            constant.name,
+                            self.classes[owner as usize].name
+                        ));
+                    }
+                    Ok(())
+                })();
+                checked.map_err(|error| self.in_module(class.module, error))?;
+            }
+            for property in &class.properties {
+                if let Some(default) = &property.default {
+                    let at = format!("{}:{}: ", property.default_at.0, property.default_at.1);
+                    self.check_constant_value(default, property.value_type, class_id, &at, &property.name)
+                        .map_err(|error| self.in_module(class.module, error))?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether objects of `class_id` have property defaults to set (its own
+    /// or inherited), in qiq_defaults.<class>.
+    fn has_property_defaults(&self, class_id: u32) -> bool {
+        self.class_fields(class_id).iter().any(|(property, _)| property.default.is_some())
+    }
+
+    /// `define void @qiq_defaults.<class>(ptr %object)`: stores the default
+    /// of each property that has one (inherited ones too) in a new object,
+    /// before its constructor runs. Each object gets its own arrays and maps.
+    fn emit_defaults_function(&mut self, class_id: u32) -> Result<String, String> {
+        let mut body = String::new();
+        let saved_method = self.current_method.take();
+        for (property, slot) in self.class_fields(class_id) {
+            let Some(default) = &property.default else { continue };
+            let value = self.emit_expecting(default, Some(property.value_type), &HashMap::new(), &mut body)?;
+            if is_reference(property.value_type) {
+                self.take(&value, &mut body);
+            }
+            let encoded = self.encode_payload(&value, &mut body)?;
+            let address = self.new_register();
+            body.push_str(&format!(
+                "  {address} = getelementptr inbounds i64, ptr %object, i64 {slot}\n  store i64 {encoded}, ptr {address}, align 8\n"
+            ));
+        }
+        self.current_method = saved_method;
+        Ok(format!(
+            "define void @qiq_defaults.{}(ptr %object) {{\nentry:\n{body}  ret void\nunwind:\n  ret void\n}}\n",
+            self.classes[class_id as usize].symbol
+        ))
+    }
+
     fn static_target_class(target: StaticTarget) -> u32 {
         match target {
             StaticTarget::Class { class_id, .. } => class_id,
@@ -5130,7 +5625,7 @@ impl Emitter {
     ) -> Result<(String, StaticProperty), String> {
         let class_id = Self::static_target_class(target);
         let (owner, property) = self.find_static_property(class_id, name).ok_or_else(|| {
-            format!("class '{}' has no static property '{name}'", self.classes[class_id as usize].name)
+            format!("class '{}' has no constant or static property '{name}'", self.classes[class_id as usize].name)
         })?;
         self.check_visibility(property.visibility, owner, name)?;
         let address = match target {
@@ -5985,14 +6480,14 @@ impl Emitter {
         };
 
         // The closure object's class: the function pointer, then the captures.
-        let mut properties = vec![Property { name: "function".to_string(), value_type: ValueType::Int, visibility: Visibility::Private }];
+        let mut properties = vec![Property { name: "function".to_string(), value_type: ValueType::Int, visibility: Visibility::Private, default: None, default_at: (0, 0) }];
         for (capture, _) in &captures {
             let field_type = if capture.name == "this" {
                 capture.value_type
             } else {
                 ValueType::Class(self.cell_class(capture.value_type))
             };
-            properties.push(Property { name: capture.name.clone(), value_type: field_type, visibility: Visibility::Private });
+            properties.push(Property { name: capture.name.clone(), value_type: field_type, visibility: Visibility::Private, default: None, default_at: (0, 0) });
         }
         let field_count = OBJECT_HEADER_FIELDS + properties.len();
         let class_id = self.add_synthetic_class("Closure", properties);
@@ -6181,7 +6676,7 @@ impl Emitter {
                 ));
                 let class_id = self.add_synthetic_class(
                     "Closure",
-                    vec![Property { name: "function".to_string(), value_type: ValueType::Int, visibility: Visibility::Private }],
+                    vec![Property { name: "function".to_string(), value_type: ValueType::Int, visibility: Visibility::Private, default: None, default_at: (0, 0) }],
                 );
                 self.function_references.push((symbol.clone(), class_id));
                 class_id
@@ -6922,6 +7417,9 @@ impl Emitter {
             body.push_str(&format!(
                 "  %object = call ptr @qiq_object_new(i64 {field_count}, i64 {class_id})\n"
             ));
+            if self.has_property_defaults(class_id) {
+                body.push_str(&format!("  call void @qiq_defaults.{}(ptr %object)\n", class.symbol));
+            }
             if let Some(owner) = owner {
                 let mut operands = vec!["ptr %object".to_string()];
                 operands.extend(declared.iter().cloned());
@@ -7366,6 +7864,54 @@ impl Emitter {
     ) -> Result<Value, String> {
         match expression {
             Expr::One => Err("internal error: '++' outside an increment".to_string()),
+            Expr::InstanceOf(_, _, Some(name)) => Err(format!(
+                "a name after instanceof ('{name}') can only be given in an if condition, on its own or joined by &&; elsewhere, check with instanceof and no name"
+            )),
+            Expr::InstanceOf(operand, target, None) => {
+                let value = self.emit_borrowed(operand, None, variables, body)?;
+                let target = *target;
+                let target_name = self.classes[target as usize].name.clone();
+                let ValueType::Class(static_class) = value.value_type else {
+                    return Err(format!("instanceof needs an object, found {}", self.type_name(value.value_type)));
+                };
+                // Two classes, neither extending the other: never true.
+                let (static_def, target_def) = (&self.classes[static_class as usize], &self.classes[target as usize]);
+                if !static_def.is_interface
+                    && !target_def.is_interface
+                    && static_class != target
+                    && !self.is_subclass(static_class, target)
+                    && !self.is_subclass(target, static_class)
+                {
+                    return Err(format!(
+                        "an object of class {} can never be a {target_name}: neither class extends the other",
+                        self.classes[static_class as usize].name
+                    ));
+                }
+                if !self.instanceof_tables.contains(&target) {
+                    self.instanceof_tables.push(target);
+                }
+                // The class id is the object's first slot; for null, a stand-in
+                // whose id has a 0 in every table, so there's no branch.
+                let (is_null, object, class_id, entry, byte, result) = (
+                    self.new_register(),
+                    self.new_register(),
+                    self.new_register(),
+                    self.new_register(),
+                    self.new_register(),
+                    self.new_register(),
+                );
+                body.push_str(&format!(
+                    "  {is_null} = icmp eq ptr {operand}, null\n  {object} = select i1 {is_null}, ptr @qiq_no_object, ptr {operand}\n  {class_id} = load i64, ptr {object}, align 8\n  {entry} = getelementptr inbounds [{count} x i8], ptr @qiq_is.{symbol}, i64 0, i64 {class_id}\n  {byte} = load i8, ptr {entry}, align 1\n  {result} = icmp ne i8 {byte}, 0\n",
+                    operand = value.operand,
+                    count = self.classes.len() + 1,
+                    symbol = self.classes[target as usize].symbol,
+                ));
+                Ok(Value { value_type: ValueType::Bool, operand: result, slot: None })
+            }
+            Expr::Downcast(operand, target) => {
+                let value = self.emit_expression(operand, variables, body)?;
+                Ok(Value { value_type: ValueType::Class(*target), operand: value.operand, slot: value.slot })
+            }
             Expr::Number(value) => Ok(Value {
                 value_type: ValueType::Int,
                 operand: value.to_string(),
@@ -7703,6 +8249,11 @@ impl Emitter {
                 }))
             }
             Expr::StaticProperty(target, name) => {
+                if let Some((owner, constant)) = self.find_constant(Self::static_target_class(*target), name) {
+                    self.check_visibility(constant.visibility, owner, name)?;
+                    let (literal, value_type) = self.constant_value(owner, &constant, 0)?;
+                    return self.emit_expecting(&literal, Some(value_type), variables, body);
+                }
                 let (address, property) = self.emit_static_property_address(*target, name, body)?;
                 let loaded = self.new_register();
                 body.push_str(&format!(
@@ -7798,6 +8349,9 @@ impl Emitter {
                 body.push_str(&format!(
                     "  {object} = call ptr @qiq_object_new(i64 {field_count}, i64 {class_id})\n"
                 ));
+                if self.has_property_defaults(*class_id) {
+                    body.push_str(&format!("  call void @qiq_defaults.{}(ptr {object})\n", self.classes[*class_id as usize].symbol));
+                }
                 self.own(Value {
                     value_type: ValueType::Class(*class_id),
                     operand: object.clone(),
@@ -8609,6 +9163,13 @@ fn expression_names(expression: &Expr, used: &mut std::collections::BTreeSet<Str
     };
     match expression {
         Expr::Number(_) | Expr::Decimal(_) | Expr::Boolean(_) | Expr::Null | Expr::Text(_) | Expr::Character(_) | Expr::One => {}
+        Expr::InstanceOf(operand, _, binding) => {
+            expression_names(operand, used, declared);
+            if let Some(name) = binding {
+                declared.insert(name.clone());
+            }
+        }
+        Expr::Downcast(operand, _) => expression_names(operand, used, declared),
         Expr::Variable(name) => {
             used.insert(name.clone());
         }
@@ -10024,7 +10585,7 @@ mod tests {
     #[test]
     fn rejects_invalid_interface_declarations_and_uses() {
         let cases = [
-            ("interface A { int value; }", "interfaces can only declare method signatures"),
+            ("interface A { int value; }", "interfaces can only declare method signatures and constants"),
             ("interface A { function a() {} }", "expected ';' after abstract method signature"),
             ("interface A { private function a(); }", "interface methods must be public"),
             ("interface A { function __construct(); }", "interfaces cannot declare constructors"),
@@ -10699,6 +11260,39 @@ mod tests {
     }
 
     #[test]
+    fn instanceof_constants_defaults_and_object_identity() {
+        let ir = compile_source("interface S {} class C implements S { public int n = 7; } class D extends C {} S s = new D(); if (s instanceof C c) { print(c->n); } bool any = s instanceof D;").unwrap();
+        // instanceof reads the class id and looks it up in a table, with a
+        // stand-in for null: no branch.
+        assert!(ir.contains("@qiq_is.C = private unnamed_addr constant [") && ir.contains("@qiq_no_object = private unnamed_addr constant i64"), "{ir}");
+        assert!(main_ir(&ir).contains("select i1") && main_ir(&ir).contains("getelementptr inbounds ["), "{ir}");
+        // Defaults are stored by one function per class, before the constructor.
+        assert!(ir.contains("define void @qiq_defaults.D(ptr %object)") && main_ir(&ir).contains("call void @qiq_defaults.D(ptr"), "{ir}");
+        // Constants are their value.
+        let constants = main_ir(&compile_source("class A { const N = 41; } int x = A::N + 1;").unwrap()).to_string();
+        assert!(constants.contains("add i64 41, 1") || constants.contains("i64 42") || constants.contains("41"), "{constants}");
+        // Objects compare by identity.
+        assert!(main_ir(&compile_source("class A {} A a = new A(); A b = a; bool same = a == b;").unwrap()).contains("icmp eq ptr"));
+        for (source, error) in [
+            ("class A {} class B {} A a = new A(); bool b = a instanceof B;", "an object of class A can never be a B"),
+            ("class A {} A a = new A(); while (a instanceof A x) { break; }", "a name after instanceof ('x') can only be given in an if condition"),
+            ("class A {} A a = new A(); if (a instanceof A x) { print(1); } print(x);", "variable 'x' is not declared"),
+            ("class A { const X = 1; } A::X = 2;", "can't assign to constant A::X"),
+            ("class A { const X = [1]; }", "constant 'X' must be a literal"),
+            ("class A { const X = A::Y; const Y = A::X; }", "is defined in terms of itself"),
+            ("class A { const X = 1; } class B extends A { const X = 2; }", "constant 'X' is already declared in 'A'"),
+            ("class A { public int x = to_int(\"3\"); }", "the default for 'x' must be a constant"),
+            ("class A { public string[] x = [1]; }", "the default for 'x' must be string, found int"),
+            ("class A {} class B {} A a = new A(); B b = new B(); bool c = a == b;", "comparison requires related types"),
+        ] {
+            let message = compile_source(source).unwrap_err();
+            assert!(message.contains(error), "{source}: {message}");
+        }
+        // A function returning from both branches of an if with bindings returns.
+        assert!(compile_source("class A { public int n; } function f(A a, bool ok): int { if (ok && a instanceof A x && x->n > 0) { return 1; } else { return 0; } }").is_ok());
+    }
+
+    #[test]
     fn increments_and_compound_assignments_are_assignments() {
         // `x++` and `x op= v` compile exactly like the assignment written out.
         for (short, long) in [
@@ -10750,7 +11344,8 @@ mod tests {
             ("Exception[] a = []; Exception[] b = []; bool c = a == b;", "Exception[] values can't be compared: objects and functions in them can only be compared with null"),
             ("map[string, function(): void] a = {}; bool c = a == a;", "can't be compared: objects and functions in them"),
             ("int[] a = [1]; string[] b = [\"1\"]; bool c = a == b;", "comparison requires matching types, found int[] and string[]"),
-            ("Exception e = new Exception(\"x\"); bool c = e == e;", "Exception values can only be compared with null"),
+            ("Exception e = new Exception(\"x\"); bool c = e < e;", "Exception values support only == and != comparisons"),
+            ("class A {} class B {} A a = new A(); B b = new B(); bool c = a == b;", "comparison requires related types, found A and B"),
         ] {
             let message = compile_source(source).unwrap_err();
             assert!(message.contains(error), "{source}: {message}");
@@ -11683,7 +12278,7 @@ mod tests {
             ("class A { public static int n = 0; } A::n = \"x\";", "static property 'n' requires int, found string"),
             ("class A { private static int n = 0; } print(A::n);", "cannot access non-public member 'n'"),
             ("class A { public static int n; } class B extends A { public static string n; }", "static property 'B::n' must keep the type int of 'A::n'"),
-            ("class A {} print(A::missing);", "class 'A' has no static property 'missing'"),
+            ("class A {} print(A::missing);", "class 'A' has no constant or static property 'missing'"),
             ("class A { public static int n = 1 + 1; }", "default for 'n' must be a literal"),
             ("class A { public static int n; public int n; }", "property 'n' is already declared"),
             ("class A { public function f(): void {} public function f(): void {} }", "1:56: class 'A' declares method 'f' more than once"),

@@ -1,0 +1,74 @@
+// instanceof: checking an object's class, and binding it as that class in an if.
+interface Shape { function area(): double; }
+class Circle implements Shape {
+    public double radius;
+    function __construct(double radius) { this->radius = radius; }
+    function area(): double { return 3.0 * this->radius * this->radius; }
+}
+class Square implements Shape {
+    public double side;
+    function __construct(double side) { this->side = side; }
+    function area(): double { return this->side * this->side; }
+}
+class Cube extends Square {
+    function volume(): double { return this->side * this->side * this->side; }
+}
+
+Shape[] shapes = [new Circle(1.0), new Square(2.0), new Cube(3.0)];
+foreach (shapes as shape) {
+    print(shape instanceof Circle, shape instanceof Square, shape instanceof Cube, shape instanceof Shape, !shape instanceof Circle);
+}
+Shape none = null;
+print(none instanceof Shape, none instanceof Circle);
+
+// Bindings: the members of the class it's checked to be.
+foreach (shapes as shape) {
+    if (shape instanceof Cube cube) {
+        print("cube, volume", cube->volume());
+    } else if (shape instanceof Square square) {
+        print("square, side", square->side);
+    } else if (shape instanceof Circle circle && circle->radius > 0.5) {
+        print("big circle, radius", circle->radius);
+    } else {
+        print("something else");
+    }
+}
+
+// The else branch runs when any part of the condition is false.
+function describe(Shape shape, bool allowed): string {
+    if (allowed && shape instanceof Circle c && c->radius >= 2.0) {
+        return "large circle " + to_string(c->radius);
+    } else {
+        return "not a large circle";
+    }
+}
+print(describe(new Circle(3.0), true), "|", describe(new Circle(3.0), false), "|", describe(new Circle(1.0), true), "|", describe(new Square(9.0), true));
+
+// Two bindings in one condition.
+Shape first = new Circle(2.0);
+Shape second = new Square(3.0);
+if (first instanceof Circle a && second instanceof Square b) {
+    print("both", a->radius, b->side);
+}
+
+// The value is evaluated once.
+int calls = 0;
+function pick(Shape[] all): Shape { print("pick called"); return all[2]; }
+if (pick(shapes) instanceof Cube picked) {
+    print("picked a cube", picked->volume());
+}
+
+// The binding keeps its object even if the variable is reassigned.
+Shape current = new Circle(5.0);
+if (current instanceof Circle kept) {
+    current = new Square(1.0);
+    print("kept", kept->radius, current instanceof Square);
+}
+
+// Without a binding, anywhere a bool goes.
+int circles = 0;
+foreach (shapes as shape) {
+    if (shape instanceof Circle) { circles++; }
+}
+bool anySquare = shapes[1] instanceof Square;
+print(circles, anySquare);

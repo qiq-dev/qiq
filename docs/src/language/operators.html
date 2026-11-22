@@ -41,11 +41,11 @@ caught: division by zero
 <table>
 <thead><tr><th>Operator</th><th>True when</th><th>Works on</th></tr></thead>
 <tbody>
-<tr><td><code>a == b</code>, <code>a != b</code></td><td>Equal, not equal</td><td><code>int</code>, <code>double</code>, <code>bool</code>, <code>byte</code>, <code>string</code>, <code>char</code>, <code>null</code>, and arrays and maps of those</td></tr>
+<tr><td><code>a == b</code>, <code>a != b</code></td><td>Equal, not equal</td><td><code>int</code>, <code>double</code>, <code>bool</code>, <code>byte</code>, <code>string</code>, <code>char</code>, <code>null</code>, and arrays and maps of those; objects (the same object)</td></tr>
 <tr><td><code>a &lt; b</code>, <code>a &gt; b</code>, <code>a &lt;= b</code>, <code>a &gt;= b</code></td><td>Ordering</td><td><code>int</code>, <code>double</code>, <code>byte</code> (unsigned), <code>string</code>, <code>char</code></td></tr>
 </tbody>
 </table>
-<p>Comparisons produce a <code>bool</code> and can be used anywhere, not only in <code>if</code>. Strings and chars compare by content; ordering uses UTF-8 byte order, which is Unicode code-point order, not locale-aware alphabetical order. Arrays and maps compare by contents (see below); objects and functions can only be compared with <code>null</code>. Comparisons can't be chained: write <code>0 &lt; n &amp;&amp; n &lt; 5</code>, not <code>0 &lt; n &lt; 5</code>.</p>
+<p>Comparisons produce a <code>bool</code> and can be used anywhere, not only in <code>if</code>. Strings and chars compare by content; ordering uses UTF-8 byte order, which is Unicode code-point order, not locale-aware alphabetical order. Arrays and maps compare by contents (see below). Objects compare by identity: <code>a == b</code> when they're the same object (see <a href="classes.html">Classes</a>). Functions can only be compared with <code>null</code>. Comparisons can't be chained: write <code>0 &lt; n &amp;&amp; n &lt; 5</code>, not <code>0 &lt; n &lt; 5</code>.</p>
 
 <h3>Comparing arrays and maps</h3>
 <p><code>==</code> and <code>!=</code> compare two arrays or two maps of the same type by what they hold, like strings, not by whether they're the same array or map:</p>
@@ -53,7 +53,7 @@ caught: division by zero
 <li>Two arrays are equal when they have the same length and equal elements in the same order.</li>
 <li>Two maps are equal when they have the same keys, each with an equal value. The order the keys were added in doesn't matter.</li>
 <li>Elements compare as <code>==</code> compares them on their own, so nested arrays and maps are compared all the way down, <code>0.0</code> equals <code>-0.0</code>, and a NaN is unequal to every other value.</li>
-<li>Arrays and maps that can hold objects or functions can't be compared, and neither can arrays and maps be ordered with <code>&lt;</code> or <code>&gt;</code>; both are compile errors.</li>
+<li>Arrays and maps that can hold objects or functions can't be compared with <code>==</code>, and neither can arrays and maps be ordered with <code>&lt;</code> or <code>&gt;</code>; both are compile errors.</li>
 </ul>
 
 ```qiq

@@ -1,0 +1,16 @@
+// == and != on objects: the same object.
+interface Named { function name(): string; }
+class Node implements Named {
+    public Node next;
+    function name(): string { return "node"; }
+}
+class Special extends Node {}
+Node a = new Node();
+Node b = new Node();
+Node alias = a;
+Special s = new Special();
+Node asNode = s;
+Named named = a;
+print(a == a, a == b, a == alias, a != b, s == asNode, asNode == s, named == a, a == named);
+a->next = a;
+print(a->next == a, b->next == null, a == null);

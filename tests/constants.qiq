@@ -1,0 +1,47 @@
+// Class constants (const) and property defaults.
+interface Limits {
+    const int MAX_ITEMS = 3;
+}
+class Http implements Limits {
+    const OK = 200;
+    const int NOT_FOUND = 404;
+    const string NAME = "http";
+    const double TIMEOUT = 2.5;
+    const NEGATIVE = -1.5;
+    const bool STRICT = true;
+    const char SEPARATOR = '/';
+    const byte FLAG = 255;
+    const DEFAULT_STATUS = Http::OK;
+    private const SECRET = "s3cret";
+    protected const SHARED = "shared";
+
+    public int status = Http::DEFAULT_STATUS;
+    public string[] tags = [];
+    public string[] headers = ["Server: qiq", "Via: x"];
+    public map[string, int] counts = {"a" => 1};
+    public int limit = self::MAX_ITEMS;
+    public double ratio = -0.5;
+    public string label = "unset";
+    public Http next = null;
+
+    function __construct() {
+        // Defaults are set before the constructor runs.
+        this->label = this->label + ":" + to_string(this->status);
+    }
+    function secret(): string { return self::SECRET + "/" + static::NAME; }
+    static function make(): static { return new static(); }
+}
+class Api extends Http {
+    public int retries = 2;
+    function shared(): string { return self::SHARED + "/" + to_string(Api::OK); }
+}
+print(Http::OK, Http::NOT_FOUND, Http::NAME, Http::TIMEOUT, Http::NEGATIVE, Http::STRICT, Http::SEPARATOR, Http::FLAG, Http::DEFAULT_STATUS, Http::MAX_ITEMS, Api::OK, Limits::MAX_ITEMS);
+Http a = new Http();
+Http b = new Http();
+array_push(a->tags, "only a");
+a->counts["b"] = 2;
+print(a->status, a->tags, b->tags, a->counts, b->counts, a->limit, a->ratio, a->label, a->next == null, a->headers);
+Api api = new Api();
+print(api->retries, api->status, api->label, api->shared(), api->secret());
+Http made = Api::make();
+print(made->status, made->tags, made->label);

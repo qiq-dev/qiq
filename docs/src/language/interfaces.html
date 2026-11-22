@@ -42,11 +42,12 @@ rectangle 10
 <li>A class can implement several interfaces, <code>class A implements B, C</code>, and combine them with inheritance: <code>class Child extends Base implements Named</code>.</li>
 <li>An interface can extend other interfaces: <code>interface Scalable extends Shape</code>.</li>
 <li>A concrete class must implement every interface method as a <code>public</code> method with the same parameter and return types. The implementation may be inherited from a parent class. An abstract class may leave interface methods to its subclasses.</li>
+<li>Interfaces can declare <a href="classes.html">constants</a> (public ones), which implementing classes share: <code>interface Limits { const MAX = 10; }</code> lets a class implementing it use <code>self::MAX</code>.</li>
 <li>Interfaces can't declare properties, constructors, static methods, or <code>final</code> methods, and can't be instantiated. They must be declared before use.</li>
 </ul>
 
 <h2>Interface types and dispatch</h2>
-<p>An interface name can be used as the type of a variable, parameter, return value, or array element, and holds an object of any implementing class. Calls through it run the object's own implementation, chosen at run time from a table indexed by the object's class.</p>
+<p>An interface name can be used as the type of a variable, parameter, return value, or array element, and holds an object of any implementing class. Calls through it run the object's own implementation, chosen at run time from a table indexed by the object's class. To find out which class an object is, and use what only that class has, check with <a href="classes.html"><code>instanceof</code></a>: <code>if (shape instanceof Circle circle)</code>.</p>
 
 <h2>Defaults in interface methods</h2>
 <p>Interface methods can have <a href="functions.html">optional parameters</a>. An implementation may declare different defaults, and a call always uses the defaults of the method that actually runs:</p>
