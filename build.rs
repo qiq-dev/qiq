@@ -7,6 +7,9 @@
 //! - Mbed TLS, built from `vendor/mbedtls-3.6.8.tar.bz2` (sha256
 //!   bc54b818e87f49c0b3281dd85d24adaede0e63b4e822e3fbd49c005a38b9595b) as a
 //!   static library that programs using HTTPS link against;
+//! - SQLite, built from `vendor/sqlite-autoconf-3540100.tar.gz` (SHA3-256
+//!   b6ced585c750916b1052667239a12c25a7ff34e7f06e1e6e01ecb0427657d9c4, as
+//!   sqlite.org lists it) as a static library for programs using std/sql;
 //! - the C runtime (`stdlib/runtime/*.c`), precompiled to LLVM bitcode so it
 //!   is optimized together with each program;
 //! - LLVM 18, linked into qiq statically (only the components qiq uses).
@@ -21,6 +24,23 @@ use std::process::Command;
 
 const MUSL: &str = "musl-1.2.5";
 const MBEDTLS: &str = "mbedtls-3.6.8";
+const SQLITE: &str = "sqlite-autoconf-3540100";
+/// SQLite's compile-time options: no threads (each server worker is a
+/// process) or loadable extensions (programs are static), sub-second sleeps
+/// while waiting for locks, double-quoted strings only as identifiers, and
+/// the math functions and full-text search.
+const SQLITE_OPTIONS: &[&str] = &[
+    "-DSQLITE_THREADSAFE=0",
+    "-DSQLITE_OMIT_LOAD_EXTENSION",
+    "-DSQLITE_DEFAULT_MEMSTATUS=0",
+    "-DSQLITE_DQS=0",
+    "-DSQLITE_OMIT_DEPRECATED",
+    "-DSQLITE_OMIT_SHARED_CACHE",
+    "-DSQLITE_LIKE_DOESNT_MATCH_BLOBS",
+    "-DSQLITE_ENABLE_MATH_FUNCTIONS",
+    "-DSQLITE_ENABLE_FTS5",
+    "-DHAVE_USLEEP=1",
+];
 /// Replaces musl's x86-64 assembly memcpy, which is slow for short copies.
 const MUSL_MEMCPY: &str = "vendor/musl-x86_64-memcpy.c";
 const RUNTIME_SOURCES: &[&str] = &[
@@ -38,6 +58,7 @@ const RUNTIME_SOURCES: &[&str] = &[
     "program.c",
     "net.c",
     "crypto.c",
+    "sql.c",
 ];
 /// LLVM components qiq uses: reading IR, linking modules, optimizing, and
 /// emitting x86-64 object code (plus what inkwell references).
@@ -175,6 +196,36 @@ fn build_mbedtls(out: &Path, clang: &str, musl: &Path) -> (PathBuf, PathBuf) {
     (archive, include)
 }
 
+/// Builds SQLite into `out/libsqlite3.a` once, compiled for x86-64 Linux
+/// with musl. Returns the archive and the directory of sqlite3.h.
+fn build_sqlite(out: &Path, clang: &str, musl: &Path) -> (PathBuf, PathBuf) {
+    let source = out.join(SQLITE);
+    let archive = out.join("libsqlite3.a");
+    let stamp = out.join("sqlite-options.txt");
+    let options = SQLITE_OPTIONS.join(" ");
+    if archive.exists() && std::fs::read_to_string(&stamp).ok().as_deref() == Some(options.as_str()) {
+        return (archive, source);
+    }
+    let tarball = Path::new("vendor").join(format!("{SQLITE}.tar.gz"));
+    run(Command::new("tar").arg("xzf").arg(&tarball).arg("-C").arg(out));
+    let object = out.join("sqlite3.o");
+    run(Command::new(clang)
+        .args(["--target=x86_64-unknown-linux-musl", "-O2", "-ffunction-sections", "-fdata-sections"])
+        .args(SQLITE_OPTIONS)
+        .args(["-fno-stack-protector", "-nostdlibinc", "-isystem"])
+        .arg(musl.join("include"))
+        .arg("-c")
+        .arg(source.join("sqlite3.c"))
+        .arg("-o")
+        .arg(&object));
+    if archive.exists() {
+        std::fs::remove_file(&archive).unwrap();
+    }
+    run(Command::new(tool("LLVM_AR", "llvm-ar-18")).arg("rcs").arg(&archive).arg(&object));
+    std::fs::write(&stamp, options).unwrap();
+    (archive, source)
+}
+
 fn main() {
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let clang = tool("CLANG", "clang");
@@ -183,12 +234,15 @@ fn main() {
     println!("cargo:rerun-if-changed=vendor/{MUSL}.tar.gz");
     println!("cargo:rerun-if-changed={MUSL_MEMCPY}");
     println!("cargo:rerun-if-changed=vendor/{MBEDTLS}.tar.bz2");
+    println!("cargo:rerun-if-changed=vendor/{SQLITE}.tar.gz");
     println!("cargo:rerun-if-changed=stdlib/runtime");
 
     // musl libc for the programs qiq compiles.
     let musl = build_musl(&out, &clang);
     // Mbed TLS for HTTPS.
     let (mbedtls, mbedtls_include) = build_mbedtls(&out, &clang, &musl);
+    // SQLite for std/sql.
+    let (sqlite, sqlite_include) = build_sqlite(&out, &clang, &musl);
 
     // The C runtime, as bitcode for x86-64 Linux with musl.
     let runtime_dir = out.join("runtime");
@@ -207,6 +261,8 @@ fn main() {
             .arg("-Istdlib/runtime")
             .arg("-I")
             .arg(&mbedtls_include)
+            .arg("-I")
+            .arg(&sqlite_include)
             .arg(&input)
             .arg("-o")
             .arg(&bitcode));
@@ -225,6 +281,10 @@ fn main() {
     embedded.push_str(&format!(
         "\n/// Mbed TLS, linked before libc so programs that use HTTPS get it.\npub const MBEDTLS: &[u8] = include_bytes!({:?});\n",
         mbedtls.display().to_string()
+    ));
+    embedded.push_str(&format!(
+        "\n/// SQLite, for programs that use std/sql.\npub const SQLITE: &[u8] = include_bytes!({:?});\n",
+        sqlite.display().to_string()
     ));
     std::fs::write(out.join("embedded.rs"), embedded).unwrap();
 

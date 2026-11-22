@@ -8,6 +8,7 @@
 // │   │   ├── FileNotFoundException
 // │   │   ├── PermissionDeniedException
 // │   │   └── NetworkException
+// │   ├── DatabaseException
 // │   ├── KeyNotFoundException
 // │   ├── OutOfRangeException
 // │   └── InvalidUtf8Exception
@@ -49,6 +50,11 @@ class PermissionDeniedException extends IOException {}
 // A network connection failed: the host couldn't be found, refused the
 // connection, timed out, or failed the TLS certificate check.
 class NetworkException extends IOException {}
+
+// A database couldn't be opened, or rejected a statement: an SQL syntax
+// error, a broken constraint, a missing table, or the wrong number of
+// values for the placeholders (std/sql).
+class DatabaseException extends RuntimeException {}
 
 // A map lookup used a key that is not in the map.
 class KeyNotFoundException extends RuntimeException {}

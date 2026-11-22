@@ -267,7 +267,7 @@ QIQ_GUARDED(void *, qiq_stdlib_base64_decode_bytes, NULL, (const char *text), (t
 
 // Whether `length` bytes are UTF-8 text a qiq string can hold: valid, and
 // without NUL bytes.
-static bool qiq_is_utf8_text(const unsigned char *bytes, size_t length) {
+bool qiq_is_utf8_text(const unsigned char *bytes, size_t length) {
     size_t index = 0;
     while (index < length) {
         // Eight bytes at a time while they're ASCII and not NUL (a word

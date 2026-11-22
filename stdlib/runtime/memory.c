@@ -256,7 +256,8 @@ void qiq_release(void *value) {
 
 // `new` for a class with `field_count` 8-byte fields, including the class id.
 void *qiq_object_new(int64_t field_count, int64_t class_id) {
-    // Tracked for cycles when a field can hold an object.
+    // Tracked for cycles when a field can be part of one (see may_cycle in
+    // src/compiler.rs).
     uint32_t flags = strchr(qiq_class_reference_fields[class_id], '2') != NULL ? QIQ_MAY_CYCLE : 0;
     int64_t *object = qiq_allocate((size_t)field_count * 8, QIQ_KIND_OBJECT, flags);
     object[0] = class_id;

@@ -66,7 +66,7 @@ print(gc_collect_cycles());  // two pairs of Person objects
 
 <ul>
 <li>When a count drops but not to zero, the value might have just become part of an unreachable cycle, so it's noted as a possible root. After 10,000 possible roots, the collector runs: it subtracts the references that come from inside the graph below them, and frees whatever is left with none.</li>
-<li>Only values that can be part of a cycle are tracked: objects of classes with a field that can hold an object, and arrays and maps that can hold objects. Strings, and arrays and maps of numbers or strings, are never examined.</li>
+<li>Only values that can be part of a cycle are tracked: objects whose fields can lead back to an object of their own kind, and arrays and maps that can hold such objects. Strings, arrays and maps of numbers or strings, and objects that hold only those (or other such objects) are never examined. The compiler sees the whole program, so it knows each class's fields; only a field whose type is an interface, or a class that something extends, is assumed to be able to lead anywhere, since it could hold an object with more fields.</li>
 <li>If collections keep finding little garbage, the collector runs less often, so programs that keep many objects alive don't pay for re-examining them.</li>
 <li><a href="function.gc-collect-cycles.html"><code>gc_collect_cycles()</code></a> runs the collector immediately and returns how many values it freed.</li>
 </ul>

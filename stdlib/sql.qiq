@@ -1,0 +1,317 @@
+// SQL databases: SQLite so far, built into every qiq program that uses it,
+// so there's nothing to install. Implemented in C (stdlib/runtime/sql.c).
+//
+//   import Database, Row from "std/sql";
+//
+//   Database db = Database::open("sqlite:app.db");
+//   db->execute("insert into users (name, age) values (?, ?)", name, age);
+//   foreach (db->query("select id, name from users where age > ?", 30) as row) {
+//       print(row->getInt("id"), row->getString("name"));
+//   }
+//
+// Values for a statement's `?` placeholders follow the SQL, in order, as
+// arguments of any of these types: int, double, bool (stored as 1 or 0),
+// byte, string, char, byte[] (a blob), or null. They are never pasted into
+// the SQL text, so they can't change what the statement does (SQL
+// injection). Errors throw DatabaseException.
+
+import Exception, DatabaseException from "exceptions";
+import implode from "string";
+
+extern function __sql_open(string dsn): int;
+extern function __sql_close(int handle): void;
+extern function __sql_run(int handle, string sql, int mode): int;
+extern function __sql_execute_script(int handle, string sql): void;
+extern function __sql_last_insert_id(int handle): int;
+extern function __sql_in_transaction(int handle): bool;
+extern function __sql_columns(): string[];
+extern function __sql_kinds(): int[];
+extern function __sql_values(): int[];
+extern function __sql_doubles(): double[];
+extern function __sql_texts(): string[];
+extern function __sql_blobs(): byte[];
+extern function __sql_blob_starts(): int[];
+extern function __sql_slice(byte[] data, int start, int end): byte[];
+
+// The cells of a query's rows, shared by its Row objects. Each cell has a
+// kind (1 int, 2 double, 3 string, 4 bytes, 5 NULL) and a value: the int
+// itself, or the index of its double, string, or byte array.
+final class __Result {
+    public string[] columns;
+    public map[string, int] positions;
+    public int[] kinds;
+    public int[] values;
+    public double[] doubles;
+    public string[] texts;
+    public byte[] blobs;
+    public int[] blobStarts;
+
+    // Takes the rows the last statement collected.
+    function __construct() {
+        this->columns = __sql_columns();
+        this->positions = {};
+        foreach (this->columns as index => name) {
+            // With two columns of the same name, the first wins.
+            if (!map_key_exists(name, this->positions)) {
+                this->positions[name] = index;
+            }
+        }
+        this->kinds = __sql_kinds();
+        this->values = __sql_values();
+        this->doubles = __sql_doubles();
+        this->texts = __sql_texts();
+        this->blobs = __sql_blobs();
+        this->blobStarts = __sql_blob_starts();
+    }
+}
+
+// One row of a query's result. Read a column by name with the getter for
+// its type; a getter throws DatabaseException when the column doesn't
+// exist or holds another type, so a mistake shows up where it is.
+final class Row {
+    private __Result result;
+    private int first;
+
+    function __construct(__Result result, int first) {
+        this->result = result;
+        this->first = first;
+    }
+
+    // The cell of `column`.
+    private function cell(string column): int {
+        if (!map_key_exists(column, this->result->positions)) {
+            throw new DatabaseException(sprintf("the result has no column '%s'; its columns are: %s", column, implode(", ", this->result->columns)));
+        }
+        return this->first + this->result->positions[column];
+    }
+
+    private function mismatch(string column, int kind, string wanted): DatabaseException {
+        if (kind == 5) {
+            return new DatabaseException(sprintf("column '%s' is NULL; check with isNull first, or read it with a fallback, as %sOr(\"%s\", fallback)", column, wanted, column));
+        }
+        string[] names = ["", "an int", "a double", "a string", "bytes"];
+        string[] getters = ["", "getInt", "getDouble", "getString", "getBytes"];
+        return new DatabaseException(sprintf("column '%s' holds %s: read it with %s, not %s", column, names[kind], getters[kind], wanted));
+    }
+
+    // The column names, in the order the query gives them.
+    function columns(): string[] {
+        return this->result->columns;
+    }
+
+    // Whether the column is NULL.
+    function isNull(string column): bool {
+        return this->result->kinds[this->cell(column)] == 5;
+    }
+
+    // An INTEGER column. Throws when it's NULL or holds another type.
+    function getInt(string column): int {
+        int cell = this->cell(column);
+        int kind = this->result->kinds[cell];
+        if (kind != 1) {
+            throw this->mismatch(column, kind, "getInt");
+        }
+        return this->result->values[cell];
+    }
+
+    // An INTEGER column, or `fallback` when it's NULL.
+    function getIntOr(string column, int fallback): int {
+        if (this->isNull(column)) {
+            return fallback;
+        }
+        return this->getInt(column);
+    }
+
+    // A REAL column, or an INTEGER one as a double (as from AVG or SUM).
+    function getDouble(string column): double {
+        int cell = this->cell(column);
+        int kind = this->result->kinds[cell];
+        if (kind == 1) {
+            return to_double(this->result->values[cell]);
+        }
+        if (kind != 2) {
+            throw this->mismatch(column, kind, "getDouble");
+        }
+        return this->result->doubles[this->result->values[cell]];
+    }
+
+    // A REAL or INTEGER column, or `fallback` when it's NULL.
+    function getDoubleOr(string column, double fallback): double {
+        if (this->isNull(column)) {
+            return fallback;
+        }
+        return this->getDouble(column);
+    }
+
+    // An INTEGER column holding 0 or 1, as SQLite stores booleans.
+    function getBool(string column): bool {
+        int value = this->getInt(column);
+        if (value != 0 && value != 1) {
+            throw new DatabaseException(sprintf("column '%s' holds %d, not a bool (0 or 1)", column, value));
+        }
+        return value == 1;
+    }
+
+    // A column holding 0 or 1, or `fallback` when it's NULL.
+    function getBoolOr(string column, bool fallback): bool {
+        if (this->isNull(column)) {
+            return fallback;
+        }
+        return this->getBool(column);
+    }
+
+    // A TEXT column, or null when it's NULL (so `?? ""` gives a default).
+    // Text that isn't valid UTF-8 can only be read with getBytes.
+    function getString(string column): string {
+        int cell = this->cell(column);
+        int kind = this->result->kinds[cell];
+        if (kind == 5) {
+            return null;
+        }
+        if (kind != 3) {
+            throw this->mismatch(column, kind, "getString");
+        }
+        return this->result->texts[this->result->values[cell]];
+    }
+
+    // A BLOB column, or null when it's NULL. Also reads TEXT that isn't
+    // valid UTF-8.
+    function getBytes(string column): byte[] {
+        int cell = this->cell(column);
+        int kind = this->result->kinds[cell];
+        if (kind == 5) {
+            return null;
+        }
+        if (kind != 4) {
+            throw this->mismatch(column, kind, "getBytes");
+        }
+        int blob = this->result->values[cell];
+        return __sql_slice(this->result->blobs, this->result->blobStarts[blob], this->result->blobStarts[blob + 1]);
+    }
+
+    // The row as text, for printing and debugging: each column's value
+    // written as print writes it, NULL as null, and bytes as "(N bytes)".
+    function toMap(): map[string, string] {
+        map[string, string] row = {};
+        foreach (this->result->columns as index => name) {
+            if (map_key_exists(name, row)) {
+                continue;
+            }
+            int cell = this->first + index;
+            int value = this->result->values[cell];
+            switch (this->result->kinds[cell]) {
+                case 1:
+                    row[name] = to_string(value);
+                case 2:
+                    row[name] = to_string(this->result->doubles[value]);
+                case 3:
+                    row[name] = this->result->texts[value];
+                case 4:
+                    row[name] = sprintf("(%d bytes)", this->result->blobStarts[value + 1] - this->result->blobStarts[value]);
+                default:
+                    row[name] = null;
+            }
+        }
+        return row;
+    }
+}
+
+// A connection to a database.
+final class Database {
+    private int handle;
+
+    private function __construct(int handle) {
+        this->handle = handle;
+    }
+
+    // Opens a database: "sqlite:path/to/file.db" (created if it doesn't
+    // exist), or "sqlite::memory:" for one that lives in memory until it's
+    // closed. SQLite's URI names work too, such as
+    // "sqlite:file:data.db?mode=ro" to open read-only. A statement waits up
+    // to 5 seconds for another process's lock before throwing.
+    static function open(string dsn): Database {
+        return new Database(__sql_open(dsn));
+    }
+
+    // Runs one statement, such as an INSERT, UPDATE, DELETE, or CREATE
+    // TABLE, with values for its placeholders. Returns how many rows it
+    // inserted, changed, or deleted.
+    function execute(string sql, ...): int {
+        return __sql_run(this->handle, sql, 0);
+    }
+
+    // Runs a query with values for its placeholders and returns its rows.
+    function query(string sql, ...): Row[] {
+        int count = __sql_run(this->handle, sql, 1);
+        __Result result = new __Result();
+        int width = len(result->columns);
+        Row[] rows = new Row[count];
+        foreach (range(count) as index) {
+            rows[index] = new Row(result, index * width);
+        }
+        return rows;
+    }
+
+    // The first row of a query, or null when there is none. The rest of the
+    // rows aren't read.
+    function queryOne(string sql, ...): Row {
+        int count = __sql_run(this->handle, sql, 2);
+        __Result result = new __Result();
+        if (count == 0) {
+            return null;
+        }
+        return new Row(result, 0);
+    }
+
+    // Runs several statements separated by semicolons, such as a schema;
+    // they can't have placeholders.
+    function executeScript(string sql): void {
+        __sql_execute_script(this->handle, sql);
+    }
+
+    // The rowid (the INTEGER PRIMARY KEY) of the last row inserted.
+    function lastInsertId(): int {
+        return __sql_last_insert_id(this->handle);
+    }
+
+    // Transactions: changes made after begin() are saved together by
+    // commit(), or all undone by rollback(). Without one, each statement
+    // is saved on its own.
+    function begin(): void {
+        this->execute("BEGIN");
+    }
+
+    function commit(): void {
+        this->execute("COMMIT");
+    }
+
+    function rollback(): void {
+        this->execute("ROLLBACK");
+    }
+
+    // Whether a transaction is open.
+    function inTransaction(): bool {
+        return __sql_in_transaction(this->handle);
+    }
+
+    // Runs `body` in a transaction: commits when it returns, or rolls back
+    // and rethrows when it throws.
+    function transaction(function(): void body): void {
+        this->begin();
+        try {
+            body();
+        } catch (Exception e) {
+            if (this->inTransaction()) {
+                this->rollback();
+            }
+            throw e;
+        }
+        this->commit();
+    }
+
+    // Closes the connection. Closing twice does nothing; using the
+    // database afterwards throws DatabaseException.
+    function close(): void {
+        __sql_close(this->handle);
+    }
+}

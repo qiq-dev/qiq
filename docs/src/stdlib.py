@@ -28,6 +28,7 @@ OVERVIEW = (
     "<tr><td><code>std/http</code></td><td>The <a href=\"ref.http.html\">HTTP client</a> and URL encoding</td></tr>"
     "<tr><td><code>std/http/server</code></td><td>The <a href=\"ref.http-server.html\">HTTP server</a></td></tr>"
     "<tr><td><code>std/crypto</code></td><td><a href=\"ref.crypto.html\">Hashing and encoding</a>: MD5, SHA-1, SHA-2, HMAC, hex, base64, and password hashing</td></tr>"
+    "<tr><td><code>std/sql</code></td><td>SQL databases (SQLite): the <a href=\"class.database.html\">Database</a> and <a href=\"class.row.html\">Row</a> classes</td></tr>"
     "</tbody></table>\n"
     "<pre class=\"code\">import File, file_get_contents from \"std/file\";\nimport date from \"std/time\";</pre>\n"
     "<p>Names from these modules are free for your own code when you don't import them: a program can declare its "
@@ -2283,6 +2284,7 @@ EXCEPTION_CLASSES = """<h1>Exception classes</h1>
 │   │   ├── FileNotFoundException
 │   │   ├── PermissionDeniedException
 │   │   └── NetworkException
+│   ├── DatabaseException
 │   ├── KeyNotFoundException
 │   ├── OutOfRangeException
 │   └── InvalidUtf8Exception
@@ -2308,6 +2310,7 @@ EXCEPTION_CLASSES = """<h1>Exception classes</h1>
 <tr><td><code>IOException</code></td><td>Reading or writing a file failed for a reason other than the two below, such as reading a directory.</td></tr>
 <tr><td><code>FileNotFoundException</code></td><td>A path given to a file function doesn't exist.</td></tr>
 <tr><td><code>PermissionDeniedException</code></td><td>The operating system denied access to a file.</td></tr>
+<tr><td><code>DatabaseException</code></td><td>A <a href="class.database.html">database</a> couldn't be opened or rejected a statement (an SQL error, a broken constraint, a missing table, a lock held for more than 5 seconds), the wrong number of values was given for a statement's placeholders, or a <a href="class.row.html">Row</a> getter was asked for a column that doesn't exist or holds another type.</td></tr>
 <tr><td><code>KeyNotFoundException</code></td><td>A map lookup used a key that isn't in the map.</td></tr>
 <tr><td><code>OutOfRangeException</code></td><td>An array index is below 0 or not less than the array's length.</td></tr>
 <tr><td><code>InvalidUtf8Exception</code></td><td>Bytes or file contents that should be text aren't valid UTF-8.</td></tr>
@@ -2343,6 +2346,201 @@ KeyNotFoundException: map key not found
 """
 
 
+DATABASE_CLASS = """<h1>The Database class</h1>
+<p>A connection to an SQL database, like PHP's <code>PDO</code>. qiq supports SQLite so far, which is built into every program that uses it: there's no server or library to install, and the database is a single file.</p>
+<h2>Class synopsis</h2>
+<div class="synopsis"><code><span class="kw">final class</span> <span class="cls">Database</span> {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">static function</span> <span class="fn">open</span>(<span class="type">string</span> dsn): <span class="cls">Database</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">execute</span>(<span class="type">string</span> sql, ...values): <span class="type">int</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">query</span>(<span class="type">string</span> sql, ...values): <span class="cls">Row</span>[]<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">queryOne</span>(<span class="type">string</span> sql, ...values): <span class="cls">Row</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">executeScript</span>(<span class="type">string</span> sql): <span class="type">void</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">lastInsertId</span>(): <span class="type">int</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">begin</span>(): <span class="type">void</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">commit</span>(): <span class="type">void</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">rollback</span>(): <span class="type">void</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">inTransaction</span>(): <span class="type">bool</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">transaction</span>(<span class="kw">function</span>(): <span class="type">void</span> body): <span class="type">void</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">close</span>(): <span class="type">void</span><br>
+}</code></div>
+
+<h2>Example</h2>
+```qiq
+Database db = Database::open("sqlite::memory:");
+db->execute("create table users (id integer primary key, name text not null, age integer)");
+db->execute("insert into users (name, age) values (?, ?)", "Ada", 36);
+db->execute("insert into users (name, age) values (?, ?)", "Lin", 41);
+print("new id:", db->lastInsertId());
+
+foreach (db->query("select id, name, age from users where age > ? order by name", 30) as row) {
+    print(row->getInt("id"), row->getString("name"), row->getInt("age"));
+}
+Row ada = db->queryOne("select age from users where name = ?", "Ada");
+if (ada != null) {
+    print("Ada is", ada->getInt("age"));
+}
+print(db->execute("update users set age = age + 1"), "rows changed");
+```
+```output
+new id: 2
+1 Ada 36
+2 Lin 41
+Ada is 36
+2 rows changed
+```
+
+<h2>Values for placeholders</h2>
+<p>Write a <code>?</code> in the SQL for each value, and give the values after the SQL, in order. Each can be an <code>int</code>, <code>double</code>, <code>bool</code> (stored as 1 or 0), <code>byte</code>, <code>string</code>, <code>char</code>, <code>byte[]</code> (stored as a blob), or <code>null</code>; a <code>null</code> string or array is stored as NULL. The compiler checks the types, as it does for <a href="function.sprintf.html">sprintf</a>.</p>
+<p>The values are sent to the database separately from the SQL, never pasted into it, so a value can't change what the statement does: this is what prevents SQL injection. Build the SQL itself only from text in your program, and give everything else as a value.</p>
+<pre class="code">Database db = Database::open("sqlite:app.db");
+string name = "Robert'); drop table students; --";
+db->execute("insert into students (name) values (?)", name);   // stores the name as it is</pre>
+<p>The number of values must match the number of placeholders, or the call throws <code>DatabaseException</code>. Named placeholders such as <code>:name</code> aren't supported.</p>
+
+<h2>Methods</h2>
+<table>
+<thead><tr><th>Method</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>Database::open(dsn)</code></td><td>Opens a database. <code>"sqlite:path/to/file.db"</code> opens a file, relative to the directory the program runs in, creating it if it doesn't exist; <code>"sqlite::memory:"</code> makes a database in memory that lasts until it's closed. SQLite's URI file names work too, such as <code>"sqlite:file:data.db?mode=ro"</code> to open a file read-only. Throws <code>DatabaseException</code> when the file can't be opened.</td></tr>
+<tr><td><code>execute(sql, ...values)</code></td><td>Runs one statement, such as <code>INSERT</code>, <code>UPDATE</code>, <code>DELETE</code>, or <code>CREATE TABLE</code>. Returns the number of rows it inserted, changed, or deleted.</td></tr>
+<tr><td><code>query(sql, ...values)</code></td><td>Runs a query and returns all its rows as an array of <a href="class.row.html">Row</a> objects, empty when nothing matches.</td></tr>
+<tr><td><code>queryOne(sql, ...values)</code></td><td>The first row of a query, or <code>null</code> when there is none. It stops after that row, so it's the quick way to look up one record.</td></tr>
+<tr><td><code>executeScript(sql)</code></td><td>Runs several statements separated by semicolons, such as a schema. They can't have placeholders. <code>execute</code>, <code>query</code>, and <code>queryOne</code> run exactly one statement and throw if the SQL has more, so a value can never smuggle in a second one.</td></tr>
+<tr><td><code>lastInsertId()</code></td><td>The id (the <code>INTEGER PRIMARY KEY</code>, or SQLite's rowid) of the last row inserted.</td></tr>
+<tr><td><code>begin()</code>, <code>commit()</code>, <code>rollback()</code></td><td>Start a transaction, save its changes, or undo them. Without a transaction, each statement is saved on its own.</td></tr>
+<tr><td><code>inTransaction()</code></td><td>Whether a transaction is open.</td></tr>
+<tr><td><code>transaction(body)</code></td><td>Runs <code>body</code> in a transaction: commits when it returns, or rolls back and rethrows when it throws.</td></tr>
+<tr><td><code>close()</code></td><td>Closes the connection. Closing twice does nothing; using the database afterwards throws <code>DatabaseException</code>. A program's open databases are closed when it ends.</td></tr>
+</tbody>
+</table>
+
+<h2>Transactions</h2>
+<p>Changes in a transaction are saved together or not at all. They're also much faster: outside a transaction, SQLite makes each statement durable on its own, waiting for the disk each time.</p>
+```qiq
+Database db = Database::open("sqlite::memory:");
+db->execute("create table accounts (name text primary key, balance integer check (balance >= 0))");
+db->execute("insert into accounts values (?, ?), (?, ?)", "ada", 100, "lin", 20);
+
+function transfer(Database db, string from, string to, int amount): void {
+    db->transaction(function(): void {
+        db->execute("update accounts set balance = balance + ? where name = ?", amount, to);
+        db->execute("update accounts set balance = balance - ? where name = ?", amount, from);
+    });
+}
+transfer(db, "ada", "lin", 30);
+try {
+    transfer(db, "lin", "ada", 500);
+} catch (DatabaseException e) {
+    print("failed:", e->getMessage());
+}
+foreach (db->query("select * from accounts order by name") as row) {
+    print(row->getString("name"), row->getInt("balance"));
+}
+```
+```output
+failed: CHECK constraint failed: balance >= 0
+ada 70
+lin 50
+```
+<p>The failed transfer had already added 500 to Ada's balance when the second update failed; rolling back undid it.</p>
+
+<h2>Errors</h2>
+<p>Everything that goes wrong throws <code>DatabaseException</code>, with SQLite's message: an SQL syntax error, a missing table or column, a broken <code>UNIQUE</code>, <code>NOT NULL</code>, <code>CHECK</code>, or foreign key constraint, or the wrong number of values for the placeholders.</p>
+```qiq
+Database db = Database::open("sqlite::memory:");
+db->execute("create table users (email text unique)");
+db->execute("insert into users values (?)", "ada@example.com");
+try {
+    db->execute("insert into users values (?)", "ada@example.com");
+} catch (DatabaseException e) {
+    print(e->getMessage());
+}
+try {
+    db->query("select * from users where email = ?");
+} catch (DatabaseException e) {
+    print(e->getMessage());
+}
+```
+```output
+UNIQUE constraint failed: users.email
+query: the SQL has 1 placeholder (?), but 0 values were given
+```
+
+<h2>Using SQLite in a web server</h2>
+<p>A database can be opened before calling <a href="function.http-serve.html">http_serve</a> and used in the handler. Each worker process gets its own connection: a connection opened before the workers start is reopened in each worker the first time it's used there, and the <code>PRAGMA</code> statements it ran are run again, since settings such as <code>synchronous</code> belong to the connection rather than the file. A <code>sqlite::memory:</code> database isn't shared between workers.</p>
+<p>The workers can read at the same time, but SQLite lets one write at a time. A statement waits up to 5 seconds for another process's write to finish before throwing <code>DatabaseException</code> (<code>database is locked</code>). For a server, switch the database to write-ahead logging, which lets reads go on while a write happens, and stop waiting for the disk after every commit:</p>
+<pre class="code">Database db = Database::open("sqlite:app.db");
+db->executeScript("pragma journal_mode = wal; pragma synchronous = normal;");
+http_serve(":8080", function(Request r, ResponseWriter w): void {
+    db->execute("insert into visits (path) values (?)", r->path);
+    w->write("hello\n");
+});</pre>
+<p>With these two settings, a handler that inserts a row and reads one served about 28,000 requests a second with 4 workers on a laptop; without them, about 600, because each commit waited for the disk. <code>synchronous = normal</code> still never corrupts the database, but a power cut can lose the last commits.</p>
+"""
+
+ROW_CLASS = """<h1>The Row class</h1>
+<p>One row of a query's result, from <a href="class.database.html">Database</a>'s <code>query</code> and <code>queryOne</code>. Read each column by name with the getter for its type. A getter throws <code>DatabaseException</code> when the column doesn't exist or holds another type, rather than converting the value, so a mistake shows up where it is.</p>
+<h2>Class synopsis</h2>
+<div class="synopsis"><code><span class="kw">final class</span> <span class="cls">Row</span> {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">getInt</span>(<span class="type">string</span> column): <span class="type">int</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">getDouble</span>(<span class="type">string</span> column): <span class="type">double</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">getBool</span>(<span class="type">string</span> column): <span class="type">bool</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">getString</span>(<span class="type">string</span> column): <span class="type">string</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">getBytes</span>(<span class="type">string</span> column): <span class="type">byte[]</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">getIntOr</span>(<span class="type">string</span> column, <span class="type">int</span> fallback): <span class="type">int</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">getDoubleOr</span>(<span class="type">string</span> column, <span class="type">double</span> fallback): <span class="type">double</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">getBoolOr</span>(<span class="type">string</span> column, <span class="type">bool</span> fallback): <span class="type">bool</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">isNull</span>(<span class="type">string</span> column): <span class="type">bool</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">columns</span>(): <span class="type">string[]</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">toMap</span>(): <span class="type">map[string, string]</span><br>
+}</code></div>
+
+<h2>Methods</h2>
+<table>
+<thead><tr><th>Method</th><th>Reads</th><th>When the column is NULL</th></tr></thead>
+<tbody>
+<tr><td><code>getInt(column)</code></td><td>An <code>INTEGER</code></td><td>Throws</td></tr>
+<tr><td><code>getDouble(column)</code></td><td>A <code>REAL</code>, or an <code>INTEGER</code> as a double (<code>SUM</code> and <code>AVG</code> can give either)</td><td>Throws</td></tr>
+<tr><td><code>getBool(column)</code></td><td>An <code>INTEGER</code> that is 0 or 1, as SQLite stores booleans</td><td>Throws</td></tr>
+<tr><td><code>getString(column)</code></td><td><code>TEXT</code></td><td>Returns <code>null</code>, so <code>?? ""</code> gives a default</td></tr>
+<tr><td><code>getBytes(column)</code></td><td>A <code>BLOB</code>, or text that isn't valid UTF-8</td><td>Returns <code>null</code></td></tr>
+<tr><td><code>getIntOr</code>, <code>getDoubleOr</code>, <code>getBoolOr(column, fallback)</code></td><td>The same as the getter</td><td>Returns <code>fallback</code></td></tr>
+<tr><td><code>isNull(column)</code></td><td colspan="2">Whether the column is NULL</td></tr>
+<tr><td><code>columns()</code></td><td colspan="2">The column names, in the order the query gives them</td></tr>
+<tr><td><code>toMap()</code></td><td colspan="2">The row as text, for printing and debugging: each value written as <code>print</code> writes it, NULL as <code>null</code>, and a blob as its size</td></tr>
+</tbody>
+</table>
+<p>Column names are what the query calls them: a table's column name, or the name given with <code>AS</code>. Name computed columns, as in <code>select count(*) as n</code>; without <code>AS</code>, the name is the expression's text, <code>count(*)</code>. When two columns have the same name, as <code>id</code> often does in a join, the getters read the first; rename the others with <code>AS</code>.</p>
+<p>SQLite stores each value with its own type, whatever the column was declared as, so the getter follows the value: an <code>INTEGER</code> column that was given <code>"12"</code> holds text, which <code>getString</code> reads.</p>
+
+<h2>Example</h2>
+```qiq
+Database db = Database::open("sqlite::memory:");
+db->execute("create table items (name text, price real, stock integer, note text, active integer)");
+db->execute("insert into items values (?, ?, ?, ?, ?)", "pen", 1.5, 10, null, true);
+db->execute("insert into items values (?, ?, ?, ?, ?)", "ink", 7.25, null, "refill", false);
+
+foreach (db->query("select * from items order by name") as row) {
+    print(row->getString("name"), row->getDouble("price"), row->getIntOr("stock", 0), row->getString("note") ?? "-", row->getBool("active"));
+}
+Row totals = db->queryOne("select count(*) as n, sum(price) as total from items");
+print(totals->getInt("n"), totals->getDouble("total"), totals->toMap());
+
+Row ink = db->queryOne("select * from items where name = ?", "ink");
+try {
+    print(ink->getInt("stock"));
+} catch (DatabaseException e) {
+    print(e->getMessage());
+}
+```
+```output
+ink 7.25 0 refill 0
+pen 1.5 10 - 1
+2 8.75 {"n" => "2", "total" => "8.75"}
+column 'stock' is NULL; check with isNull first, or read it with a fallback, as getIntOr("stock", fallback)
+```
+"""
+
 # Pages for standard library classes: (href, title, summary, html).
 CLASS_PAGES = [
     ("class.file.html", "The File class", "Reading and writing files a line or a chunk at a time, including standard input and output.", FILE_CLASS),
@@ -2351,5 +2549,7 @@ CLASS_PAGES = [
     ("class.responsewriter.html", "The ResponseWriter class", "Builds the HTTP server's response to a request.", RESPONSEWRITER_CLASS),
     ("class.router.html", "The Router class", "Sends each HTTP request to a handler by method and path.", ROUTER_CLASS),
     ("class.socket.html", "The Socket class", "TCP connections, optionally encrypted with TLS, for talking to network services.", SOCKET_CLASS),
+    ("class.database.html", "The Database class", "SQL databases (SQLite): running statements with values for their placeholders, queries, and transactions.", DATABASE_CLASS),
+    ("class.row.html", "The Row class", "One row of a query's result, read by column name with typed getters.", ROW_CLASS),
     ("exception-classes.html", "Exception classes", "The exception classes thrown by the language and the standard library.", EXCEPTION_CLASSES),
 ]

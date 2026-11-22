@@ -95,6 +95,9 @@ enum TokenKind {
     LeftBracket,
     RightBracket,
     Arrow,
+    /// `...`, which ends the parameters of a standard library method that
+    /// takes query parameters (see Function::binds_values).
+    Ellipsis,
     End,
 }
 
@@ -377,6 +380,11 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
                     cursor += 1;
                     column += 1;
                     TokenKind::GreaterEqual
+                }
+                '.' if chars.get(cursor) == Some(&'.') && chars.get(cursor + 1) == Some(&'.') => {
+                    cursor += 2;
+                    column += 2;
+                    TokenKind::Ellipsis
                 }
                 '<' => TokenKind::Less,
                 '>' => TokenKind::Greater,
@@ -727,6 +735,12 @@ struct Function {
     symbol: String,
     /// Declared with `extern function`: implemented in the C runtime, no body.
     is_extern: bool,
+    /// Declared with a final `...` (standard library only): a call can pass
+    /// any number of extra values (int, double, bool, byte, string, char,
+    /// byte[], or null) after the parameters, such as the values for a SQL
+    /// query's `?` placeholders. They are handed to the C runtime with
+    /// qiq_bind_values just before the call, which takes them from there.
+    binds_values: bool,
     /// Where the function's name is (for an anonymous function, `function`
     /// or `fn`), for errors about the function as a whole.
     line: usize,
@@ -1334,8 +1348,20 @@ impl Parser {
         let mut parameters = Vec::new();
         self.promoted.clear();
         let is_constructor = owner_class.is_some() && name == "__construct";
+        let mut binds_values = false;
         if !matches!(self.current().kind, TokenKind::RightParen) {
             loop {
+                if matches!(self.current().kind, TokenKind::Ellipsis) {
+                    if !self.allow_extern || owner_class.is_none() || is_abstract || is_constructor {
+                        return Err(self.error("'...' parameters are only for standard library methods"));
+                    }
+                    self.advance();
+                    binds_values = true;
+                    if !matches!(self.current().kind, TokenKind::RightParen) {
+                        return Err(self.error("'...' must be the last parameter"));
+                    }
+                    break;
+                }
                 // `public`, `protected`, `private`, and `readonly` make a
                 // constructor parameter a property too.
                 let (modifier_line, modifier_column) = (self.current().line, self.current().column);
@@ -1446,6 +1472,7 @@ impl Parser {
             module: self.module,
             symbol: name_for_symbol,
             is_extern: false,
+            binds_values,
             line,
             column,
         })
@@ -3134,7 +3161,7 @@ struct FinallyContext {
 
 /// Exception classes the runtime raises, indexed by QiqExceptionKind in
 /// stdlib/runtime/qiq_runtime.h; keep the two lists in the same order.
-const RUNTIME_EXCEPTION_CLASSES: [&str; 12] = [
+const RUNTIME_EXCEPTION_CLASSES: [&str; 13] = [
     "RuntimeException",
     "ArithmeticException",
     "DivisionByZeroException",
@@ -3147,6 +3174,7 @@ const RUNTIME_EXCEPTION_CLASSES: [&str; 12] = [
     "OutOfRangeException",
     "JsonException",
     "NetworkException",
+    "DatabaseException",
 ];
 
 /// Where `break` and `continue` go. Loops have both; a switch only has a
@@ -3518,7 +3546,7 @@ impl Emitter {
             ir.push_str(&self.emit_dispatch_table(*owner, method_name, Some(supplied)));
         }
         ir.push_str(
-            "\ndeclare i32 @printf(ptr, ...)\ndeclare i32 @strcmp(ptr, ptr)\ndeclare ptr @calloc(i64, i64)\ndeclare ptr @qiq_map_new(i32, i32)\ndeclare void @qiq_retain(ptr)\ndeclare void @qiq_release(ptr)\ndeclare ptr @qiq_object_new(i64, i64)\ndeclare void @qiq_map_set(ptr, i64, i64)\ndeclare i64 @qiq_map_get(ptr, i64)\ndeclare i64 @qiq_map_iteration_end(ptr)\ndeclare i64 @qiq_map_version(ptr)\ndeclare zeroext i1 @qiq_map_entry_live(ptr, i64, i64)\ndeclare zeroext i1 @qiq_map_find(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_map_has(ptr, i64)\ndeclare void @qiq_map_remove(ptr, i64)\ndeclare ptr @qiq_map_keys(ptr, i64, i32)\ndeclare ptr @qiq_map_values(ptr, i64, i32)\ndeclare zeroext i1 @qiq_map_contains_value(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_values_equal(ptr, ptr, ptr)\ndeclare i64 @qiq_map_key_at(ptr, i64)\ndeclare i64 @qiq_map_value_at(ptr, i64)\ndeclare i64 @qiq_string_len(ptr)\ndeclare ptr @qiq_sprintf(ptr, ptr, ptr, i64)\ndeclare ptr @qiq_json_encode(ptr, i64, i1 zeroext)\ndeclare i64 @qiq_json_decode(ptr, ptr)\ndeclare i32 @qiq_string_equality(ptr, ptr)\ndeclare i32 @qiq_string_compare(ptr, ptr)\ndeclare ptr @qiq_string_char_at(ptr, i64)\ndeclare ptr @qiq_string_concat(ptr, ptr)\ndeclare i64 @qiq_int_divide(i64, i64)\ndeclare i64 @qiq_int_modulo(i64, i64)\ndeclare i64 @qiq_int_power(i64, i64)\ndeclare i64 @qiq_int_shift_left(i64, i64)\ndeclare i64 @qiq_int_shift_right(i64, i64)\ndeclare double @llvm.pow.f64(double, double)\ndeclare void @qiq_uncaught(ptr, ptr)\ndeclare ptr @qiq_array_new(i64, i64, i32)\ndeclare void @qiq_set_arguments(i32, ptr)\ndeclare void @qiq_check_callable(ptr)\ndeclare void @qiq_array_push(ptr, i64, i64)\ndeclare i64 @qiq_range_plan(i64, i64, i64, i1 zeroext, ptr)\ndeclare ptr @qiq_range_int(i64, i64, i64, i1 zeroext)\ndeclare ptr @qiq_range_count(i64)\ndeclare ptr @qiq_range_double(double, double, double, i1 zeroext)\ndeclare ptr @qiq_range_char(ptr, ptr, i64, i1 zeroext)\ndeclare i64 @qiq_array_pop(ptr, i64)\ndeclare i64 @qiq_array_shift(ptr, i64)\ndeclare void @qiq_array_insert(ptr, i64, i64, i64)\ndeclare ptr @qiq_array_splice(ptr, i64, i64, i64, i1 zeroext, ptr)\ndeclare i64 @qiq_array_length(ptr)\ndeclare i64 @qiq_len_string(ptr)\ndeclare i64 @qiq_len_array(ptr)\ndeclare i64 @qiq_len_map(ptr)\ndeclare void @qiq_array_check_index(ptr, i64)\ndeclare void @qiq_print_value(ptr, i64)\ndeclare void @qiq_print_space()\ndeclare void @qiq_print_newline()\ndeclare i64 @qiq_double_to_int(double)\ndeclare zeroext i8 @qiq_int_to_byte(i64)\ndeclare i64 @qiq_string_to_int(ptr)\ndeclare double @qiq_string_to_double(ptr)\ndeclare ptr @qiq_int_to_string(i64)\ndeclare ptr @qiq_double_to_string(double)\n",
+            "\ndeclare i32 @printf(ptr, ...)\ndeclare i32 @strcmp(ptr, ptr)\ndeclare ptr @calloc(i64, i64)\ndeclare ptr @qiq_map_new(i32, i32)\ndeclare void @qiq_retain(ptr)\ndeclare void @qiq_release(ptr)\ndeclare ptr @qiq_object_new(i64, i64)\ndeclare void @qiq_map_set(ptr, i64, i64)\ndeclare i64 @qiq_map_get(ptr, i64)\ndeclare i64 @qiq_map_iteration_end(ptr)\ndeclare i64 @qiq_map_version(ptr)\ndeclare zeroext i1 @qiq_map_entry_live(ptr, i64, i64)\ndeclare zeroext i1 @qiq_map_find(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_map_has(ptr, i64)\ndeclare void @qiq_map_remove(ptr, i64)\ndeclare ptr @qiq_map_keys(ptr, i64, i32)\ndeclare ptr @qiq_map_values(ptr, i64, i32)\ndeclare zeroext i1 @qiq_map_contains_value(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_values_equal(ptr, ptr, ptr)\ndeclare i64 @qiq_map_key_at(ptr, i64)\ndeclare i64 @qiq_map_value_at(ptr, i64)\ndeclare i64 @qiq_string_len(ptr)\ndeclare ptr @qiq_sprintf(ptr, ptr, ptr, i64)\ndeclare void @qiq_bind_values(ptr, ptr, i64)\ndeclare ptr @qiq_json_encode(ptr, i64, i1 zeroext)\ndeclare i64 @qiq_json_decode(ptr, ptr)\ndeclare i32 @qiq_string_equality(ptr, ptr)\ndeclare i32 @qiq_string_compare(ptr, ptr)\ndeclare ptr @qiq_string_char_at(ptr, i64)\ndeclare ptr @qiq_string_concat(ptr, ptr)\ndeclare i64 @qiq_int_divide(i64, i64)\ndeclare i64 @qiq_int_modulo(i64, i64)\ndeclare i64 @qiq_int_power(i64, i64)\ndeclare i64 @qiq_int_shift_left(i64, i64)\ndeclare i64 @qiq_int_shift_right(i64, i64)\ndeclare double @llvm.pow.f64(double, double)\ndeclare void @qiq_uncaught(ptr, ptr)\ndeclare ptr @qiq_array_new(i64, i64, i32)\ndeclare void @qiq_set_arguments(i32, ptr)\ndeclare void @qiq_check_callable(ptr)\ndeclare void @qiq_array_push(ptr, i64, i64)\ndeclare i64 @qiq_range_plan(i64, i64, i64, i1 zeroext, ptr)\ndeclare ptr @qiq_range_int(i64, i64, i64, i1 zeroext)\ndeclare ptr @qiq_range_count(i64)\ndeclare ptr @qiq_range_double(double, double, double, i1 zeroext)\ndeclare ptr @qiq_range_char(ptr, ptr, i64, i1 zeroext)\ndeclare i64 @qiq_array_pop(ptr, i64)\ndeclare i64 @qiq_array_shift(ptr, i64)\ndeclare void @qiq_array_insert(ptr, i64, i64, i64)\ndeclare ptr @qiq_array_splice(ptr, i64, i64, i64, i1 zeroext, ptr)\ndeclare i64 @qiq_array_length(ptr)\ndeclare i64 @qiq_len_string(ptr)\ndeclare i64 @qiq_len_array(ptr)\ndeclare i64 @qiq_len_map(ptr)\ndeclare void @qiq_array_check_index(ptr, i64)\ndeclare void @qiq_print_value(ptr, i64)\ndeclare void @qiq_print_space()\ndeclare void @qiq_print_newline()\ndeclare i64 @qiq_double_to_int(double)\ndeclare zeroext i8 @qiq_int_to_byte(i64)\ndeclare i64 @qiq_string_to_int(ptr)\ndeclare double @qiq_string_to_double(ptr)\ndeclare ptr @qiq_int_to_string(i64)\ndeclare ptr @qiq_double_to_string(double)\n",
         );
         ir.push_str(&extern_declarations);
         ir.push('\n');
@@ -6395,6 +6423,61 @@ impl Emitter {
         }))
     }
 
+    /// The values after a `...` method's parameters (see
+    /// Function::binds_values): evaluated in order, then handed to the
+    /// runtime in one call, as sprintf's are, so a query in one of them can't
+    /// replace them. Always made, even with no values, so the method never
+    /// sees values left from a call that threw before it ran.
+    fn emit_bind_values(
+        &mut self,
+        method_name: &str,
+        values: &[Expr],
+        variables: &HashMap<String, Value>,
+        body: &mut String,
+    ) -> Result<(), String> {
+        let mut types = String::new();
+        let mut payloads = Vec::new();
+        for (index, expression) in values.iter().enumerate() {
+            if matches!(expression, Expr::NamedArgument(..)) {
+                return Err(format!("{method_name}: the values for the query's placeholders can't be named arguments"));
+            }
+            let value = self.emit_expression(expression, variables, body)?;
+            let code = match value.value_type {
+                ValueType::Int => 'i',
+                ValueType::Double => 'd',
+                ValueType::Bool => 'b',
+                ValueType::Byte => 'y',
+                ValueType::String | ValueType::Char => 's',
+                ValueType::Null => 'n',
+                other if self.element_of(other) == Some(ValueType::Byte) => 'a',
+                other => {
+                    return Err(format!(
+                        "{method_name}: value {} for the query must be an int, double, bool, byte, string, char, byte[], or null, found {}",
+                        index + 1,
+                        self.type_name(other)
+                    ))
+                }
+            };
+            types.push(code);
+            payloads.push(if code == 'n' { "0".to_string() } else { self.encode_payload(&value, body)? });
+        }
+        let slots = payloads.len().max(1);
+        let array = self.new_register();
+        self.entry_allocas.push_str(&format!("  {array} = alloca [{slots} x i64], align 8\n"));
+        for (index, payload) in payloads.iter().enumerate() {
+            let address = self.new_register();
+            body.push_str(&format!(
+                "  {address} = getelementptr inbounds [{slots} x i64], ptr {array}, i64 0, i64 {index}\n  store i64 {payload}, ptr {address}, align 8\n"
+            ));
+        }
+        let descriptor = self.string_literal(types.as_bytes());
+        body.push_str(&format!(
+            "  call void @qiq_bind_values(ptr {descriptor}, ptr {array}, i64 {})\n",
+            payloads.len()
+        ));
+        Ok(())
+    }
+
     /// `left ?? right`. The result goes through a stack slot holding one
     /// reference (for reference types), filled on whichever path runs.
     fn emit_coalesce(
@@ -6847,6 +6930,7 @@ impl Emitter {
             module: self.current_module as u32,
             symbol: symbol.clone(),
             is_extern: false,
+            binds_values: false,
             line: closure.line,
             column: closure.column,
         };
@@ -7959,18 +8043,50 @@ impl Emitter {
     }
 
     /// Whether a value of this type can be part of a reference cycle: an
-    /// object, or an array or map that can (eventually) hold one.
+    /// object that can (see class_may_cycle), a function, or an array or map
+    /// that can hold one. Only these are tracked by the cycle collector, so a
+    /// type that can't saves it the work.
     fn may_cycle(&self, value_type: ValueType) -> bool {
+        self.may_cycle_within(value_type, &mut Vec::new())
+    }
+
+    fn may_cycle_within(&self, value_type: ValueType, visiting: &mut Vec<u32>) -> bool {
         match value_type {
             // A function value holds its captured variables, which can refer back to it.
-            ValueType::Class(_) | ValueType::Function(_) => true,
-            ValueType::Array(_) => self.element_of(value_type).is_some_and(|element| self.may_cycle(element)),
+            ValueType::Function(_) => true,
+            ValueType::Class(class_id) => self.class_may_cycle(class_id, visiting),
+            ValueType::Array(_) => self
+                .element_of(value_type)
+                .is_some_and(|element| self.may_cycle_within(element, visiting)),
             ValueType::Map(type_id) => self
                 .map_types
                 .get(type_id as usize)
-                .is_some_and(|map| self.may_cycle(map.value_type)),
+                .is_some_and(|map| self.may_cycle_within(map.value_type, visiting)),
             _ => false,
         }
+    }
+
+    /// Whether an object of this class can be part of a reference cycle.
+    /// The whole program is known, so a class no other class extends (and
+    /// that isn't an interface) holds exactly its own fields: it can't be in
+    /// a cycle when none of them can, as with an object holding only
+    /// strings, numbers, and arrays of them, or other such objects. A class
+    /// that can reach itself through its fields (`visiting`) can.
+    fn class_may_cycle(&self, class_id: u32, visiting: &mut Vec<u32>) -> bool {
+        let Some(class) = self.classes.get(class_id as usize) else { return true };
+        if class.is_interface || visiting.contains(&class_id) {
+            return true;
+        }
+        if self.classes.iter().any(|other| other.parent_class == Some(class_id)) {
+            return true;
+        }
+        visiting.push(class_id);
+        let result = self
+            .class_field_types(class_id)
+            .into_iter()
+            .any(|field| self.may_cycle_within(field, visiting));
+        visiting.pop();
+        result
     }
 
     /// The runtime flags for an array's elements or a map's values of this
@@ -8391,6 +8507,17 @@ impl Emitter {
                         owner_class.name, owner_class.name
                     ));
                 }
+                let binds_values = owner_class
+                    .methods
+                    .iter()
+                    .any(|method| method.name == *method_name && method.binds_values);
+                // Values after the parameters of a `...` method are handed to
+                // the runtime separately (see Function::binds_values).
+                let (arguments, values) = if binds_values && arguments.len() > parameters.len() {
+                    arguments.split_at(parameters.len())
+                } else {
+                    (&arguments[..], &[][..])
+                };
                 let callee_name = format!("method '{method_name}'");
                 let resolved = Self::resolve_arguments(&parameters, arguments, &callee_name)?;
                 // An abstract method (declared by an interface or abstract class),
@@ -8441,6 +8568,9 @@ impl Emitter {
                     variables,
                     body,
                 )?);
+                if binds_values {
+                    self.emit_bind_values(method_name, values, variables, body)?;
+                }
                 let operands = operands.join(", ");
                 let result = if return_type == ValueType::Void {
                     body.push_str(&format!("  call void {callee}({operands})\n"));
@@ -10268,6 +10398,7 @@ const STDLIB_MODULES: &[(&str, Option<&str>, &str)] = &[
     ("http.qiq", Some("std/http"), include_str!("../stdlib/http.qiq")),
     ("server.qiq", Some("std/http/server"), include_str!("../stdlib/server.qiq")),
     ("crypto.qiq", Some("std/crypto"), include_str!("../stdlib/crypto.qiq")),
+    ("sql.qiq", Some("std/sql"), include_str!("../stdlib/sql.qiq")),
 ];
 
 /// The prefix of standard library import paths.
@@ -11286,7 +11417,7 @@ mod tests {
 
     #[test]
     fn arrays_and_maps_record_whether_they_can_be_in_cycles() {
-        let ir = compile_source("class Node {} int[] a = [1]; string[] b = [\"x\"]; Node[] c = [new Node()]; Node[][] d = [[new Node()]]; map[string, Node] e = {}; map[string, string[]] f = {};").unwrap();
+        let ir = compile_source("class Node { public Node next; } int[] a = [1]; string[] b = [\"x\"]; Node[] c = [new Node()]; Node[][] d = [[new Node()]]; map[string, Node] e = {}; map[string, string[]] f = {};").unwrap();
         assert!(ir.contains("@qiq_array_new(i64 1, i64 8, i32 0)"), "{ir}");
         assert!(ir.contains("@qiq_array_new(i64 1, i64 8, i32 1)"), "{ir}");
         assert_eq!(ir.matches("@qiq_array_new(i64 1, i64 8, i32 5)").count(), 3, "{ir}");
@@ -11619,6 +11750,40 @@ mod tests {
         }
         // A function named fn still works: only `fn(...) =>` is an arrow function.
         assert!(compile_source("function fn(int x): int { return x; } int y = fn(2);").is_ok());
+    }
+
+    #[test]
+    fn query_values_and_acyclic_classes() {
+        // Values after a `...` method's parameters go to the runtime in one
+        // call before the method runs: here an int, a string, and a null.
+        let ir = compile_source("import Database from \"std/sql\"; Database db = Database::open(\"sqlite::memory:\"); int n = db->execute(\"select ?, ?, ?\", 1, \"a\", null);").unwrap();
+        assert!(main_ir(&ir).contains("call void @qiq_bind_values(ptr"), "{ir}");
+        assert!(ir.contains("c\"isn\\00\""), "{ir}");
+        for (source, error) in [
+            ("import Database from \"std/sql\"; Database db = Database::open(\"x\"); db->execute(\"select ?\", [1, 2]);", "value 1 for the query must be an int, double, bool, byte, string, char, byte[], or null, found int[]"),
+            ("class A { function f(string s, ...): void {} }", "'...' parameters are only for standard library methods"),
+        ] {
+            let message = compile_source(source).unwrap_err();
+            assert!(message.contains(error), "{source}: {message}");
+        }
+        // A class nothing extends whose fields can't reach an object isn't
+        // tracked for cycles, nor is one holding such objects; one that can
+        // reach itself, or that is extended, is.
+        let ir = compile_source("class Leaf { public string s; public int[] n; } class Holder { public Leaf leaf; public Leaf[] leaves; } class Node { public Node next; } class Base { public string s; } class Sub extends Base {} Holder h = new Holder(); Node n = new Node(); Base b = new Sub();").unwrap();
+        // The field mask of a class: '2' for a field that can be part of a
+        // cycle, '1' for another reference, '0' for the rest.
+        let mask = |name: &str| -> String {
+            let declaration = ir
+                .lines()
+                .find(|line| line.starts_with("@.class.name") && line.contains(&format!("c\"{name}\\00\"")))
+                .unwrap();
+            let index = &declaration["@.class.name".len()..declaration.find(' ').unwrap()];
+            let line = ir.lines().find(|line| line.starts_with(&format!("@.class.fields{index} "))).unwrap();
+            line.split("c\"").nth(1).unwrap().split('\\').next().unwrap().to_string()
+        };
+        assert_eq!(mask("Leaf"), "11", "{ir}");
+        assert_eq!(mask("Holder"), "11", "{ir}");
+        assert_eq!(mask("Node"), "2", "{ir}");
     }
 
     #[test]

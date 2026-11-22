@@ -22,6 +22,7 @@ typedef enum {
     QIQ_OUT_OF_RANGE_EXCEPTION = 9,
     QIQ_JSON_EXCEPTION = 10,
     QIQ_NETWORK_EXCEPTION = 11,
+    QIQ_DATABASE_EXCEPTION = 12,
 } QiqExceptionKind;
 
 // Raises a qiq exception of `kind` and abandons the current runtime call: the
@@ -41,6 +42,10 @@ _Noreturn void qiq_fatal(const char *message);
 // Several times faster than musl's snprintf("%lld").
 #define QIQ_INT_TEXT_SIZE 21
 int qiq_format_int(char *buffer, int64_t value);
+
+// Whether `length` bytes are UTF-8 text a qiq string can hold: valid, and
+// without NUL bytes (crypto.c).
+bool qiq_is_utf8_text(const unsigned char *bytes, size_t length);
 
 // ---------------------------------------------------------------------------
 // Memory (memory.c). Every value a qiq program can hold a reference to (a
@@ -78,7 +83,8 @@ _Static_assert(sizeof(QiqHeader) == 16, "QiqHeader must stay 16 bytes");
 #define QIQ_KEYS_ARE_REFERENCES 1u
 #define QIQ_VALUES_ARE_REFERENCES 2u
 // The value can be part of a reference cycle: an object with a field that
-// can hold an object, or an array (elements) or map (values) whose type can.
+// can be part of a cycle (the compiler decides, from the whole program), or
+// an array (elements) or map (values) whose type can.
 // Only these are tracked by the cycle collector.
 #define QIQ_MAY_CYCLE 4u
 // The cycle collector's state, in the upper bits of the flags.

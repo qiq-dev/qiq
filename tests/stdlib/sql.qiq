@@ -1,0 +1,46 @@
+// std/sql: SQLite through Database and Row: placeholders, typed getters, NULLs, errors, and transactions.
+import Database, Row from "std/sql";
+
+Database db = Database::open("sqlite::memory:");
+db->executeScript("create table users (id integer primary key, name text not null, email text unique, age integer, score real, active integer, avatar blob);");
+byte[] avatar = [1, 2, 255];
+int changed = db->execute("insert into users (name, email, age, score, active, avatar) values (?, ?, ?, ?, ?, ?)", "Ada", "ada@example.com", 36, 9.5, true, avatar);
+print("inserted", changed, db->lastInsertId());
+string missing = null;
+db->execute("insert into users (name, email, age, score, active) values (?, ?, ?, ?, ?)", "Lin", missing, 41, 7.25, false);
+db->execute("insert into users (name, age) values (?, ?)", "Bob", null);
+foreach (db->query("select * from users where age > ? or age is null order by id", 30) as row) {
+    print(row->getInt("id"), row->getString("name"), row->getString("email") ?? "-", row->getIntOr("age", -1), row->getDoubleOr("score", 0.0), row->getBoolOr("active", false), row->isNull("avatar"));
+}
+Row ada = db->queryOne("select avatar, count(*) as n, avg(age) as mean from users where name = ?", "Ada");
+print(ada->getBytes("avatar"), ada->getInt("n"), ada->getDouble("mean"));
+print(ada->toMap());
+print(db->queryOne("select * from users where name = ?", "Nobody") == null);
+print(db->execute("update users set age = age + 1 where age is not null"));
+print(db->execute("select 1"));
+
+try { db->execute("insert into users (name, email) values (?, ?)", "Ada2", "ada@example.com"); } catch (DatabaseException e) { print("error:", e->getMessage()); }
+try { db->query("select * from users where id = ?"); } catch (DatabaseException e) { print("error:", e->getMessage()); }
+try { db->query("select * from users where id = ?", 1, 2); } catch (DatabaseException e) { print("error:", e->getMessage()); }
+try { db->query("select * from nope"); } catch (DatabaseException e) { print("error:", e->getMessage()); }
+try { db->execute("delete from users; delete from users"); } catch (DatabaseException e) { print("error:", e->getMessage()); }
+try { db->query("select * from users where id = :id", 1); } catch (DatabaseException e) { print("error:", e->getMessage()); }
+Row bob = db->queryOne("select * from users where name = 'Bob'");
+try { bob->getInt("age"); } catch (DatabaseException e) { print("error:", e->getMessage()); }
+try { bob->getInt("name"); } catch (DatabaseException e) { print("error:", e->getMessage()); }
+try { bob->getInt("nope"); } catch (DatabaseException e) { print("error:", e->getMessage()); }
+
+db->transaction(function(): void {
+    db->execute("insert into users (name) values (?)", "Tx1");
+});
+try {
+    db->transaction(function(): void {
+        db->execute("insert into users (name) values (?)", "Tx2");
+        throw new RuntimeException("boom");
+    });
+} catch (RuntimeException e) { print("rolled back:", e->getMessage(), db->inTransaction()); }
+print(db->queryOne("select count(*) as n from users where name like 'Tx%'")->getInt("n"));
+db->close();
+db->close();
+try { db->query("select 1"); } catch (DatabaseException e) { print("error:", e->getMessage()); }
+try { Database::open("postgres://x"); } catch (InvalidArgumentException e) { print("error:", e->getMessage()); }

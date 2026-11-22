@@ -147,6 +147,7 @@ fn link(work: &Path, object: &Path, output: &Path) -> Result<(), String> {
         ("libc.a", embedded::MUSL_LIBC),
         ("crtn.o", embedded::MUSL_CRTN),
         ("libmbedtls.a", embedded::MBEDTLS),
+        ("libsqlite3.a", embedded::SQLITE),
     ] {
         let path = work.join(name);
         std::fs::write(&path, bytes).map_err(|error| format!("could not write {}: {error}", path.display()))?;
@@ -161,7 +162,8 @@ fn link(work: &Path, object: &Path, output: &Path) -> Result<(), String> {
         paths[1].clone(),
         object.display().to_string(),
         // Archives contribute only the members a program uses, so programs
-        // without HTTPS don't grow.
+        // without HTTPS or SQL don't grow.
+        paths[5].clone(),
         paths[4].clone(),
         paths[2].clone(),
         paths[3].clone(),
