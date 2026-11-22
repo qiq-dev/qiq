@@ -273,7 +273,7 @@ fn run_executable(executable: &Path, name: &str, args: impl Iterator<Item = Stri
 const SERVE_PROGRAM: &str = r#"
 import File, is_dir from "std/file";
 import argv, exit from "std/os";
-import http_file_server, http_log, http_serve from "std/http/server";
+import http_file_server, http_log, http_serve from "std/net/http/server";
 
 string[] args = argv();
 string directory = args[1];

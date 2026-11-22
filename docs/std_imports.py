@@ -11,8 +11,8 @@ MODULES = [
     ("memory.qiq", "std/memory"),
     ("program.qiq", "std/os"),
     ("net.qiq", "std/net"),
-    ("http.qiq", "std/http"),
-    ("server.qiq", "std/http/server"),
+    ("http.qiq", "std/net/http"),
+    ("server.qiq", "std/net/http/server"),
     ("crypto.qiq", "std/crypto"),
     ("sql.qiq", "std/sql"),
 ]

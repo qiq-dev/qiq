@@ -3,7 +3,7 @@
 // function(Request, ResponseWriter): void; a Router picks one by method and
 // path.
 //
-//   import Request, ResponseWriter, Router, http_serve from "std/http/server";
+//   import Request, ResponseWriter, Router, http_serve from "std/net/http/server";
 //
 //   Router router = new Router();
 //   router->handle("GET /hello/{name}", function(Request r, ResponseWriter w): void {

@@ -1,8 +1,8 @@
 // The HTTP server's Router, request parsing helpers, and file server,
 // called directly (no sockets). To try a live server:
 //   ./target/release/qiq serve docs/html --port 8000
-import rawurldecode, urldecode from "std/http";
-import http_content_type, http_strip_prefix, Request, ResponseWriter, Router from "std/http/server";
+import rawurldecode, urldecode from "std/net/http";
+import http_content_type, http_strip_prefix, Request, ResponseWriter, Router from "std/net/http/server";
 
 function named(string name): function(Request, ResponseWriter): void {
     return fn(Request r, ResponseWriter w) => w->write(name + " " + json_encode(r->params));

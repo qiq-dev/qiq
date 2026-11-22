@@ -2,7 +2,7 @@
 // top of Socket (stdlib/net.qiq). Functions whose names start with "__"
 // are internal to the standard library.
 //
-//   import Response, http_get from "std/http";
+//   import Response, http_get from "std/net/http";
 //
 //   Response r = http_get("https://api.example.com/items", headers: {"Accept" => "application/json"});
 //   if (r->ok()) { Item[] items = json_decode(r->text()); }

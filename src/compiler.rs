@@ -10332,6 +10332,9 @@ impl<'a> Loader<'a> {
     fn resolve(&mut self, importer: &Path, package: u32, import: &str) -> Result<(PathBuf, u32), String> {
         if import.starts_with(STDLIB_PREFIX) {
             let file = stdlib_file(import).ok_or_else(|| {
+                if let Some((_, now)) = MOVED_STDLIB_MODULES.iter().find(|(old, _)| *old == import) {
+                    return format!("the standard library module \"{import}\" moved to \"{now}\": import from there instead");
+                }
                 let paths: Vec<&str> = STDLIB_MODULES.iter().filter_map(|(_, path, _)| *path).collect();
                 format!("the standard library has no module \"{import}\"; its modules are {}", paths.join(", "))
             })?;
@@ -10726,11 +10729,15 @@ const STDLIB_MODULES: &[(&str, Option<&str>, &str)] = &[
     ("memory.qiq", Some("std/memory"), include_str!("../stdlib/memory.qiq")),
     ("program.qiq", Some("std/os"), include_str!("../stdlib/program.qiq")),
     ("net.qiq", Some("std/net"), include_str!("../stdlib/net.qiq")),
-    ("http.qiq", Some("std/http"), include_str!("../stdlib/http.qiq")),
-    ("server.qiq", Some("std/http/server"), include_str!("../stdlib/server.qiq")),
+    ("http.qiq", Some("std/net/http"), include_str!("../stdlib/http.qiq")),
+    ("server.qiq", Some("std/net/http/server"), include_str!("../stdlib/server.qiq")),
     ("crypto.qiq", Some("std/crypto"), include_str!("../stdlib/crypto.qiq")),
     ("sql.qiq", Some("std/sql"), include_str!("../stdlib/sql.qiq")),
 ];
+
+/// Standard library modules that have moved, as (old path, new path), so
+/// importing from an old path says where the module went.
+const MOVED_STDLIB_MODULES: &[(&str, &str)] = &[("std/http", "std/net/http"), ("std/http/server", "std/net/http/server")];
 
 /// The prefix of standard library import paths.
 const STDLIB_PREFIX: &str = "std/";
@@ -11972,7 +11979,9 @@ mod tests {
     fn standard_library_modules_are_imported() {
         // Names from imported modules are free for programs to use themselves.
         assert!(compile_source("class File {} function time(): int { return 1; } File f = new File(); print(time());").is_ok());
-        assert!(compile_source("import time as now from \"std/time\"; import Router from \"std/http/server\"; print(now()); Router r = new Router();").is_ok());
+        assert!(compile_source("import time as now from \"std/time\"; import Router from \"std/net/http/server\"; print(now()); Router r = new Router();").is_ok());
+        let moved = compile_source("import http_get from \"std/http\";").unwrap_err();
+        assert!(moved.contains("the standard library module \"std/http\" moved to \"std/net/http\""), "{moved}");
         assert_eq!(
             compile_source("print(time());").unwrap_err(),
             "1:1: function 'time' is not declared; it's in the standard library: import time from \"std/time\";"
@@ -12031,13 +12040,13 @@ mod tests {
 
     #[test]
     fn http_and_sockets_are_in_the_standard_library() {
-        let ir = compile_source("import Response, http_get, http_build_query from \"std/http\"; import Socket from \"std/net\"; Response r = http_get(\"https://example.com/\", headers: {\"Accept\" => \"text/html\"}, timeout: 5); string q = http_build_query({\"a\" => \"b c\"}); Socket s = Socket::connect(\"example.com\", 80); s->close();").unwrap();
+        let ir = compile_source("import Response, http_get, http_build_query from \"std/net/http\"; import Socket from \"std/net\"; Response r = http_get(\"https://example.com/\", headers: {\"Accept\" => \"text/html\"}, timeout: 5); string q = http_build_query({\"a\" => \"b c\"}); Socket s = Socket::connect(\"example.com\", 80); s->close();").unwrap();
         assert!(ir.contains("declare i64 @qiq_stdlib___socket_connect(ptr, i64, i1 zeroext, i64)"), "{ir}");
         assert!(ir.contains("define ptr @qiq.stdlib.http."), "{ir}");
         for (source, error) in [
             ("int h = __socket_connect(\"x\", 1, false, 1);", "function '__socket_connect' is not declared"),
             ("import Socket from \"std/net\"; Socket s = new Socket(1);", "cannot access non-public member"),
-            ("import Response, http_get from \"std/http\"; Response r = http_get(5);", "argument type mismatch calling 'http_get'"),
+            ("import Response, http_get from \"std/net/http\"; Response r = http_get(5);", "argument type mismatch calling 'http_get'"),
         ] {
             let message = compile_source(source).unwrap_err();
             assert!(message.contains(error), "{source}: {message}");
