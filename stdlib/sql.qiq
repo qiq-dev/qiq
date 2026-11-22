@@ -99,6 +99,11 @@ final class Row {
         return this->result->columns;
     }
 
+    // Whether the result has a column named `column`.
+    function has(string column): bool {
+        return map_key_exists(column, this->result->positions);
+    }
+
     // Whether the column is NULL.
     function isNull(string column): bool {
         return this->result->kinds[this->cell(column)] == 5;

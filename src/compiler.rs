@@ -3271,6 +3271,12 @@ struct Emitter {
     /// Instructions placed at the top of the current function's entry block:
     /// variable slot allocations, so a slot declared inside a loop is allocated once.
     entry_allocas: String,
+    /// The type the result of the method call being emitted is used as, for
+    /// Database::queryAs and queryOneAs (see emit_query_as).
+    call_expectation: Option<ValueType>,
+    /// Functions made for queryAs and queryOneAs: (class, whether it reads
+    /// all the rows, symbol).
+    row_readers: Vec<(u32, bool, String)>,
 }
 
 /// Built-in conversion functions (see Emitter::emit_conversion).
@@ -3361,6 +3367,8 @@ impl Emitter {
             instanceof_tables: Vec::new(),
             adapter_tables: Vec::new(),
             entry_allocas: String::new(),
+            call_expectation: None,
+            row_readers: Vec::new(),
         }
     }
 
@@ -6423,6 +6431,223 @@ impl Emitter {
         }))
     }
 
+    /// `db->queryAs(sql, ...)` and `db->queryOneAs(sql, ...)`: query (or
+    /// queryOne) with the same arguments, then each row read into an object
+    /// of the class the result is used as (`User[] users = ...`), by a
+    /// function made for the class (see row_reader).
+    fn emit_query_as(
+        &mut self,
+        object: Value,
+        method_name: &str,
+        arguments: &[Expr],
+        expected: Option<ValueType>,
+        variables: &HashMap<String, Value>,
+        body: &mut String,
+    ) -> Result<Value, String> {
+        let many = method_name == "queryAs";
+        let example = if many { "User[] users = db->queryAs(sql, ...);" } else { "User user = db->queryOneAs(sql, ...);" };
+        let class_id = match (many, expected) {
+            (true, Some(value_type)) => match self.element_of(value_type) {
+                Some(ValueType::Class(class_id)) => Some(class_id),
+                _ => None,
+            },
+            (false, Some(ValueType::Class(class_id))) => Some(class_id),
+            _ => None,
+        };
+        let Some(class_id) = class_id else {
+            return Err(match expected {
+                None | Some(ValueType::Void | ValueType::Null) => format!(
+                    "{method_name} needs to know the class to read rows into: use it where the type is known, such as `{example}`"
+                ),
+                Some(value_type) => format!(
+                    "{method_name} reads rows into {}, not {}",
+                    if many { "an array of objects, such as User[]" } else { "an object" },
+                    self.type_name(value_type)
+                ),
+            });
+        };
+        let class = &self.classes[class_id as usize];
+        if class.is_interface || class.is_abstract {
+            return Err(format!(
+                "{method_name} can't create {}, which is {}; read rows into a concrete class",
+                class.name,
+                if class.is_interface { "an interface" } else { "abstract" }
+            ));
+        }
+        let symbol = self.row_reader(class_id, many, method_name)?;
+        let mut scope = variables.clone();
+        scope.insert("#query.database".to_string(), Value { slot: None, ..object });
+        let query = Expr::MethodCall(
+            Box::new(Expr::Variable("#query.database".to_string())),
+            if many { "query" } else { "queryOne" }.to_string(),
+            arguments.to_vec(),
+        );
+        let rows = self.emit_expression(&query, &scope, body)?;
+        let result = self.new_register();
+        body.push_str(&format!("  {result} = call ptr @{symbol}(ptr {})\n", rows.operand));
+        self.emit_exception_check(body);
+        let value_type = if many { self.array_of(ValueType::Class(class_id)) } else { ValueType::Class(class_id) };
+        Ok(self.own(Value { value_type, operand: result, slot: None }))
+    }
+
+    /// The function that reads a Row (or, for queryAs, each Row of an
+    /// array) into objects of `class_id`, made the first time it's needed.
+    /// With a constructor, it passes each parameter the column of the same
+    /// name, read with the getter for its type; a parameter with a default
+    /// gets the default when the column is missing or NULL. Without one, it
+    /// sets each public property the same way, after `new Class()`.
+    fn row_reader(&mut self, class_id: u32, many: bool, method_name: &str) -> Result<String, String> {
+        if let Some((_, _, symbol)) = self.row_readers.iter().find(|(class, all, _)| *class == class_id && *all == many) {
+            return Ok(symbol.clone());
+        }
+        let row_class = self.stdlib_class("Row").ok_or("internal error: std/sql's Row class isn't loaded")?;
+        let class_name = self.classes[class_id as usize].name.clone();
+        let row = || Box::new(Expr::Variable("#row".to_string()));
+        let text = |name: &str| Expr::Text(name.to_string());
+        let statement = |kind: StatementKind| Statement { kind, line: 0, column: 0 };
+        let has = |name: &str| Expr::MethodCall(row(), "has".to_string(), vec![text(name)]);
+        // How to read a column of this type, or why it can't be.
+        let getter = |this: &Self, value_type: ValueType, what: &str| -> Result<(&'static str, Option<&'static str>), String> {
+            Ok(match value_type {
+                ValueType::Int => ("getInt", Some("getIntOr")),
+                ValueType::Double => ("getDouble", Some("getDoubleOr")),
+                ValueType::Bool => ("getBool", Some("getBoolOr")),
+                ValueType::String => ("getString", None),
+                other if this.element_of(other) == Some(ValueType::Byte) => ("getBytes", None),
+                other => {
+                    return Err(format!(
+                        "{method_name} can't read {what} of {class_name}, a {}, from a column: columns give an int, double, bool, string, or byte[]",
+                        this.type_name(other)
+                    ))
+                }
+            })
+        };
+        // The value for a column, with `default` when it's missing or NULL.
+        let read = |name: &str, default: Option<&Expr>, getter: (&str, Option<&str>), into: Expr| -> Vec<Statement> {
+            let (plain, or) = getter;
+            match default {
+                None => vec![],
+                Some(default) => {
+                    let value = match or {
+                        Some(or) => Expr::MethodCall(row(), or.to_string(), vec![text(name), default.clone()]),
+                        None => Expr::Coalesce(
+                            Box::new(Expr::MethodCall(row(), plain.to_string(), vec![text(name)])),
+                            Box::new(default.clone()),
+                        ),
+                    };
+                    let assign = match into {
+                        Expr::Variable(variable) => StatementKind::Assign(variable, value),
+                        Expr::Member(object, property) => StatementKind::AssignMember(*object, property, value),
+                        _ => unreachable!("only variables and properties are filled in"),
+                    };
+                    vec![statement(StatementKind::If { condition: has(name), then_body: vec![statement(assign)], else_body: vec![] })]
+                }
+            }
+        };
+        let object = ValueType::Class(class_id);
+        let mut steps = Vec::new();
+        if let Ok((parameters, ..)) = self.find_method(class_id, "__construct") {
+            let mut arguments = Vec::new();
+            for (index, parameter) in parameters.iter().enumerate() {
+                let how = getter(self, parameter.value_type, &format!("the constructor's parameter '{}'", parameter.name))?;
+                match &parameter.default {
+                    None => arguments.push(Expr::MethodCall(row(), how.0.to_string(), vec![text(&parameter.name)])),
+                    Some(default) => {
+                        let local = format!("#argument{index}");
+                        steps.push(statement(StatementKind::Declare(parameter.value_type, local.clone(), default.clone())));
+                        steps.extend(read(&parameter.name, Some(default), how, Expr::Variable(local.clone())));
+                        arguments.push(Expr::Variable(local));
+                    }
+                }
+            }
+            steps.push(statement(StatementKind::Declare(object, "#object".to_string(), Expr::NewObject(class_id, arguments))));
+        } else {
+            steps.push(statement(StatementKind::Declare(object, "#object".to_string(), Expr::NewObject(class_id, Vec::new()))));
+            for (property, _) in self.class_fields(class_id) {
+                if property.visibility != Visibility::Public {
+                    continue;
+                }
+                let how = getter(self, property.value_type, &format!("the property '{}'", property.name))?;
+                let target = Expr::Member(Box::new(Expr::Variable("#object".to_string())), property.name.clone());
+                match &property.default {
+                    None => steps.push(statement(StatementKind::AssignMember(
+                        Expr::Variable("#object".to_string()),
+                        property.name.clone(),
+                        Expr::MethodCall(row(), how.0.to_string(), vec![text(&property.name)]),
+                    ))),
+                    Some(default) => steps.extend(read(&property.name, Some(default), how, target)),
+                }
+            }
+        }
+        let row_type = ValueType::Class(row_class);
+        let (parameter, return_type, statements) = if many {
+            let rows_type = self.array_of(row_type);
+            let result_type = self.array_of(object);
+            steps.push(statement(StatementKind::AssignIndex(
+                Expr::Variable("#result".to_string()),
+                Expr::Variable("#index".to_string()),
+                Expr::Variable("#object".to_string()),
+            )));
+            let statements = vec![
+                statement(StatementKind::Declare(
+                    result_type,
+                    "#result".to_string(),
+                    Expr::NewArray(object, Box::new(Expr::Call("len".to_string(), vec![Expr::Variable("#rows".to_string())]))),
+                )),
+                statement(StatementKind::Foreach {
+                    iterable: Expr::Variable("#rows".to_string()),
+                    key_name: Some("#index".to_string()),
+                    value_name: "#row".to_string(),
+                    body: steps,
+                }),
+                statement(StatementKind::Return(Some(Expr::Variable("#result".to_string())))),
+            ];
+            (Parameter { value_type: rows_type, name: "#rows".to_string(), default: None }, result_type, statements)
+        } else {
+            let mut statements = vec![statement(StatementKind::If {
+                condition: Expr::Compare(CompareOp::Equal, row(), Box::new(Expr::Null)),
+                then_body: vec![statement(StatementKind::Return(Some(Expr::Null)))],
+                else_body: vec![],
+            })];
+            statements.extend(steps);
+            statements.push(statement(StatementKind::Return(Some(Expr::Variable("#object".to_string())))));
+            (Parameter { value_type: row_type, name: "#row".to_string(), default: None }, object, statements)
+        };
+        let symbol = format!(
+            "qiq.{}.{}",
+            if many { "rows_to" } else { "row_to" },
+            self.classes[class_id as usize].symbol
+        );
+        let function = Function {
+            name: "#reader".to_string(),
+            parameters: vec![parameter],
+            return_type,
+            body: statements,
+            visibility: Visibility::Public,
+            is_abstract: false,
+            is_final: false,
+            is_static: false,
+            returns_static: false,
+            module: self.current_module as u32,
+            symbol: symbol.clone(),
+            is_extern: false,
+            binds_values: false,
+            line: 0,
+            column: 0,
+        };
+        let saved = self.save_function_state();
+        let emitted = self.emit_function(&function, None);
+        self.restore_function_state(saved);
+        let ir = emitted.map_err(|error| {
+            let message = error.trim_start_matches("0:0: ").trim_start_matches("function '#reader': ");
+            format!("{method_name} into {class_name}: {message}")
+        })?;
+        self.closure_functions.push_str(&ir);
+        self.closure_functions.push('\n');
+        self.row_readers.push((class_id, many, symbol.clone()));
+        Ok(symbol)
+    }
+
     /// The values after a `...` method's parameters (see
     /// Function::binds_values): evaluated in order, then handed to the
     /// runtime in one call, as sprintf's are, so a query in one of them can't
@@ -7525,6 +7750,13 @@ impl Emitter {
             Expr::ArrayLiteral(elements) => self.emit_array_literal(elements, expected, variables, body),
             Expr::MapLiteral(entries) => self.emit_map_literal(entries, expected, variables, body),
             Expr::Closure(closure) => self.emit_closure(closure, expected, variables, body),
+            // Database::queryAs reads rows into the type its result is used as.
+            Expr::MethodCall(_, name, _) if matches!(name.as_str(), "queryAs" | "queryOneAs") => {
+                self.call_expectation = expected;
+                let result = self.emit_expression(expression, variables, body);
+                self.call_expectation = None;
+                result
+            }
             // json_decode decodes into the type its result is used as.
             Expr::Call(name, arguments) if name == "json_decode" && expected.is_some_and(|expected| !matches!(expected, ValueType::Void | ValueType::Null)) => {
                 self.emit_json_decode(arguments, expected.expect("checked above"), variables, body)
@@ -8470,12 +8702,17 @@ impl Emitter {
                 Ok(if borrow { value } else { self.retained(value, body) })
             }
             Expr::MethodCall(object_expression, method_name, arguments) => {
+                // Only this call, not the ones in its receiver or arguments.
+                let expectation = self.call_expectation.take();
                 let object = self.emit_expression(object_expression, variables, body)?;
                 let class_id = match object.value_type {
                     ValueType::Class(class_id) => class_id,
                     _ => return Err("method call requires a class instance".to_string()),
                 };
                 self.emit_null_check(&object, object_expression, &format!("cannot call method '{method_name}' on null"), body);
+                if matches!(method_name.as_str(), "queryAs" | "queryOneAs") && self.stdlib_class("Database") == Some(class_id) {
+                    return self.emit_query_as(object, method_name, arguments, expectation, variables, body);
+                }
                 let found = self.find_method(class_id, method_name);
                 if found.is_err() {
                     // `object->callback(x)` with a property holding a function.
@@ -11750,6 +11987,27 @@ mod tests {
         }
         // A function named fn still works: only `fn(...) =>` is an arrow function.
         assert!(compile_source("function fn(int x): int { return x; } int y = fn(2);").is_ok());
+    }
+
+    #[test]
+    fn query_as_reads_rows_into_the_expected_class() {
+        let ir = compile_source("import Database from \"std/sql\"; class U { function __construct(public int id, public string name = \"\") {} } \
+            Database db = Database::open(\"sqlite::memory:\"); U[] all = db->queryAs(\"select * from u where id > ?\", 1); U one = db->queryOneAs(\"select * from u\"); \
+            function f(Database db): U[] { return db->queryAs(\"select 1\"); }").unwrap();
+        // One reader per class and shape, shared by both array calls.
+        assert_eq!(ir.matches("define ptr @qiq.rows_to.").count(), 1, "{ir}");
+        assert_eq!(ir.matches("define ptr @qiq.row_to.").count(), 1, "{ir}");
+        assert!(main_ir(&ir).contains("call void @qiq_bind_values(ptr"), "{ir}");
+        for (source, error) in [
+            ("foreach (db->queryAs(\"select 1\") as u) {}", "queryAs needs to know the class to read rows into"),
+            ("int[] n = db->queryAs(\"select 1\");", "queryAs reads rows into an array of objects, such as User[], not int[]"),
+            ("class A { function __construct(string[] tags) {} } A[] a = db->queryAs(\"select 1\");", "queryAs can't read the constructor's parameter 'tags' of A, a string[], from a column"),
+            ("abstract class B {} B b = db->queryOneAs(\"select 1\");", "queryOneAs can't create B, which is abstract"),
+        ] {
+            let source = format!("import Database from \"std/sql\"; Database db = Database::open(\"x\"); {source}");
+            let message = compile_source(&source).unwrap_err();
+            assert!(message.contains(error), "{source}: {message}");
+        }
     }
 
     #[test]

@@ -1,0 +1,36 @@
+// std/sql: rows read into objects with queryAs and queryOneAs, through a constructor or public properties.
+import Database from "std/sql";
+
+class User {
+    function __construct(public int id, public string name, public string email = "none", public int age = 0, public bool admin = false) {}
+    function __toString(): string { return sprintf("#%d %s <%s> %d %s", this->id, this->name, this->email, this->age, this->admin); }
+}
+class Tag {
+    public string label;
+    public int uses = 1;
+    public byte[] icon = null;
+}
+
+Database db = Database::open("sqlite::memory:");
+db->executeScript("create table users (id integer primary key, name text, email text, age integer, admin integer); create table tags (label text, uses integer, icon blob);");
+db->execute("insert into users (name, email, age, admin) values (?, ?, ?, ?)", "Ada", "ada@example.com", 36, true);
+db->execute("insert into users (name, email, age) values (?, ?, ?)", "Lin", null, null);
+byte[] icon = [9, 8];
+db->execute("insert into tags values (?, ?, ?)", "red", 4, icon);
+db->execute("insert into tags (label) values (?)", "blue");
+
+User[] users = db->queryAs("select * from users order by id");
+foreach (users as u) { print(u); }
+User[] names = db->queryAs("select id, name from users where id > ?", 1);
+print(names[0]);
+User ada = db->queryOneAs("select * from users where name = ?", "Ada");
+print(ada->name, ada->admin);
+User nobody = db->queryOneAs("select * from users where name = ?", "Nobody");
+print(nobody == null);
+Tag[] tags = db->queryAs("select * from tags order by label");
+foreach (tags as t) { print(t->label, t->uses, t->icon); }
+function adults(Database db): User[] {
+    return db->queryAs("select * from users where age >= ?", 18);
+}
+print(len(adults(db)));
+try { User[] bad = db->queryAs("select id from users"); } catch (DatabaseException e) { print("error:", e->getMessage()); }

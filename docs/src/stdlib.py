@@ -2354,6 +2354,8 @@ DATABASE_CLASS = """<h1>The Database class</h1>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">execute</span>(<span class="type">string</span> sql, ...values): <span class="type">int</span><br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">query</span>(<span class="type">string</span> sql, ...values): <span class="cls">Row</span>[]<br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">queryOne</span>(<span class="type">string</span> sql, ...values): <span class="cls">Row</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">queryAs</span>(<span class="type">string</span> sql, ...values): <span class="cls">T</span>[]<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">queryOneAs</span>(<span class="type">string</span> sql, ...values): <span class="cls">T</span><br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">executeScript</span>(<span class="type">string</span> sql): <span class="type">void</span><br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">lastInsertId</span>(): <span class="type">int</span><br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">begin</span>(): <span class="type">void</span><br>
@@ -2405,6 +2407,7 @@ db->execute("insert into students (name) values (?)", name);   // stores the nam
 <tr><td><code>execute(sql, ...values)</code></td><td>Runs one statement, such as <code>INSERT</code>, <code>UPDATE</code>, <code>DELETE</code>, or <code>CREATE TABLE</code>. Returns the number of rows it inserted, changed, or deleted.</td></tr>
 <tr><td><code>query(sql, ...values)</code></td><td>Runs a query and returns all its rows as an array of <a href="class.row.html">Row</a> objects, empty when nothing matches.</td></tr>
 <tr><td><code>queryOne(sql, ...values)</code></td><td>The first row of a query, or <code>null</code> when there is none. It stops after that row, so it's the quick way to look up one record.</td></tr>
+<tr><td><code>queryAs(sql, ...values)</code>, <code>queryOneAs(sql, ...values)</code></td><td>Like <code>query</code> and <code>queryOne</code>, with each row read into an object of the class the result is used as: <code>User[] users = db-&gt;queryAs(...)</code>. See <a href="#objects">Reading rows into objects</a>.</td></tr>
 <tr><td><code>executeScript(sql)</code></td><td>Runs several statements separated by semicolons, such as a schema. They can't have placeholders. <code>execute</code>, <code>query</code>, and <code>queryOne</code> run exactly one statement and throw if the SQL has more, so a value can never smuggle in a second one.</td></tr>
 <tr><td><code>lastInsertId()</code></td><td>The id (the <code>INTEGER PRIMARY KEY</code>, or SQLite's rowid) of the last row inserted.</td></tr>
 <tr><td><code>begin()</code>, <code>commit()</code>, <code>rollback()</code></td><td>Start a transaction, save its changes, or undo them. Without a transaction, each statement is saved on its own.</td></tr>
@@ -2413,6 +2416,37 @@ db->execute("insert into students (name) values (?)", name);   // stores the nam
 <tr><td><code>close()</code></td><td>Closes the connection. Closing twice does nothing; using the database afterwards throws <code>DatabaseException</code>. A program's open databases are closed when it ends.</td></tr>
 </tbody>
 </table>
+
+<h2 id="objects">Reading rows into objects</h2>
+<p><code>queryAs</code> reads each row into an object, and <code>queryOneAs</code> reads the first row into one (or gives <code>null</code>). Like <a href="function.json-decode.html">json_decode</a>, they take the class from where the result goes, so use them where the type is known: in a declaration, an assignment, an argument, or a <code>return</code>.</p>
+```qiq
+class User {
+    function __construct(public int id, public string name, public string email = "", public bool admin = false) {}
+}
+
+Database db = Database::open("sqlite::memory:");
+db->execute("create table users (id integer primary key, name text, email text, admin integer)");
+db->execute("insert into users (name, email, admin) values (?, ?, ?)", "Ada", "ada@example.com", true);
+db->execute("insert into users (name, email) values (?, ?)", "Lin", null);
+
+User[] users = db->queryAs("select * from users order by name");
+foreach (users as user) {
+    print(user->id, user->name, user->email, user->admin);
+}
+User lin = db->queryOneAs("select id, name from users where name = ?", "Lin");
+print(lin->name, lin->email == "");
+```
+```output
+1 Ada ada@example.com 1
+2 Lin  0
+Lin 1
+```
+<ul>
+<li>When the class has a constructor, it's called with each parameter set from the column of the same name, read with the getter for the parameter's type (<code>getInt</code> for an <code>int</code>, and so on), so constructor promotion makes a short record class. A parameter with a default gets it when its column is NULL or missing; one without a default needs the column, or the query throws <code>DatabaseException</code>, as does a value of another type.</li>
+<li>When the class has no constructor, its public properties are set the same way, by name, after the object is made. Properties with defaults keep them when their column is missing or NULL.</li>
+<li>Parameters and properties can be <code>int</code>, <code>double</code>, <code>bool</code>, <code>string</code>, or <code>byte[]</code>; others are a compile error. Name columns to match, with <code>AS</code> where they differ: <code>select created_at as createdAt</code>. Columns that nothing reads are ignored.</li>
+<li>The constructor must be public, and the class concrete: not an interface or abstract.</li>
+</ul>
 
 <h2>Transactions</h2>
 <p>Changes in a transaction are saved together or not at all. They're also much faster: outside a transaction, SQLite makes each statement durable on its own, waiting for the disk each time.</p>
@@ -2479,7 +2513,7 @@ http_serve(":8080", function(Request r, ResponseWriter w): void {
 """
 
 ROW_CLASS = """<h1>The Row class</h1>
-<p>One row of a query's result, from <a href="class.database.html">Database</a>'s <code>query</code> and <code>queryOne</code>. Read each column by name with the getter for its type. A getter throws <code>DatabaseException</code> when the column doesn't exist or holds another type, rather than converting the value, so a mistake shows up where it is.</p>
+<p>One row of a query's result, from <a href="class.database.html">Database</a>'s <code>query</code> and <code>queryOne</code> (or read straight into your own class with <a href="class.database.html#objects">queryAs</a>). Read each column by name with the getter for its type. A getter throws <code>DatabaseException</code> when the column doesn't exist or holds another type, rather than converting the value, so a mistake shows up where it is.</p>
 <h2>Class synopsis</h2>
 <div class="synopsis"><code><span class="kw">final class</span> <span class="cls">Row</span> {<br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">getInt</span>(<span class="type">string</span> column): <span class="type">int</span><br>
@@ -2491,6 +2525,7 @@ ROW_CLASS = """<h1>The Row class</h1>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">getDoubleOr</span>(<span class="type">string</span> column, <span class="type">double</span> fallback): <span class="type">double</span><br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">getBoolOr</span>(<span class="type">string</span> column, <span class="type">bool</span> fallback): <span class="type">bool</span><br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">isNull</span>(<span class="type">string</span> column): <span class="type">bool</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">has</span>(<span class="type">string</span> column): <span class="type">bool</span><br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">columns</span>(): <span class="type">string[]</span><br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">toMap</span>(): <span class="type">map[string, string]</span><br>
 }</code></div>
@@ -2506,6 +2541,7 @@ ROW_CLASS = """<h1>The Row class</h1>
 <tr><td><code>getBytes(column)</code></td><td>A <code>BLOB</code>, or text that isn't valid UTF-8</td><td>Returns <code>null</code></td></tr>
 <tr><td><code>getIntOr</code>, <code>getDoubleOr</code>, <code>getBoolOr(column, fallback)</code></td><td>The same as the getter</td><td>Returns <code>fallback</code></td></tr>
 <tr><td><code>isNull(column)</code></td><td colspan="2">Whether the column is NULL</td></tr>
+<tr><td><code>has(column)</code></td><td colspan="2">Whether the result has a column with that name</td></tr>
 <tr><td><code>columns()</code></td><td colspan="2">The column names, in the order the query gives them</td></tr>
 <tr><td><code>toMap()</code></td><td colspan="2">The row as text, for printing and debugging: each value written as <code>print</code> writes it, NULL as <code>null</code>, and a blob as its size</td></tr>
 </tbody>
