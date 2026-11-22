@@ -34,14 +34,21 @@ static const char *qiq_require_text(const char *function, const char *text, cons
     return text;
 }
 
-// `length` bytes as lowercase hex, as a new string.
+// `length` bytes as lowercase hex, as a new string: both digits of a byte
+// from one lookup.
 static char *qiq_hex(const unsigned char *bytes, size_t length) {
-    static const char digits[] = "0123456789abcdef";
-    char *text = qiq_string_new(length * 2);
-    for (size_t index = 0; index < length; index++) {
-        text[index * 2] = digits[bytes[index] >> 4];
-        text[index * 2 + 1] = digits[bytes[index] & 0x0f];
+    static char pairs[256][2];
+    static bool ready = false;
+    if (!ready) {
+        static const char digits[] = "0123456789abcdef";
+        for (int byte = 0; byte < 256; byte++) {
+            pairs[byte][0] = digits[byte >> 4];
+            pairs[byte][1] = digits[byte & 0x0f];
+        }
+        ready = true;
     }
+    char *text = qiq_string_new(length * 2);
+    for (size_t index = 0; index < length; index++) memcpy(text + index * 2, pairs[bytes[index]], 2);
     return text;
 }
 
@@ -104,15 +111,24 @@ QIQ_GUARDED(char *, qiq_stdlib_bin2hex, NULL, (void *data), (data)) {
 
 static char *qiq_base64_encode(const unsigned char *data, size_t length) {
     static const char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    // The two characters for each 12 bits, so three bytes take two lookups.
+    static char pairs[4096][2];
+    static bool ready = false;
+    if (!ready) {
+        for (int bits = 0; bits < 4096; bits++) {
+            pairs[bits][0] = alphabet[bits >> 6];
+            pairs[bits][1] = alphabet[bits & 63];
+        }
+        ready = true;
+    }
     char *text = qiq_string_new((length + 2) / 3 * 4);
     char *out = text;
     size_t index = 0;
     for (; index + 3 <= length; index += 3) {
         uint32_t group = (uint32_t)data[index] << 16 | (uint32_t)data[index + 1] << 8 | data[index + 2];
-        *out++ = alphabet[group >> 18];
-        *out++ = alphabet[group >> 12 & 63];
-        *out++ = alphabet[group >> 6 & 63];
-        *out++ = alphabet[group & 63];
+        memcpy(out, pairs[group >> 12], 2);
+        memcpy(out + 2, pairs[group & 0xfff], 2);
+        out += 4;
     }
     if (index < length) {
         uint32_t group = (uint32_t)data[index] << 16 | (index + 1 < length ? (uint32_t)data[index + 1] << 8 : 0);
@@ -124,22 +140,32 @@ static char *qiq_base64_encode(const unsigned char *data, size_t length) {
     return text;
 }
 
-// The value of a base64 digit, or -1.
-static int qiq_base64_digit(unsigned char c) {
-    if (c >= 'A' && c <= 'Z') return c - 'A';
-    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
-    if (c >= '0' && c <= '9') return c - '0' + 52;
-    if (c == '+' || c == '-') return 62;
-    if (c == '/' || c == '_') return 63;
-    return -1;
+// What each character is in base64 text: a digit's value (0 to 63, from
+// either alphabet), or one of these.
+#define QIQ_BASE64_INVALID (-1)
+#define QIQ_BASE64_SPACE (-2)
+#define QIQ_BASE64_PADDING (-3)
+
+static const int8_t *qiq_base64_table(void) {
+    static int8_t table[256];
+    static bool ready = false;
+    if (!ready) {
+        memset(table, QIQ_BASE64_INVALID, sizeof table);
+        const char *digits = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+        for (int value = 0; value < 62; value++) table[(unsigned char)digits[value]] = (int8_t)value;
+        table['+'] = table['-'] = 62;
+        table['/'] = table['_'] = 63;
+        table[' '] = table['\t'] = table['\r'] = table['\n'] = QIQ_BASE64_SPACE;
+        table['='] = QIQ_BASE64_PADDING;
+        ready = true;
+    }
+    return table;
 }
 
-static bool qiq_base64_space(unsigned char c) {
-    return c == ' ' || c == '\t' || c == '\r' || c == '\n';
-}
-
-// Throws for `text` at byte `offset`, giving the position in characters.
-_Noreturn static void qiq_base64_error(const char *function, const char *text, size_t offset, const char *problem) {
+// Throws for `text` at byte `offset`, giving the position in characters,
+// after releasing `owner` (the output being decoded into).
+_Noreturn static void qiq_base64_error(const char *function, const char *text, size_t offset, const char *problem, void *owner) {
+    qiq_release(owner);
     size_t position = 0;
     for (size_t index = 0; index < offset; index++) {
         if (((unsigned char)text[index] & 0xc0) != 0x80) position++;
@@ -147,44 +173,80 @@ _Noreturn static void qiq_base64_error(const char *function, const char *text, s
     qiq_throwf(QIQ_INVALID_ARGUMENT_EXCEPTION, "%s: %s at position %zu", function, problem, position);
 }
 
-// Decodes `text` into a new byte array. Checks all of it before allocating,
-// so invalid input throws without anything to free.
+_Noreturn static void qiq_base64_fail(const char *function, const char *problem, void *owner) {
+    qiq_release(owner);
+    qiq_throwf(QIQ_INVALID_ARGUMENT_EXCEPTION, "%s: %s", function, problem);
+}
+
+// The most bytes `length` characters of base64 can decode to.
+static size_t qiq_base64_capacity(size_t length) {
+    return length / 4 * 3 + 2;
+}
+
+// Decodes the `length` characters of `text` into `out`, which has room for
+// qiq_base64_capacity(length) bytes, and returns how many it wrote. Four
+// digits at a time while there are no spaces or padding; one character at
+// a time otherwise, which also checks the text. On an error, releases
+// `owner` and throws.
+static size_t qiq_base64_decode_into(const char *function, const char *text, size_t length, unsigned char *out, void *owner) {
+    const int8_t *table = qiq_base64_table();
+    const unsigned char *in = (const unsigned char *)text;
+    const unsigned char *end = in + length;
+    unsigned char *start = out;
+    uint32_t group = 0;
+    int digits = 0;      // in the current group of four
+    int padding = 0;
+    while (in < end) {
+        if (digits == 0 && padding == 0) {
+            while (end - in >= 4) {
+                int a = table[in[0]], b = table[in[1]], c = table[in[2]], d = table[in[3]];
+                if ((a | b | c | d) < 0) break;
+                uint32_t bits = (uint32_t)a << 18 | (uint32_t)b << 12 | (uint32_t)c << 6 | (uint32_t)d;
+                out[0] = (unsigned char)(bits >> 16);
+                out[1] = (unsigned char)(bits >> 8);
+                out[2] = (unsigned char)bits;
+                out += 3;
+                in += 4;
+            }
+            if (in == end) break;
+        }
+        int value = table[*in];
+        if (value >= 0) {
+            if (padding > 0) qiq_base64_error(function, text, (size_t)(in - (const unsigned char *)text), "data after the '=' padding", owner);
+            group = group << 6 | (uint32_t)value;
+            if (++digits == 4) {
+                out[0] = (unsigned char)(group >> 16);
+                out[1] = (unsigned char)(group >> 8);
+                out[2] = (unsigned char)group;
+                out += 3;
+                digits = 0;
+                group = 0;
+            }
+        } else if (value == QIQ_BASE64_PADDING) {
+            if (++padding > 2 || digits < 2) qiq_base64_error(function, text, (size_t)(in - (const unsigned char *)text), "unexpected '='", owner);
+        } else if (value != QIQ_BASE64_SPACE) {
+            qiq_base64_error(function, text, (size_t)(in - (const unsigned char *)text),
+                             *in < 0x80 ? "a character that isn't base64" : "a non-ASCII character", owner);
+        }
+        in++;
+    }
+    if (digits == 1) qiq_base64_fail(function, "the text ends partway through a byte", owner);
+    if (padding > 0 && digits + padding != 4) qiq_base64_fail(function, "wrong '=' padding at the end", owner);
+    // The last, partial group: 2 digits are 1 byte, 3 are 2.
+    if (digits == 2) {
+        *out++ = (unsigned char)(group >> 4);
+    } else if (digits == 3) {
+        *out++ = (unsigned char)(group >> 10);
+        *out++ = (unsigned char)(group >> 2);
+    }
+    return (size_t)(out - start);
+}
+
 static void *qiq_base64_decode(const char *function, const char *text) {
     if (text == NULL) qiq_throwf(QIQ_RUNTIME_EXCEPTION, "%s: the text is null", function);
-    size_t digits = 0;
-    size_t padding = 0;
-    for (size_t index = 0; text[index] != 0; index++) {
-        unsigned char c = (unsigned char)text[index];
-        if (qiq_base64_space(c)) continue;
-        if (c == '=') {
-            padding++;
-            if (padding > 2 || digits % 4 < 2) qiq_base64_error(function, text, index, "unexpected '='");
-            continue;
-        }
-        if (qiq_base64_digit(c) < 0) {
-            qiq_base64_error(function, text, index, c < 0x80 ? "a character that isn't base64" : "a non-ASCII character");
-        }
-        if (padding > 0) qiq_base64_error(function, text, index, "data after the '=' padding");
-        digits++;
-    }
-    if (digits % 4 == 1) qiq_throwf(QIQ_INVALID_ARGUMENT_EXCEPTION, "%s: the text ends partway through a byte", function);
-    if (padding > 0 && (digits + padding) % 4 != 0) {
-        qiq_throwf(QIQ_INVALID_ARGUMENT_EXCEPTION, "%s: wrong '=' padding at the end", function);
-    }
-    size_t length = digits / 4 * 3 + (digits % 4 == 0 ? 0 : digits % 4 - 1);
-    void *bytes = qiq_array_create((int64_t)length, 1, 0);
-    unsigned char *out = QIQ_ARRAY_DATA(bytes);
-    uint32_t accumulated = 0;
-    int bits = 0;
-    for (const unsigned char *cursor = (const unsigned char *)text; *cursor != 0 && *cursor != '='; cursor++) {
-        if (qiq_base64_space(*cursor)) continue;
-        accumulated = accumulated << 6 | (uint32_t)qiq_base64_digit(*cursor);
-        bits += 6;
-        if (bits >= 8) {
-            bits -= 8;
-            *out++ = (unsigned char)(accumulated >> bits);
-        }
-    }
+    size_t length = strlen(text);
+    void *bytes = qiq_array_create((int64_t)qiq_base64_capacity(length), 1, 0);
+    QIQ_ARRAY_LENGTH(bytes) = (int64_t)qiq_base64_decode_into(function, text, length, QIQ_ARRAY_DATA(bytes), bytes);
     return bytes;
 }
 
@@ -207,6 +269,15 @@ QIQ_GUARDED(void *, qiq_stdlib_base64_decode_bytes, NULL, (const char *text), (t
 static bool qiq_is_utf8_text(const unsigned char *bytes, size_t length) {
     size_t index = 0;
     while (index < length) {
+        // Eight bytes at a time while they're ASCII and not NUL (a word
+        // with a 0 byte or a byte >= 0x80 has a high bit set here).
+        while (index + 8 <= length) {
+            uint64_t word;
+            memcpy(&word, bytes + index, sizeof word);
+            if (((word - UINT64_C(0x0101010101010101)) | word) & UINT64_C(0x8080808080808080)) break;
+            index += 8;
+        }
+        if (index >= length) break;
         unsigned char c = bytes[index];
         if (c == 0) return false;
         if (c < 0x80) {
@@ -223,16 +294,17 @@ static bool qiq_is_utf8_text(const unsigned char *bytes, size_t length) {
     return true;
 }
 
+// Decodes straight into the result string, which can be up to two bytes
+// longer than the text it ends up holding.
 QIQ_GUARDED(char *, qiq_stdlib_base64_decode, NULL, (const char *text), (text)) {
-    void *bytes = qiq_base64_decode("base64_decode", text);
-    size_t length = (size_t)QIQ_ARRAY_LENGTH(bytes);
-    const unsigned char *data = QIQ_ARRAY_DATA(bytes);
-    if (!qiq_is_utf8_text(data, length)) {
-        qiq_release(bytes);
+    qiq_require_text("base64_decode", text, "text");
+    size_t length = strlen(text);
+    char *result = qiq_string_new(qiq_base64_capacity(length));
+    size_t decoded = qiq_base64_decode_into("base64_decode", text, length, (unsigned char *)result, result);
+    if (!qiq_is_utf8_text((const unsigned char *)result, decoded)) {
+        qiq_release(result);
         qiq_throw(QIQ_INVALID_UTF8_EXCEPTION, "base64_decode: the decoded bytes aren't UTF-8 text; use base64_decode_bytes for binary data");
     }
-    char *result = qiq_string_new(length);
-    memcpy(result, data, length);
-    qiq_release(bytes);
+    result[decoded] = '\0';
     return result;
 }
