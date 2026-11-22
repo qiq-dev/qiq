@@ -27,6 +27,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/random.h>
+#include <sys/stat.h>
 
 #include "qiq_runtime.h"
 #include "sql_driver.h"
@@ -309,17 +310,69 @@ bool qiq_sql_is_local_host(const char *host) {
     return host == NULL || strcmp(host, "localhost") == 0 || strncmp(host, "127.", 4) == 0 || strcmp(host, "::1") == 0;
 }
 
-bool qiq_sql_connection_options(const QiqSqlUrl *url, const char *host, bool *tls, int64_t *timeout) {
-    *tls = !qiq_sql_is_local_host(host);
-    *timeout = 10;
+void qiq_sql_free_options(QiqSqlOptions *options) {
+    free(options->ca_file);
+    free(options->socket);
+    memset(options, 0, sizeof *options);
+}
+
+static char *qiq_sql_copy(const char *text) {
+    char *copy = strdup(text);
+    if (copy == NULL) qiq_fatal("out of memory");
+    return copy;
+}
+
+const char *qiq_sql_connection_options(const QiqSqlUrl *url, const char *host, QiqSqlOptions *out) {
+    memset(out, 0, sizeof *out);
+    out->timeout = 10;
+    // A host that is a path ("postgres://%2Fvar%2Frun%2Fpostgresql/db") is a socket.
+    if (host != NULL && host[0] == '/') out->socket = qiq_sql_copy(host);
+    int sslmode = -1; // -1 not given, 0 disable, 1 require
     for (size_t i = 0; i < url->option_count; i++) {
         const char *option = url->options[i];
-        if (strcmp(option, "sslmode=disable") == 0) *tls = false;
-        else if (strcmp(option, "sslmode=require") == 0 || strcmp(option, "sslmode=verify-full") == 0) *tls = true;
-        else if (strncmp(option, "connect_timeout=", 16) == 0 && strtol(option + 16, NULL, 10) >= 1) *timeout = strtol(option + 16, NULL, 10);
-        else return false;
+        if (strcmp(option, "sslmode=disable") == 0) sslmode = 0;
+        else if (strcmp(option, "sslmode=require") == 0 || strcmp(option, "sslmode=verify-full") == 0) sslmode = 1;
+        else if (strncmp(option, "connect_timeout=", 16) == 0 && strtol(option + 16, NULL, 10) >= 1) out->timeout = strtol(option + 16, NULL, 10);
+        else if (strncmp(option, "sslrootcert=", 12) == 0 && option[12] != '\0') {
+            free(out->ca_file);
+            out->ca_file = qiq_sql_copy(option + 12);
+        } else if ((strncmp(option, "host=", 5) == 0 && option[5] == '/') || (strncmp(option, "socket=", 7) == 0 && option[7] == '/')) {
+            free(out->socket);
+            out->socket = qiq_sql_copy(strchr(option, '=') + 1);
+        } else {
+            qiq_sql_free_options(out);
+            return "the options are sslmode=disable or require (or verify-full), sslrootcert=file, connect_timeout=seconds, and "
+                   "host=/path or socket=/path for a Unix socket";
+        }
     }
-    return true;
+    if (out->socket != NULL) {
+        if (sslmode == 1 || out->ca_file != NULL) {
+            qiq_sql_free_options(out);
+            return "TLS isn't used over a Unix socket, which only reaches this machine: leave out sslmode and sslrootcert";
+        }
+        out->tls = false;
+    } else if (out->ca_file != NULL) {
+        if (sslmode == 0) {
+            qiq_sql_free_options(out);
+            return "sslrootcert is for checking the server's certificate, which sslmode=disable turns off";
+        }
+        out->tls = true;
+    } else {
+        out->tls = sslmode == -1 ? !qiq_sql_is_local_host(host) : sslmode == 1;
+    }
+    return NULL;
+}
+
+char *qiq_sql_socket_file(const char *socket, const char *file_name) {
+    struct stat info;
+    if (stat(socket, &info) == 0 && S_ISDIR(info.st_mode)) {
+        size_t length = strlen(socket) + strlen(file_name) + 2;
+        char *path = malloc(length);
+        if (path == NULL) qiq_fatal("out of memory");
+        snprintf(path, length, "%s%s%s", socket, socket[strlen(socket) - 1] == '/' ? "" : "/", file_name);
+        return path;
+    }
+    return qiq_sql_copy(socket);
 }
 
 void qiq_sql_random(unsigned char *out, size_t count) {

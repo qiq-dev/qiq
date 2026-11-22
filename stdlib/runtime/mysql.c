@@ -76,6 +76,8 @@ typedef struct {
     int64_t socket;           // -1 when not connected
     char *host, *user, *password, *database;
     int64_t port, connect_timeout;
+    char *ca_file;            // sslrootcert, or NULL for the system's CAs
+    char *socket_file;        // a Unix socket to connect to instead of host:port
     bool tls;
     uint32_t capabilities;    // the ones both sides have
     uint8_t sequence;         // of the next packet to send
@@ -336,7 +338,7 @@ static int my_scramble(QiqMysql *my, const char *plugin, const unsigned char *no
         return 32;
     }
     if (strcmp(plugin, "mysql_clear_password") == 0) {
-        if (!my->tls && !qiq_sql_is_local_host(my->host)) {
+        if (!my->tls && my->socket_file == NULL && !qiq_sql_is_local_host(my->host)) {
             my_auth_failed(my, "the server asks for the password unencrypted; connect with TLS (sslmode=require)");
         }
         if (length > 250) my_auth_failed(my, "the password is too long");
@@ -388,7 +390,8 @@ static void my_send_rsa_password(QiqMysql *my, const unsigned char *nonce) {
 static void my_simple_query(QiqMysql *my, const char *sql);
 
 static void my_connect(QiqMysql *my) {
-    my->socket = qiq_net_connect(my->host, my->port, my->connect_timeout);
+    my->socket = my->socket_file != NULL ? qiq_net_connect_unix(my->socket_file, my->connect_timeout)
+                                         : qiq_net_connect(my->host, my->port, my->connect_timeout);
     my->status = 0;
     memset(my->cache, 0, sizeof my->cache);
     my_read(my);
@@ -441,7 +444,7 @@ static void my_connect(QiqMysql *my) {
         my_put_byte(my, MY_UTF8MB4);
         for (int i = 0; i < 23; i++) my_put_byte(my, 0);
         my_send(my);
-        qiq_net_start_tls(my->socket, my->host);
+        qiq_net_start_tls(my->socket, my->host, my->ca_file);
     }
     unsigned char response[256];
     int response_length = my_scramble(my, plugin, nonce, response);
@@ -491,8 +494,9 @@ static void my_connect(QiqMysql *my) {
         if (kind == 0x01 && strcmp(plugin, "caching_sha2_password") == 0 && my->in_length >= 2) {
             if (my->in[1] == 3) continue; // fast login: an OK follows
             if (my->in[1] == 4) {
-                // Full login: the password itself, safe only over TLS.
-                if (my->tls) {
+                // Full login: the password itself, safe only over TLS or a
+                // Unix socket, which the server trusts as well.
+                if (my->tls || my->socket_file != NULL) {
                     const char *password = my->password != NULL ? my->password : "";
                     my_put(my, password, strlen(password) + 1);
                     my_send(my);
@@ -797,6 +801,8 @@ static void my_read_binary_row(QiqMysql *my) {
 // Connections
 
 static void my_free(QiqMysql *my) {
+    free(my->ca_file);
+    free(my->socket_file);
     for (int i = 0; i < MY_CACHE; i++) free(my->cache[i].sql);
     free(my->host);
     free(my->user);
@@ -824,13 +830,24 @@ static void *qiq_my_open(const char *dsn) {
     else if (getenv("MYSQL_PWD") != NULL) my->password = my_copy(getenv("MYSQL_PWD"));
     if (url.database != NULL) my->database = my_copy(url.database);
     my->port = url.port != 0 ? url.port : 3306;
-    bool known = qiq_sql_connection_options(&url, my->host, &my->tls, &my->connect_timeout);
+    QiqSqlOptions options;
+    const char *problem = qiq_sql_connection_options(&url, url.host, &options);
     qiq_sql_free_url(&url);
-    if (!known) {
+    if (problem != NULL) {
         my_free(my);
-        qiq_throw(QIQ_INVALID_ARGUMENT_EXCEPTION,
-                  "Database::open: a MySQL URL's options are sslmode=disable, sslmode=require (or verify-full), and connect_timeout=seconds");
+        qiq_throwf(QIQ_INVALID_ARGUMENT_EXCEPTION, "Database::open: in a MySQL URL, %s", problem);
     }
+    my->tls = options.tls;
+    my->connect_timeout = options.timeout;
+    my->ca_file = options.ca_file;
+    options.ca_file = NULL;
+    if (options.socket != NULL) {
+        // A directory holds mysqld.sock, the usual name.
+        my->socket_file = qiq_sql_socket_file(options.socket, "mysqld.sock");
+        free(my->host);
+        my->host = my_copy(my->socket_file); // for messages
+    }
+    qiq_sql_free_options(&options);
     jmp_buf environment;
     jmp_buf *previous = qiq_guard_enter(&environment);
     if (setjmp(environment)) {

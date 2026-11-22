@@ -53,6 +53,8 @@ struct QiqPostgres {
     int64_t port;
     bool tls;
     int64_t connect_timeout;  // seconds
+    char *ca_file;            // sslrootcert, or NULL for the system's CAs
+    char *socket_file;        // a Unix socket to connect to instead of host:port
     char status;              // from ReadyForQuery: 'I' idle, 'T' in a transaction, 'E' in a failed one
     uint64_t fork_count;      // qiq_sql_forks when it connected
     bool lost_in_transaction; // the connection was lost with a transaction open
@@ -412,7 +414,8 @@ static void pg_forget_statements(QiqPostgres *pg);
 // Connects, logs in, and runs the remembered SET statements.
 static void pg_connect(QiqPostgres *pg) {
     pg_forget_statements(pg);
-    pg->socket = qiq_net_connect(pg->host, pg->port, pg->connect_timeout);
+    pg->socket = pg->socket_file != NULL ? qiq_net_connect_unix(pg->socket_file, pg->connect_timeout)
+                                         : qiq_net_connect(pg->host, pg->port, pg->connect_timeout);
     pg->status = 'I';
     if (pg->tls) {
         // SSLRequest: the server answers with one byte, before any TLS.
@@ -427,7 +430,7 @@ static void pg_connect(QiqPostgres *pg) {
                        "or a private network), add sslmode=disable to the URL",
                        pg->host);
         }
-        qiq_net_start_tls(pg->socket, pg->host);
+        qiq_net_start_tls(pg->socket, pg->host, pg->ca_file);
     }
     size_t at = pg_begin(pg, 0);
     pg_put_int32(pg, 196608); // protocol 3.0
@@ -521,6 +524,8 @@ static void pg_parsed(QiqPostgres *pg) {
 
 static void pg_free(QiqPostgres *pg) {
     pg_forget_statements(pg);
+    free(pg->ca_file);
+    free(pg->socket_file);
     free(pg->host);
     free(pg->user);
     free(pg->password);
@@ -551,13 +556,26 @@ QiqPostgres *qiq_pg_open(const char *dsn) {
     else if (getenv("PGPASSWORD") != NULL) pg->password = pg_copy(getenv("PGPASSWORD"));
     pg->database = pg_copy(url.database != NULL ? url.database : pg->user);
     pg->port = url.port != 0 ? url.port : 5432;
-    bool known = qiq_sql_connection_options(&url, pg->host, &pg->tls, &pg->connect_timeout);
+    QiqSqlOptions options;
+    const char *problem = qiq_sql_connection_options(&url, url.host, &options);
     qiq_sql_free_url(&url);
-    if (!known) {
+    if (problem != NULL) {
         pg_free(pg);
-        qiq_throw(QIQ_INVALID_ARGUMENT_EXCEPTION,
-                  "Database::open: a PostgreSQL URL's options are sslmode=disable, sslmode=require (or verify-full), and connect_timeout=seconds");
+        qiq_throwf(QIQ_INVALID_ARGUMENT_EXCEPTION, "Database::open: in a PostgreSQL URL, %s", problem);
     }
+    pg->tls = options.tls;
+    pg->connect_timeout = options.timeout;
+    pg->ca_file = options.ca_file;
+    options.ca_file = NULL;
+    if (options.socket != NULL) {
+        // A directory (libpq's host=/var/run/postgresql) holds .s.PGSQL.<port>.
+        char name[32];
+        snprintf(name, sizeof name, ".s.PGSQL.%lld", (long long)pg->port);
+        pg->socket_file = qiq_sql_socket_file(options.socket, name);
+        free(pg->host);
+        pg->host = pg_copy(pg->socket_file); // for messages
+    }
+    qiq_sql_free_options(&options);
     {
         // A failure to connect frees everything before passing the exception on.
         jmp_buf environment;

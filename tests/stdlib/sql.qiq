@@ -81,3 +81,9 @@ nest->begin();
 nest->transaction(function(): void { nest->execute("insert into items values (?)", "f"); });
 nest->commit();
 print(nestedNames(nest));
+
+// Connection options that don't fit together, and a missing Unix socket.
+foreach (["postgres://u@db.example.com/app?sslrootcert=/ca.pem&sslmode=disable", "mysql://u@/app?socket=/run/mysqld/mysqld.sock&sslmode=require", "postgres://u@db/app?ssl=true"] as url) {
+    try { Database::open(url); } catch (InvalidArgumentException e) { print("error:", e->getMessage()); }
+}
+try { Database::open("postgres://u@/app?host=/no/such/dir/.s.PGSQL.5432"); } catch (NetworkException e) { print("error:", e->getMessage()); }

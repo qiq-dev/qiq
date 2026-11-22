@@ -164,7 +164,9 @@ _Noreturn void qiq_rethrow(jmp_buf *previous);
 // Connections for runtime files other than net.c (see net.c); they throw
 // NetworkException. A timeout of -1 waits as long as it takes.
 int64_t qiq_net_connect(const char *host, int64_t port, int64_t timeout_seconds);
-void qiq_net_start_tls(int64_t handle, const char *host);
+int64_t qiq_net_connect_unix(const char *path, int64_t timeout_seconds);
+// TLS checked against the certificates in `ca_file`, or the system's (NULL).
+void qiq_net_start_tls(int64_t handle, const char *host, const char *ca_file);
 void qiq_net_set_timeout_ms(int64_t handle, int timeout_ms);
 void qiq_net_send(int64_t handle, const void *data, size_t length);
 void qiq_net_receive(int64_t handle, void *out, size_t length);

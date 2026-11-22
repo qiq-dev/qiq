@@ -334,11 +334,11 @@ static int qiq_connect_tcp(QiqSocket *connection, const char *host, int64_t port
 
 // Runs the TLS handshake. On failure, writes the reason to `message` and
 // returns false, so the caller can release the socket before throwing.
-static bool qiq_tls_handshake(QiqSocket *socket, const char *host, char *message, size_t size) {
+static bool qiq_tls_handshake(QiqSocket *socket, const char *host, const mbedtls_ssl_config *config, char *message, size_t size) {
     mbedtls_ssl_init(&socket->ssl);
     socket->tls = true;
     char reason[200];
-    int code = mbedtls_ssl_setup(&socket->ssl, &qiq_tls_config);
+    int code = mbedtls_ssl_setup(&socket->ssl, config);
     if (code == 0) code = mbedtls_ssl_set_hostname(&socket->ssl, host);
     if (code != 0) {
         qiq_tls_error(code, reason, sizeof reason);
@@ -398,7 +398,7 @@ QIQ_GUARDED(int64_t, qiq_stdlib___socket_connect, 0, (const char *host, int64_t 
     setsockopt(socket->fd, IPPROTO_TCP, TCP_NODELAY, &on, sizeof on);
     if (tls) {
         qiq_tls_setup();
-        if (!qiq_tls_handshake(socket, host, message, sizeof message)) {
+        if (!qiq_tls_handshake(socket, host, &qiq_tls_config, message, sizeof message)) {
             qiq_release_socket(socket);
             free(socket);
             qiq_throw(QIQ_NETWORK_EXCEPTION, message);
@@ -721,12 +721,96 @@ int64_t qiq_net_connect(const char *host, int64_t port, int64_t timeout) {
     return qiq_stdlib___socket_connect_impl(host, port, false, timeout);
 }
 
-// Starts TLS on a connected socket, for protocols that agree to it first.
-void qiq_net_start_tls(int64_t handle, const char *host) {
-    QiqSocket *socket = qiq_socket(handle);
+// Connects to the Unix socket file `path`, waiting at most `timeout` seconds.
+int64_t qiq_net_connect_unix(const char *path, int64_t timeout) {
+    struct sockaddr_un address = {0};
+    address.sun_family = AF_UNIX;
+    if (strlen(path) >= sizeof address.sun_path) qiq_throwf(QIQ_NETWORK_EXCEPTION, "the socket path %s is too long", path);
+    strcpy(address.sun_path, path);
+    int fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
+    if (fd < 0) qiq_throwf(QIQ_NETWORK_EXCEPTION, "could not create a socket: %s", strerror(errno));
+    int error = 0;
+    if (connect(fd, (struct sockaddr *)&address, sizeof address) != 0) {
+        error = errno;
+        if (error == EINPROGRESS || error == EAGAIN) {
+            // The server's queue is full: wait for room.
+            struct pollfd poller = {fd, POLLOUT, 0};
+            int ready;
+            do {
+                ready = poll(&poller, 1, timeout > 2000000 ? 2000000000 : (int)(timeout * 1000));
+            } while (ready < 0 && errno == EINTR);
+            error = ETIMEDOUT;
+            if (ready > 0) {
+                socklen_t length = sizeof error;
+                getsockopt(fd, SOL_SOCKET, SO_ERROR, &error, &length);
+            }
+        }
+    }
+    if (error != 0) {
+        close(fd);
+        if (error == ENOENT) qiq_throwf(QIQ_NETWORK_EXCEPTION, "no socket at %s: is the server running, and is that its socket?", path);
+        if (error == ECONNREFUSED) qiq_throwf(QIQ_NETWORK_EXCEPTION, "nothing is accepting connections on %s", path);
+        qiq_throwf(QIQ_NETWORK_EXCEPTION, "could not connect to %s: %s", path, strerror(error));
+    }
+    QiqSocket *connection = calloc(1, sizeof *connection);
+    if (connection == NULL) qiq_fatal("out of memory");
+    connection->fd = fd;
+    connection->open = true;
+    connection->timeout_ms = timeout > 2000000 ? 2000000000 : (int)(timeout * 1000);
+    snprintf(connection->peer, sizeof connection->peer, "unix:%s", path);
+    return qiq_register_socket(connection);
+}
+
+// TLS configurations that trust only the certificates in one file, for
+// connections that name their own CA (a database's sslrootcert). Each file
+// is read once and kept.
+typedef struct {
+    char *path;
+    mbedtls_x509_crt authorities;
+    mbedtls_ssl_config config;
+} QiqTlsAuthority;
+
+// Each is allocated once and never moves: connections point at its config.
+static QiqTlsAuthority **qiq_tls_authorities;
+static size_t qiq_tls_authority_count;
+
+static const mbedtls_ssl_config *qiq_tls_config_for(const char *ca_file) {
     qiq_tls_setup();
+    if (ca_file == NULL) return &qiq_tls_config;
+    for (size_t i = 0; i < qiq_tls_authority_count; i++) {
+        if (strcmp(qiq_tls_authorities[i]->path, ca_file) == 0) return &qiq_tls_authorities[i]->config;
+    }
+    QiqTlsAuthority *authority = calloc(1, sizeof *authority);
+    if (authority == NULL) qiq_fatal("out of memory");
+    mbedtls_x509_crt_init(&authority->authorities);
+    if (mbedtls_x509_crt_parse_file(&authority->authorities, ca_file) < 0) {
+        mbedtls_x509_crt_free(&authority->authorities);
+        free(authority);
+        qiq_throwf(QIQ_NETWORK_EXCEPTION, "TLS: could not read the certificates in %s", ca_file);
+    }
+    mbedtls_ssl_config_init(&authority->config);
+    if (mbedtls_ssl_config_defaults(&authority->config, MBEDTLS_SSL_IS_CLIENT, MBEDTLS_SSL_TRANSPORT_STREAM, MBEDTLS_SSL_PRESET_DEFAULT) != 0) {
+        qiq_throw(QIQ_NETWORK_EXCEPTION, "TLS: could not configure");
+    }
+    mbedtls_ssl_conf_authmode(&authority->config, MBEDTLS_SSL_VERIFY_REQUIRED);
+    mbedtls_ssl_conf_ca_chain(&authority->config, &authority->authorities, NULL);
+    mbedtls_ssl_conf_rng(&authority->config, mbedtls_ctr_drbg_random, &qiq_random);
+    authority->path = strdup(ca_file);
+    QiqTlsAuthority **grown = realloc(qiq_tls_authorities, (qiq_tls_authority_count + 1) * sizeof *grown);
+    if (authority->path == NULL || grown == NULL) qiq_fatal("out of memory");
+    qiq_tls_authorities = grown;
+    qiq_tls_authorities[qiq_tls_authority_count++] = authority;
+    return &authority->config;
+}
+
+// Starts TLS on a connected socket, for protocols that agree to it first,
+// checking the server's certificate against `ca_file`'s certificates, or
+// the system's when it's NULL.
+void qiq_net_start_tls(int64_t handle, const char *host, const char *ca_file) {
+    QiqSocket *socket = qiq_socket(handle);
+    const mbedtls_ssl_config *config = qiq_tls_config_for(ca_file);
     char message[600];
-    if (!qiq_tls_handshake(socket, host, message, sizeof message)) {
+    if (!qiq_tls_handshake(socket, host, config, message, sizeof message)) {
         qiq_free_socket(handle);
         qiq_throw(QIQ_NETWORK_EXCEPTION, message);
     }

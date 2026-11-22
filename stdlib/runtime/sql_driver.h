@@ -82,10 +82,24 @@ bool qiq_sql_parse_url(const char *url, QiqSqlUrl *out);
 void qiq_sql_free_url(QiqSqlUrl *url);
 // Whether a host is this machine, where TLS is off by default.
 bool qiq_sql_is_local_host(const char *host);
-// Reads the options both network drivers take: sslmode=disable|require
-// (or verify-full) into *tls, which defaults to on except for this machine,
-// and connect_timeout=seconds (10 by default). False for any other option.
-bool qiq_sql_connection_options(const QiqSqlUrl *url, const char *host, bool *tls, int64_t *timeout);
+// How a network driver connects, from a URL's options.
+typedef struct {
+    bool tls;                 // sslmode; on by default except for this machine
+    int64_t timeout;          // connect_timeout, in seconds (10)
+    char *ca_file;            // sslrootcert: the CA certificates to trust, or NULL for the system's
+    char *socket;             // a Unix socket (host=/dir or socket=/file), or NULL for TCP
+} QiqSqlOptions;
+
+// Reads the options the network drivers take: sslmode=disable|require (or
+// verify-full), connect_timeout=seconds, sslrootcert=file (which turns TLS
+// on), and host=path or socket=path (or a URL host that is a path) for a
+// Unix socket, over which TLS is off. Returns NULL, or a message about an
+// option that isn't one of these or doesn't fit with the others.
+const char *qiq_sql_connection_options(const QiqSqlUrl *url, const char *host, QiqSqlOptions *out);
+void qiq_sql_free_options(QiqSqlOptions *options);
+// The socket file for `options->socket`: the path itself, or `file_name`
+// in it when it's a directory (as with PostgreSQL's host=/var/run/postgresql).
+char *qiq_sql_socket_file(const char *socket, const char *file_name);
 // Fills `out` with `count` random bytes, or fails with DatabaseException.
 void qiq_sql_random(unsigned char *out, size_t count);
 
