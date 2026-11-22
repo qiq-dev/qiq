@@ -52,6 +52,7 @@ typedef struct {
     unsigned char buffer[QIQ_SOCKET_BUFFER];
     size_t start;
     size_t end;
+    int64_t served;      // requests a server connection has carried
 } QiqSocket;
 
 typedef struct {
@@ -824,77 +825,188 @@ QIQ_GUARDED(int64_t, qiq_stdlib___server_port, 0, (int64_t handle), (handle)) {
     return ntohs(((struct sockaddr_in *)&address)->sin_port);
 }
 
-// Waits for the next connection; returns its handle, or -1 once the server
-// is stopping. Each read and write on it waits at most `timeout` seconds.
-QIQ_GUARDED(int64_t, qiq_stdlib___server_accept, -1, (int64_t handle, int64_t timeout), (handle, timeout)) {
+// Accepts a connection waiting on `listener`: its handle, or -1 if there was
+// none (another worker took it) or accepting failed for now. Each read and
+// write on it waits at most `timeout` seconds.
+static int64_t qiq_accept_connection(QiqSocket *listener, int64_t timeout) {
+    struct sockaddr_storage address;
+    socklen_t length = sizeof address;
+    int fd = accept4(listener->fd, (struct sockaddr *)&address, &length, SOCK_NONBLOCK | SOCK_CLOEXEC);
+    if (fd < 0) {
+        // A temporary shortage, such as too many open files: wait a
+        // moment rather than spin.
+        if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR && errno != ECONNABORTED) {
+            struct timespec pause = {0, 50000000};
+            nanosleep(&pause, NULL);
+        }
+        return -1;
+    }
+    QiqSocket *socket = calloc(1, sizeof *socket);
+    if (socket == NULL) qiq_fatal("out of memory");
+    socket->fd = fd;
+    socket->open = true;
+    socket->timeout_ms = timeout > 2000000 ? 2000000000 : (int)(timeout < 1 ? 1000 : timeout * 1000);
+    if (address.ss_family == AF_UNIX) {
+        snprintf(socket->peer, sizeof socket->peer, "unix");  // clients of a Unix socket have no address
+    } else {
+        char host[NI_MAXHOST] = "?";
+        char service[NI_MAXSERV] = "?";
+        getnameinfo((struct sockaddr *)&address, length, host, sizeof host, service, sizeof service, NI_NUMERICHOST | NI_NUMERICSERV);
+        const char *shown = strncmp(host, "::ffff:", 7) == 0 ? host + 7 : host;  // IPv4 over IPv6
+        snprintf(socket->peer, sizeof socket->peer, strchr(shown, ':') ? "[%s]:%s" : "%s:%s", shown, service);
+        int on = 1;
+        setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &on, sizeof on);
+    }
+    return qiq_register_socket(socket);
+}
+
+// The connections a worker keeps open between requests. A worker serves
+// one request at a time, but not one connection at a time: it waits on all
+// of these and the listening socket at once, and serves whichever request
+// comes first. So a client that keeps a connection open, as nginx does with
+// `keepalive`, doesn't hold a worker while it's idle, and a client that
+// connects and sends nothing doesn't either.
+typedef struct {
+    int64_t handle;
+    int64_t since_ms;   // when it last became idle
+} QiqIdleConnection;
+
+static QiqIdleConnection *qiq_idle = NULL;
+static size_t qiq_idle_count = 0;
+static size_t qiq_idle_capacity = 0;
+static struct pollfd *qiq_idle_pollers = NULL;
+static size_t qiq_next_idle = 0;   // where the next search starts, so each connection gets its turn
+
+// Idle connections a worker keeps; when there are more, the one idle the
+// longest is closed. And how long one may be idle before it's closed.
+#define QIQ_IDLE_MAX 1024
+#define QIQ_IDLE_TIMEOUT_MS 5000
+
+static int64_t qiq_now_ms(void) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
+}
+
+static void qiq_forget_idle(size_t index) {
+    qiq_idle[index] = qiq_idle[--qiq_idle_count];
+}
+
+static void qiq_add_idle(int64_t handle) {
+    if (qiq_idle_count == QIQ_IDLE_MAX) {
+        size_t oldest = 0;
+        for (size_t index = 1; index < qiq_idle_count; index++) {
+            if (qiq_idle[index].since_ms < qiq_idle[oldest].since_ms) oldest = index;
+        }
+        qiq_free_socket(qiq_idle[oldest].handle);
+        qiq_forget_idle(oldest);
+    }
+    if (qiq_idle_count == qiq_idle_capacity) {
+        qiq_idle_capacity = qiq_idle_capacity ? qiq_idle_capacity * 2 : 16;
+        QiqIdleConnection *grown = realloc(qiq_idle, qiq_idle_capacity * sizeof *grown);
+        struct pollfd *pollers = realloc(qiq_idle_pollers, (qiq_idle_capacity + 1) * sizeof *pollers);
+        if (grown == NULL || pollers == NULL) qiq_fatal("out of memory");
+        qiq_idle = grown;
+        qiq_idle_pollers = pollers;
+    }
+    qiq_idle[qiq_idle_count++] = (QiqIdleConnection){handle, qiq_now_ms()};
+}
+
+// The next connection with a request to read: one of the idle connections
+// once data (or its close) arrives, or a new one, which waits with the idle
+// ones until its first request comes. -1 once the server is stopping. New
+// connections' reads and writes wait at most `timeout` seconds.
+QIQ_GUARDED(int64_t, qiq_stdlib___server_next, -1, (int64_t handle, int64_t timeout), (handle, timeout)) {
     QiqSocket *listener = qiq_socket(handle);
+    if (qiq_idle_pollers == NULL) {
+        qiq_idle_pollers = malloc(sizeof *qiq_idle_pollers);
+        if (qiq_idle_pollers == NULL) qiq_fatal("out of memory");
+    }
     for (;;) {
         if (qiq_stopping) return -1;
-        struct pollfd poller = {listener->fd, POLLIN, 0};
-        int ready = poll(&poller, 1, 500);
-        if (ready <= 0) continue;  // a timeout or a signal: check whether to stop
-        struct sockaddr_storage address;
-        socklen_t length = sizeof address;
-        int fd = accept4(listener->fd, (struct sockaddr *)&address, &length, SOCK_NONBLOCK | SOCK_CLOEXEC);
-        if (fd < 0) {
-            // Another worker took it, or a temporary shortage (such as
-            // too many open files): wait a moment and keep going.
-            if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR && errno != ECONNABORTED) {
-                struct timespec pause = {0, 50000000};
-                nanosleep(&pause, NULL);
+        // Close what has been idle too long, and serve a request that
+        // arrived with the last one (pipelined) straight away.
+        int64_t now = qiq_now_ms();
+        int64_t wait_ms = 500;   // at most, to notice a stop request
+        for (size_t index = 0; index < qiq_idle_count;) {
+            QiqSocket *socket = qiq_lookup(qiq_idle[index].handle);
+            int64_t left = qiq_idle[index].since_ms + QIQ_IDLE_TIMEOUT_MS - now;
+            if (socket == NULL || left <= 0) {
+                qiq_free_socket(qiq_idle[index].handle);
+                qiq_forget_idle(index);
+                continue;
             }
-            continue;
+            if (socket->start < socket->end) {
+                int64_t ready = qiq_idle[index].handle;
+                qiq_forget_idle(index);
+                return ready;
+            }
+            if (left < wait_ms) wait_ms = left;
+            index++;
         }
-        QiqSocket *socket = calloc(1, sizeof *socket);
-        if (socket == NULL) qiq_fatal("out of memory");
-        socket->fd = fd;
-        socket->open = true;
-        socket->timeout_ms = timeout > 2000000 ? 2000000000 : (int)(timeout < 1 ? 1000 : timeout * 1000);
-        if (address.ss_family == AF_UNIX) {
-            snprintf(socket->peer, sizeof socket->peer, "unix");  // clients of a Unix socket have no address
-        } else {
-            char host[NI_MAXHOST] = "?";
-            char service[NI_MAXSERV] = "?";
-            getnameinfo((struct sockaddr *)&address, length, host, sizeof host, service, sizeof service, NI_NUMERICHOST | NI_NUMERICSERV);
-            const char *shown = strncmp(host, "::ffff:", 7) == 0 ? host + 7 : host;  // IPv4 over IPv6
-            snprintf(socket->peer, sizeof socket->peer, strchr(shown, ':') ? "[%s]:%s" : "%s:%s", shown, service);
-            int on = 1;
-            setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &on, sizeof on);
+        qiq_idle_pollers[0] = (struct pollfd){listener->fd, POLLIN, 0};
+        for (size_t index = 0; index < qiq_idle_count; index++) {
+            qiq_idle_pollers[index + 1] = (struct pollfd){qiq_lookup(qiq_idle[index].handle)->fd, POLLIN, 0};
         }
-        return qiq_register_socket(socket);
+        int ready = poll(qiq_idle_pollers, (nfds_t)qiq_idle_count + 1, (int)wait_ms);
+        if (ready <= 0) continue;  // a timeout or a signal: look again
+        // A connection with something to read, starting after the last one
+        // served so that none waits behind the others.
+        for (size_t step = 0; step < qiq_idle_count; step++) {
+            size_t index = (qiq_next_idle + step) % qiq_idle_count;
+            if (qiq_idle_pollers[index + 1].revents != 0) {
+                int64_t chosen = qiq_idle[index].handle;
+                qiq_forget_idle(index);
+                qiq_next_idle = index + 1;
+                return chosen;
+            }
+        }
+        // Otherwise a new connection. Its request has usually arrived with
+        // it: read what's there without waiting, and serve it straight away
+        // (the parser then starts from this buffer, so this costs no extra
+        // system call). A client that hasn't sent anything yet waits with
+        // the idle connections instead of holding the worker.
+        if (qiq_idle_pollers[0].revents != 0) {
+            int64_t connection = qiq_accept_connection(listener, timeout);
+            if (connection < 0) continue;
+            QiqSocket *socket = qiq_lookup(connection);
+            ssize_t got = recv(socket->fd, socket->buffer, QIQ_SOCKET_BUFFER, MSG_DONTWAIT);
+            if (got < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+                // Not here yet: give it a moment, as it's usually on its way.
+                struct pollfd arriving = {socket->fd, POLLIN, 0};
+                if (poll(&arriving, 1, 2) > 0) got = recv(socket->fd, socket->buffer, QIQ_SOCKET_BUFFER, MSG_DONTWAIT);
+            }
+            if (got > 0) {
+                socket->start = 0;
+                socket->end = (size_t)got;
+                return connection;
+            }
+            if (got == 0 || (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR)) {
+                qiq_free_socket(connection);   // closed before saying anything
+                continue;
+            }
+            qiq_add_idle(connection);
+        }
     }
 }
 
-// Waits for the next request on a kept-alive connection. Returns false when
-// the connection should be closed instead: after `timeout` seconds idle,
-// when the client closes it, when the server is stopping, or when another
-// client is waiting for a worker and no idle worker has taken it (each
-// worker serves one connection at a time, so an idle connection mustn't
-// hold one up).
-QIQ_GUARDED(bool, qiq_stdlib___server_wait_request, false, (int64_t handle, int64_t listener, int64_t timeout),
-            (handle, listener, timeout)) {
-    QiqSocket *socket = qiq_socket(handle);
-    if (socket->start < socket->end) return true;  // a pipelined request
-    QiqSocket *server = qiq_lookup(listener);
-    struct timespec now;
-    clock_gettime(CLOCK_MONOTONIC, &now);
-    int64_t deadline = (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000 + timeout * 1000;
-    int64_t waiting_since = -1;
-    for (;;) {
-        if (qiq_stopping) return false;
-        struct pollfd pollers[2] = {{socket->fd, POLLIN, 0}, {server != NULL ? server->fd : -1, POLLIN, 0}};
-        int ready = poll(pollers, server != NULL ? 2 : 1, 100);
-        if (pollers[0].revents != 0) return true;  // data, or the close that reading will see
-        clock_gettime(CLOCK_MONOTONIC, &now);
-        int64_t millis = (int64_t)now.tv_sec * 1000 + now.tv_nsec / 1000000;
-        if (millis >= deadline) return false;
-        if (ready > 0 && pollers[1].revents != 0) {
-            if (waiting_since < 0) waiting_since = millis;
-            if (millis - waiting_since >= 100) return false;
-        } else {
-            waiting_since = -1;
-        }
+// Keeps a connection open for its next request, after a response.
+QIQ_GUARDED_VOID(qiq_stdlib___server_keep, (int64_t handle), (handle)) {
+    qiq_socket(handle);
+    qiq_add_idle(handle);
+}
+
+// Closes the idle connections, when a worker stops.
+void qiq_stdlib___server_close_idle(void) {
+    while (qiq_idle_count > 0) {
+        qiq_free_socket(qiq_idle[0].handle);
+        qiq_forget_idle(0);
     }
+}
+
+// Counts a request on a connection; returns how many it has carried.
+QIQ_GUARDED(int64_t, qiq_stdlib___server_count_request, 0, (int64_t handle), (handle)) {
+    return ++qiq_socket(handle)->served;
 }
 
 // Whether SIGINT or SIGTERM asked the server to stop.

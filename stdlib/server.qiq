@@ -22,7 +22,7 @@ import gmdate, date, time, microtime from "date";
 import exit from "program";
 import strtolower, strtoupper, substr, strpos, str_contains, str_starts_with, str_ends_with, explode, implode, trim, string_to_bytes, bytes_to_string, htmlspecialchars from "string";
 import urldecode, rawurldecode, rawurlencode, __http_hex from "http";
-import __socket_write, __socket_write_more, __socket_write_bytes, __socket_read_line, __socket_read_exactly, __socket_close, __socket_peer, __socket_set_timeout, __server_listen, __server_listen_unix, __server_close, __server_accept, __server_wait_request, __server_stopping, __server_cpu_count, __server_start, __server_file_info, __socket_send_file from "net";
+import __socket_write, __socket_write_more, __socket_write_bytes, __socket_read_line, __socket_read_exactly, __socket_close, __socket_peer, __socket_set_timeout, __server_listen, __server_listen_unix, __server_close, __server_next, __server_keep, __server_close_idle, __server_count_request, __server_stopping, __server_cpu_count, __server_start, __server_file_info, __socket_send_file from "net";
 
 // An HTTP request received by the server.
 class Request {
@@ -733,13 +733,21 @@ function http_serve(string address, function(Request, ResponseWriter): void hand
         __server_close(listener);
         return;
     }
+    // Each worker serves one request at a time, from whichever of its open
+    // connections sends one first (see __server_next), so connections kept
+    // open between requests don't hold a worker while they're idle.
     while (true) {
-        int connection = __server_accept(listener, 30);
+        int connection = __server_next(listener, 30);
         if (connection < 0) {
             break;
         }
-        __server_connection(connection, listener, handler, trustProxy);
+        if (__server_serve_one(connection, handler, trustProxy)) {
+            __server_keep(connection);
+        } else {
+            __socket_close(connection);
+        }
     }
+    __server_close_idle();
     if (count > 1) {
         // A worker: the supervising process removes a Unix socket's file.
         __socket_close(listener);
@@ -797,34 +805,29 @@ function __server_apply_proxy(Request r): void {
     }
 }
 
-// Serves the requests on one connection, keeping it open between them.
-function __server_connection(int connection, int listener, function(Request, ResponseWriter): void handler, bool trustProxy): void {
-    string peer = __socket_peer(connection);
+// Serves the next request on a connection that has one to read. Returns
+// whether to keep the connection open for another: not after
+// "Connection: close", the 1000th request, an error, or once the server is
+// stopping.
+function __server_serve_one(int connection, function(Request, ResponseWriter): void handler, bool trustProxy): bool {
     try {
-        int served = 0;
-        bool keepAlive = true;
-        while (keepAlive && served < 1000 && !__server_stopping()) {
-            if (served > 0 && !__server_wait_request(connection, listener, 5)) {
-                break;
-            }
-            string line = __socket_read_line(connection);
-            if (line == null) {
-                break;
-            }
-            if (line == "" && served > 0) {
-                // A stray CRLF after a body: allowed before a request.
-                line = __socket_read_line(connection);
-                if (line == null) {
-                    break;
-                }
-            }
-            served = served + 1;
-            keepAlive = __server_request(connection, line, peer, handler, trustProxy, served == 1000);
+        string line = __socket_read_line(connection);
+        if (line == null) {
+            return false;
         }
+        int served = __server_count_request(connection);
+        if (line == "" && served > 1) {
+            // A stray CRLF after a body: allowed before a request.
+            line = __socket_read_line(connection);
+            if (line == null) {
+                return false;
+            }
+        }
+        bool keepAlive = __server_request(connection, line, __socket_peer(connection), handler, trustProxy, served == 1000);
+        return keepAlive && served < 1000 && !__server_stopping();
     } catch (NetworkException e) {
         // The client went away or was too slow: nothing to answer.
-    } finally {
-        __socket_close(connection);
+        return false;
     }
 }
 
