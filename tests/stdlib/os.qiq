@@ -1,0 +1,21 @@
+// std/os: setenv, unsetenv, getpid, and what reads the environment (TZ for DateTime and date()).
+import getenv, setenv, unsetenv, getpid from "std/os";
+import DateTime, date from "std/time";
+print(getpid() > 1);
+setenv("QIQ_X", "one");
+setenv("QIQ_X", "two");
+print(getenv("QIQ_X"));
+unsetenv("QIQ_X");
+unsetenv("QIQ_X");
+print(getenv("QIQ_X") ?? "unset");
+setenv("QIQ_EMPTY", "");
+print(getenv("QIQ_EMPTY") == "", getenv("QIQ_EMPTY") != null);
+setenv("TZ", "Asia/Tokyo");
+print(DateTime::now()->zone(), date("T", 0));
+setenv("TZ", "America/New_York");
+print(DateTime::now()->zone(), date("T", 0));
+foreach (["", "A=B"] as name) {
+    try { setenv(name, "x"); } catch (InvalidArgumentException e) { print("error:", e->getMessage()); }
+}
+string none = null;
+try { setenv("QIQ_Y", none); } catch (RuntimeException e) { print("error:", e->getMessage()); }

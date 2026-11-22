@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+#include <unistd.h>
 
 #include "qiq_runtime.h"
 
@@ -56,6 +58,32 @@ QIQ_GUARDED_VOID(qiq_stdlib_exit, (int64_t status), (status)) {
     }
     fflush(stdout);
     exit((int)status);
+}
+
+// Checks a name for setenv and unsetenv.
+static void qiq_check_variable_name(const char *function, const char *name) {
+    if (name == NULL) qiq_throwf(QIQ_RUNTIME_EXCEPTION, "%s: the name is null", function);
+    if (name[0] == '\0' || strchr(name, '=') != NULL) {
+        qiq_throwf(QIQ_INVALID_ARGUMENT_EXCEPTION, "%s: \"%s\" isn't a variable name (it's empty or contains =)", function, name);
+    }
+}
+
+QIQ_GUARDED_VOID(qiq_stdlib_setenv, (const char *name, const char *value), (name, value)) {
+    qiq_check_variable_name("setenv", name);
+    if (value == NULL) qiq_throw(QIQ_RUNTIME_EXCEPTION, "setenv: the value is null; unsetenv removes a variable");
+    if (setenv(name, value, 1) != 0) qiq_throw(QIQ_RUNTIME_EXCEPTION, "setenv: out of memory");
+    // date() and its relatives read TZ through the C library.
+    if (strcmp(name, "TZ") == 0) tzset();
+}
+
+QIQ_GUARDED_VOID(qiq_stdlib_unsetenv, (const char *name), (name)) {
+    qiq_check_variable_name("unsetenv", name);
+    unsetenv(name);
+    if (strcmp(name, "TZ") == 0) tzset();
+}
+
+int64_t qiq_stdlib_getpid(void) {
+    return (int64_t)getpid();
 }
 
 // getenv(name): the variable's value, or null when it isn't set.

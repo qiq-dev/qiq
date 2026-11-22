@@ -1509,6 +1509,61 @@ hello, Ada</pre>""",
                 }
             ],
             "notes": ["PHP's <code>getenv</code> returns <code>false</code> for a variable that isn't set; qiq returns <code>null</code>, so <code>??</code> gives a default."],
+            "see_also": ["setenv", "argv"],
+        },
+        {
+            "name": "setenv",
+            "purpose": "Set an environment variable",
+            "params": [
+                param("name", "string", "The variable's name."),
+                param("value", "string", "Its new value."),
+            ],
+            "returns": "void",
+            "description": "Sets the environment variable <code>name</code> to <code>value</code> for the rest of the program, replacing any value it had. Like PHP's <code>putenv(\"NAME=value\")</code>, with the name and value apart. It affects what <code>getenv</code> returns and what the standard library reads from the environment: <code>TZ</code> sets the default time zone for <code>date</code> and <a href=\"class.datetime.html\">DateTime</a> (unless <code>date_default_timezone_set</code> chose one), <code>PGPASSWORD</code> and <code>MYSQL_PWD</code> are read when a <a href=\"class.database.html\">Database</a> opens without a password in its URL, and <code>SSL_CERT_FILE</code> and <code>SSL_CERT_DIR</code> when the first TLS connection is made.",
+            "return_description": "Nothing.",
+            "errors": ["<code>InvalidArgumentException</code> if <code>name</code> is empty or contains <code>=</code>, and <code>RuntimeException</code> if either argument is <code>null</code> (use <code>unsetenv</code> to remove a variable)."],
+            "examples": [
+                {
+                    "title": "Setting and removing a variable",
+                    "code": 'setenv("QIQ_EXAMPLE_MODE", "test");\nprint(getenv("QIQ_EXAMPLE_MODE"));\nunsetenv("QIQ_EXAMPLE_MODE");\nprint(getenv("QIQ_EXAMPLE_MODE") ?? "unset");',
+                    "output": "test\nunset",
+                }
+            ],
+            "notes": ["The SSL variables are read once, so set them before the program's first HTTPS request or TLS database connection."],
+            "see_also": ["unsetenv", "getenv"],
+        },
+        {
+            "name": "unsetenv",
+            "purpose": "Remove an environment variable",
+            "params": [param("name", "string", "The variable's name.")],
+            "returns": "void",
+            "description": "Removes the environment variable <code>name</code>, so <code>getenv</code> returns <code>null</code> for it. Removing one that isn't set does nothing.",
+            "return_description": "Nothing.",
+            "errors": ["<code>InvalidArgumentException</code> if <code>name</code> is empty or contains <code>=</code>, and <code>RuntimeException</code> if it's <code>null</code>."],
+            "examples": [
+                {
+                    "title": "Basic use",
+                    "code": 'setenv("QIQ_EXAMPLE_TOKEN", "secret");\nunsetenv("QIQ_EXAMPLE_TOKEN");\nprint(getenv("QIQ_EXAMPLE_TOKEN") == null);',
+                    "output": "1",
+                }
+            ],
+            "see_also": ["setenv", "getenv"],
+        },
+        {
+            "name": "getpid",
+            "purpose": "Get the program's process ID",
+            "params": [],
+            "returns": "int",
+            "description": "Returns the process ID of the running program, like PHP's <code>getmypid</code>. Each worker process of the <a href=\"function.http-serve.html\">HTTP server</a> has its own, which makes it useful in log lines; it's also a simple way to make a name unique on the machine, such as a temporary file's.",
+            "return_description": "The process ID, a positive int.",
+            "errors": [],
+            "examples": [
+                {
+                    "title": "In a file name",
+                    "code": 'string path = "/tmp/report-" + to_string(getpid()) + ".txt";\nprint(getpid() > 0, str_starts_with(path, "/tmp/report-"));',
+                    "output": "1 1",
+                }
+            ],
             "see_also": ["argv"],
         },
     ],

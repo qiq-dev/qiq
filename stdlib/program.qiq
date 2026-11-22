@@ -11,3 +11,14 @@ extern function exit(int status = 0): void;
 
 // The environment variable's value, or null if it isn't set.
 extern function getenv(string name): string;
+
+// Sets an environment variable for the rest of the program, replacing its
+// value if it has one. Throws InvalidArgumentException for a name that's
+// empty or contains "=".
+extern function setenv(string name, string value): void;
+
+// Removes an environment variable; one that isn't set stays unset.
+extern function unsetenv(string name): void;
+
+// The program's process ID. Each worker of the HTTP server has its own.
+extern function getpid(): int;
