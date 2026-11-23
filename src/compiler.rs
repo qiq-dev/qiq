@@ -108,6 +108,218 @@ struct Token {
     column: usize,
 }
 
+/// One piece of an f-string: text, or an expression (its source, the column
+/// it starts at, and the format spec after a `:`, if any).
+enum FStringPart {
+    Text(String),
+    Expression(String, usize, Option<String>),
+}
+
+/// Reads the f-string starting at `chars[*cursor]` (the `f`) and pushes the
+/// tokens of the expression it stands for: its text and expressions joined
+/// with `+`, each expression converted by __interpolate (like to_string, with
+/// null as "null"), or by sprintf with its format spec, as in `{price:.2f}`.
+/// The text takes the same escapes as a string; `{{` and `}}` are braces.
+fn lex_fstring(chars: &[char], cursor: &mut usize, line: usize, column: &mut usize, tokens: &mut Vec<Token>) -> Result<(), String> {
+    let start_column = *column;
+    let at = |column: usize| format!("{line}:{column}");
+    *cursor += 2;
+    *column += 2;
+    let mut parts = Vec::new();
+    let mut text = String::new();
+    loop {
+        let Some(&c) = chars.get(*cursor) else {
+            return Err(format!("{}: unterminated string literal", at(start_column)));
+        };
+        match c {
+            '"' => {
+                *cursor += 1;
+                *column += 1;
+                break;
+            }
+            '\n' => return Err(format!("{}: newline in string literal", at(start_column))),
+            '\\' => {
+                let escaped = chars.get(*cursor + 1).copied().ok_or_else(|| format!("{}: unterminated string escape", at(start_column)))?;
+                text.push(match escaped {
+                    'n' => '\n',
+                    'r' => '\r',
+                    't' => '\t',
+                    '"' => '"',
+                    '\\' => '\\',
+                    _ => return Err(format!("{}: unsupported string escape \\{escaped}", at(*column))),
+                });
+                *cursor += 2;
+                *column += 2;
+            }
+            '{' if chars.get(*cursor + 1) == Some(&'{') => {
+                text.push('{');
+                *cursor += 2;
+                *column += 2;
+            }
+            '}' if chars.get(*cursor + 1) == Some(&'}') => {
+                text.push('}');
+                *cursor += 2;
+                *column += 2;
+            }
+            '}' => return Err(format!("{}: single '}}' in an f-string; write '}}}}' for a brace", at(*column))),
+            '{' => {
+                let open_column = *column;
+                *cursor += 1;
+                *column += 1;
+                let expression_column = *column;
+                let mut expression = String::new();
+                let mut spec: Option<String> = None;
+                let mut depth = 0usize;
+                loop {
+                    let Some(&c) = chars.get(*cursor) else {
+                        return Err(format!("{}: '{{' in an f-string without a closing '}}'", at(open_column)));
+                    };
+                    if c == '\n' {
+                        return Err(format!("{}: '{{' in an f-string without a closing '}}'", at(open_column)));
+                    }
+                    if let Some(spec) = spec.as_mut() {
+                        *cursor += 1;
+                        *column += 1;
+                        if c == '}' {
+                            break;
+                        }
+                        spec.push(c);
+                        continue;
+                    }
+                    match c {
+                        '"' | '\'' | '`' => {
+                            // A string or char inside the expression, copied whole.
+                            expression.push(c);
+                            *cursor += 1;
+                            *column += 1;
+                            loop {
+                                let Some(&inner) = chars.get(*cursor) else {
+                                    return Err(format!("{}: '{{' in an f-string without a closing '}}'", at(open_column)));
+                                };
+                                if inner == '\n' {
+                                    return Err(format!("{}: '{{' in an f-string without a closing '}}'", at(open_column)));
+                                }
+                                expression.push(inner);
+                                *cursor += 1;
+                                *column += 1;
+                                if inner == '\\' && c != '`' {
+                                    if let Some(&next) = chars.get(*cursor) {
+                                        expression.push(next);
+                                        *cursor += 1;
+                                        *column += 1;
+                                    }
+                                } else if inner == c {
+                                    break;
+                                }
+                            }
+                            continue;
+                        }
+                        '(' | '[' | '{' => depth += 1,
+                        ')' | ']' => depth = depth.saturating_sub(1),
+                        '}' if depth == 0 => {
+                            *cursor += 1;
+                            *column += 1;
+                            break;
+                        }
+                        '}' => depth -= 1,
+                        ':' if depth == 0 && chars.get(*cursor + 1) == Some(&':') => {
+                            expression.push_str("::");
+                            *cursor += 2;
+                            *column += 2;
+                            continue;
+                        }
+                        ':' if depth == 0 => {
+                            spec = Some(String::new());
+                            *cursor += 1;
+                            *column += 1;
+                            continue;
+                        }
+                        _ => {}
+                    }
+                    expression.push(c);
+                    *cursor += 1;
+                    *column += 1;
+                }
+                if expression.trim().is_empty() {
+                    return Err(format!("{}: empty expression in an f-string: write {{name}}, or {{{{}}}} for braces", at(open_column)));
+                }
+                if let Some(spec) = &spec {
+                    let valid = !spec.is_empty() && spec.chars().last().is_some_and(|c| c.is_ascii_alphabetic())
+                        && spec.chars().all(|c| c.is_ascii_alphanumeric() || "-+ 0#.".contains(c));
+                    if !valid {
+                        return Err(format!(
+                            "{}: invalid format spec '{spec}' in an f-string: write it as in sprintf without the %, ending in its type, such as {{price:.2f}} or {{count:5d}}",
+                            at(open_column)
+                        ));
+                    }
+                }
+                if !text.is_empty() {
+                    parts.push(FStringPart::Text(std::mem::take(&mut text)));
+                }
+                parts.push(FStringPart::Expression(expression, expression_column, spec));
+            }
+            _ => {
+                text.push(c);
+                *cursor += 1;
+                *column += 1;
+            }
+        }
+    }
+    if !text.is_empty() || parts.is_empty() {
+        parts.push(FStringPart::Text(text));
+    }
+    let token = |kind: TokenKind| Token { kind, line, column: start_column };
+    if let [FStringPart::Text(only)] = parts.as_slice() {
+        tokens.push(token(TokenKind::Text(only.clone())));
+        return Ok(());
+    }
+    tokens.push(token(TokenKind::LeftParen));
+    for (index, part) in parts.into_iter().enumerate() {
+        if index > 0 {
+            tokens.push(token(TokenKind::Plus));
+        }
+        match part {
+            FStringPart::Text(text) => tokens.push(token(TokenKind::Text(text))),
+            FStringPart::Expression(source, expression_column, spec) => {
+                match spec {
+                    Some(spec) => {
+                        tokens.push(token(TokenKind::Identifier("sprintf".to_string())));
+                        tokens.push(token(TokenKind::LeftParen));
+                        tokens.push(token(TokenKind::Text(format!("%{spec}"))));
+                        tokens.push(token(TokenKind::Comma));
+                    }
+                    None => {
+                        tokens.push(token(TokenKind::Identifier("__interpolate".to_string())));
+                        tokens.push(token(TokenKind::LeftParen));
+                    }
+                }
+                // The expression's own tokens, at their place in the line.
+                let inner = lex(&source).map_err(|error| {
+                    // "1:N: message" from the expression: move it to the f-string's line.
+                    match error.split_once(':').and_then(|(_, rest)| rest.split_once(':')) {
+                        Some((offset, message)) if error.starts_with("1:") => match offset.parse::<usize>() {
+                            Ok(offset) => format!("{line}:{}:{message}", expression_column + offset - 1),
+                            Err(_) => error.clone(),
+                        },
+                        _ => error.clone(),
+                    }
+                })?;
+                for mut inner_token in inner {
+                    if matches!(inner_token.kind, TokenKind::End) {
+                        continue;
+                    }
+                    inner_token.line = line;
+                    inner_token.column += expression_column - 1;
+                    tokens.push(inner_token);
+                }
+                tokens.push(token(TokenKind::RightParen));
+            }
+        }
+    }
+    tokens.push(token(TokenKind::RightParen));
+    Ok(())
+}
+
 fn lex(source: &str) -> Result<Vec<Token>, String> {
     let chars: Vec<char> = source.chars().collect();
     let mut tokens = Vec::new();
@@ -159,6 +371,13 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
                     }
                 }
             }
+            continue;
+        }
+
+        // An f-string: f"text {expression} text", made into the tokens of
+        // ("text" + __interpolate(expression) + "text").
+        if current == 'f' && chars.get(cursor + 1) == Some(&'"') {
+            lex_fstring(&chars, &mut cursor, line, &mut column, &mut tokens)?;
             continue;
         }
 
@@ -3389,7 +3608,9 @@ struct Emitter {
 /// Built-in conversion functions (see Emitter::emit_conversion).
 /// Functions built into the compiler rather than declared in the standard
 /// library, because each accepts several types.
-const CONVERSION_FUNCTIONS: [&str; 19] = [
+const CONVERSION_FUNCTIONS: [&str; 20] = [
+    // An f-string's expression (see lex_fstring).
+    "__interpolate",
     "to_int",
     "to_double",
     "to_byte",
@@ -6380,6 +6601,55 @@ impl Emitter {
 
     /// `to_int`, `to_double`, `to_byte`, and `to_string`: built in rather than
     /// declared in the standard library because each accepts several types.
+    /// An f-string's `{expression}` as text: as to_string converts it, with
+    /// an object's __toString, and with null (a null string, char, or
+    /// object, or `null` itself) as "null", the way print writes it.
+    fn emit_interpolated(&mut self, arguments: &[Expr], variables: &HashMap<String, Value>, body: &mut String) -> Result<Value, String> {
+        let [argument] = arguments else { unreachable!("an f-string part has one expression") };
+        let value = self.emit_expression(argument, variables, body)?;
+        match value.value_type {
+            ValueType::Null => self.emit_expression(&Expr::Text("null".to_string()), variables, body),
+            ValueType::Class(class_id) if self.find_method(class_id, "__toString").is_ok() => {
+                let mut scope = variables.clone();
+                scope.insert("#interpolated".to_string(), Value { slot: None, ..value.clone() });
+                let call = Expr::Nullsafe(
+                    Box::new(Expr::Variable("#interpolated".to_string())),
+                    "#interpolated.object".to_string(),
+                    Box::new(Expr::MethodCall(Box::new(Expr::Variable("#interpolated.object".to_string())), "__toString".to_string(), Vec::new())),
+                );
+                self.emit_coalesce(&call, &Expr::Text("null".to_string()), &scope, body)
+            }
+            ValueType::Class(_) => Err(format!(
+                "an f-string can't include a value of type {} unless its class declares `public function __toString(): string`",
+                self.type_name(value.value_type)
+            )),
+            ValueType::String | ValueType::Char => {
+                // A null string or char reads "null"; the result borrows
+                // either the value (released as usual) or the literal.
+                let null = self.emit_expression(&Expr::Text("null".to_string()), variables, body)?;
+                let is_null = self.new_register();
+                let text = self.new_register();
+                let operand = value.operand.clone();
+                body.push_str(&format!(
+                    "  {is_null} = icmp eq ptr {operand}, null\n  {text} = select i1 {is_null}, ptr {}, ptr {operand}\n",
+                    null.operand
+                ));
+                Ok(Value { value_type: ValueType::String, operand: text, slot: None })
+            }
+            ValueType::Array(_) | ValueType::Map(_) | ValueType::Function(_) | ValueType::Void => Err(format!(
+                "an f-string can't include a value of type {}; convert it to text first, as with implode or json_encode",
+                self.type_name(value.value_type)
+            )),
+            _ => {
+                // Converted from the value already computed, not by
+                // evaluating the expression again.
+                let mut scope = variables.clone();
+                scope.insert("#interpolated".to_string(), Value { slot: None, ..value });
+                self.emit_conversion("to_string", &[Expr::Variable("#interpolated".to_string())], &scope, body)
+            }
+        }
+    }
+
     fn emit_conversion(
         &mut self,
         name: &str,
@@ -6389,6 +6659,9 @@ impl Emitter {
     ) -> Result<Value, String> {
         if name == "sprintf" {
             return self.emit_sprintf(arguments, variables, body);
+        }
+        if name == "__interpolate" {
+            return self.emit_interpolated(arguments, variables, body);
         }
         if name == "json_encode" {
             return self.emit_json_encode(arguments, variables, body);
@@ -7893,14 +8166,16 @@ impl Emitter {
                     value.operand
                 ));
             }
-            ValueType::String => body.push_str(&format!(
-                "  call i32 (ptr, ...) @printf(ptr @.fmt.string, ptr {})\n",
-                value.operand
-            )),
-            ValueType::Char => body.push_str(&format!(
-                "  call i32 (ptr, ...) @printf(ptr @.fmt.string, ptr {})\n",
-                value.operand
-            )),
+            ValueType::String | ValueType::Char => {
+                // A null string prints as "null", as it does among other
+                // values (musl's printf would crash on a null pointer).
+                let null = self.new_register();
+                let text = self.new_register();
+                body.push_str(&format!(
+                    "  {null} = icmp eq ptr {operand}, null\n  {text} = select i1 {null}, ptr @.str.null, ptr {operand}\n  call i32 (ptr, ...) @printf(ptr @.fmt.string, ptr {text})\n",
+                    operand = value.operand
+                ));
+            }
             ValueType::Null => body.push_str(
                 "  call i32 (ptr, ...) @printf(ptr @.fmt.string, ptr @.str.null)\n",
             ),
@@ -11258,6 +11533,48 @@ mod tests {
         assert!(ir.contains("@qiq_stdlib___regex_scan"));
         // A pattern without a subject is a type error.
         assert!(compile_source("import preg_match from \"std/regex\"; preg_match(\"a\");").is_err());
+    }
+
+    #[test]
+    fn lexes_fstrings() {
+        // Text and expressions become ("text" + __interpolate(expression)).
+        let kinds = |source: &str| -> Vec<String> {
+            lex(source).unwrap().into_iter().map(|token| format!("{:?}", token.kind)).collect()
+        };
+        assert_eq!(kinds(r#"f"plain""#), ["Text(\"plain\")", "End"]);
+        assert_eq!(kinds(r#"f"""#), ["Text(\"\")", "End"]);
+        assert_eq!(
+            kinds(r#"f"a{x}b""#),
+            ["LeftParen", "Text(\"a\")", "Plus", "Identifier(\"__interpolate\")", "LeftParen", "Identifier(\"x\")", "RightParen", "Plus", "Text(\"b\")", "RightParen", "End"]
+        );
+        assert_eq!(
+            kinds(r#"f"{x:.2f}""#),
+            ["LeftParen", "Identifier(\"sprintf\")", "LeftParen", "Text(\"%.2f\")", "Comma", "Identifier(\"x\")", "RightParen", "RightParen", "End"]
+        );
+        // Braces, escapes, and quotes, colons, and braces inside the expression.
+        assert_eq!(kinds(r#"f"{{a}} \t \"""#), ["Text(\"{a} \\t \\\"\")", "End"]);
+        assert!(kinds(r#"f"{m["k"]}""#).contains(&"Text(\"k\")".to_string()));
+        assert!(kinds(r#"f"{A::b}""#).contains(&"DoubleColon".to_string()));
+        assert!(kinds(r#"f"{g(a: 1)}""#).contains(&"Colon".to_string()));
+        assert!(kinds(r#"f"{len({"a" => 1})}""#).contains(&"Text(\"a\")".to_string()));
+        // An identifier f followed by a space isn't an f-string.
+        assert!(kinds(r#"f "x""#).starts_with(&["Identifier(\"f\")".to_string()]));
+
+        let error = |source: &str| compile_source(source).unwrap_err();
+        assert_eq!(error(r#"string s = f"{";"#), "1:14: '{' in an f-string without a closing '}'");
+        assert_eq!(error(r#"string s = f"{x"#), "1:14: '{' in an f-string without a closing '}'");
+        assert_eq!(error(r#"string s = f"a } b";"#), "1:16: single '}' in an f-string; write '}}' for a brace");
+        assert_eq!(error(r#"string s = f"{ }";"#), "1:14: empty expression in an f-string: write {name}, or {{}} for braces");
+        assert!(error(r#"string s = f"{1:,d}";"#).starts_with("1:14: invalid format spec ',d' in an f-string"));
+        assert!(error(r#"string s = f"{1:%d}";"#).starts_with("1:14: invalid format spec '%d'"));
+        assert_eq!(error(r#"string s = f"\q";"#), "1:14: unsupported string escape \\q");
+        // Errors inside the expression point into it.
+        assert_eq!(error(r#"int a = 1; string s = f"x {a @ 2}";"#), "1:30: unexpected character '@'");
+        assert!(error(r#"string s = f"{[1, 2]}";"#).contains("an f-string can't include a value of type int[]"));
+        assert!(error("class A {} A a = new A(); string s = f\"{a}\";").contains("unless its class declares `public function __toString(): string`"));
+        assert!(error(r#"string s = f"{undeclared}";"#).contains("variable 'undeclared' is not declared"));
+        // A format spec goes through sprintf's own checks.
+        assert!(error(r#"string s = f"{1:q}";"#).starts_with("1:1: sprintf"), "{}", error(r#"string s = f"{1:q}";"#));
     }
 
     #[test]

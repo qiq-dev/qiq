@@ -76,6 +76,7 @@ TOKEN = re.compile(
     r"(?P<comment>//[^\n]*|/\*.*?(?:\*/|$))"
     r"|(?P<string>\"(?:\\.|[^\"\\])*\")"
     r"|(?P<raw>`[^`]*`?)"
+    r"|(?P<fstring>f\"(?:\\.|[^\"\\])*\")"
     r"|(?P<char>'(?:\\.|[^'\\])')"
     r"|(?P<number>\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b)"
     r"|(?P<word>[A-Za-z_][A-Za-z0-9_]*)"
@@ -104,7 +105,7 @@ def highlight_qiq(code):
             else:
                 out.append(text)
                 continue
-        elif kind == "raw":
+        elif kind in ("raw", "fstring"):
             kind = "string"
         elif kind == "other":
             out.append(text)

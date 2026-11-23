@@ -1,0 +1,52 @@
+// f-strings: f"text {expression} text", with format specs, escaped braces,
+// every kind of value, and null.
+class Money {
+    function __construct(public int cents) {}
+    function __toString(): string {
+        return sprintf("$%d.%02d", this->cents / 100, this->cents % 100);
+    }
+}
+
+class Item {
+    public static int made = 0;
+    function __construct(public string name, public Money price) {
+        Item::made++;
+    }
+    function label(): string {
+        return f"{this->name} ({this->price})";
+    }
+}
+
+string name = "Ada";
+int count = 3;
+double ratio = 2.5;
+print(f"Hello {name}!", f"{count} items", f"ratio {ratio}", f"{true} {'c'} {to_byte(200)}");
+print(f"{count * 2 + 1} {len(name)} {name == "Ada"} {count > 2 && ratio < 3.0}");
+
+// Calls, members, static access, nullsafe chains, and quotes inside braces.
+Item item = new Item("Tea", new Money(1250));
+map[string, int] stock = {"tea" => 7, "cake" => 0};
+print(f"{item->label()} | {item->price} | made {Item::made} | {stock["tea"]} in stock | {strtoupper(item->name)}");
+Item nothing = null;
+string missing = null;
+Money free = null;
+print(f"[{missing}] [{nothing?->name}] [{free}] [{null}]");
+// print on its own writes a null string as null too (it used to crash).
+print(missing);
+print(f"{len({"a" => 1, "b" => 2})} {sprintf("%03d", 7)} {f"nested {name}"}");
+
+// Format specs, as in sprintf without the %.
+print(f"{ratio:.3f} [{count:5d}] [{name:-6s}] {255:x} {ratio * 100.0:.0f}%");
+
+// Braces, escapes, evaluation order, and plain and raw strings unchanged.
+class Counter {
+    public static int calls = 0;
+    static function next(): int {
+        Counter::calls++;
+        return Counter::calls;
+    }
+}
+print(f"{{literal}} {{{count}}} tab:\t| quote:\" backslash:\\ newline:\n|", f"{Counter::next()}-{Counter::next()}-{Counter::next()}");
+print("{name} stays", `{name} stays`, f"", f"no braces");
+string joined = f"{name}" + f" & {count}";
+print(joined, len(f"{name}"), f"{name}" == "Ada");

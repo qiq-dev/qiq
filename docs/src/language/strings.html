@@ -14,7 +14,7 @@
 <tr><td><code>\\</code></td><td>Backslash</td></tr>
 </tbody>
 </table>
-<p>There is no variable interpolation; build strings with <code>+</code>.</p>
+<p>Join strings with <code>+</code>, or put values inside one with an <a href="#f-strings">f-string</a>.</p>
 
 <h2>Raw strings</h2>
 <p>A string between backticks is raw: backslashes are just backslashes, and it ends at the next backtick, so it can span lines. Raw strings suit regular expressions, Windows paths, and longer text such as SQL. A raw string can't contain a backtick; join one on with <code>+</code> if you need it.</p>
@@ -32,6 +32,46 @@ print(len(pattern) == len("^\\d{4}-\\d{2}$"));
 ```output
 ^\d{4}-\d{2}$ C:\Users\ada
 1
+```
+
+<h2 id="f-strings">f-strings</h2>
+<p>A string written <code>f"..."</code> can include values: each <code>{expression}</code> in it is replaced by the expression's value as text. Any expression works, including calls, members, and strings of its own.</p>
+
+```qiq
+class Item {
+    function __construct(public string name, public double price, public int stock) {}
+}
+
+Item tea = new Item("Tea", 3.5, 12);
+map[string, int] sold = {"tea" => 40};
+print(f"{tea->name}: {tea->stock} left, {sold["tea"]} sold");
+print(f"{strtoupper(tea->name)} costs {tea->price * 2.0} for two");
+```
+```output
+Tea: 12 left, 40 sold
+TEA costs 7 for two
+```
+
+<p>Values become text as <a href="function.to-string.html"><code>to_string</code></a> makes them: ints and doubles as <code>print</code> writes them, bools as <code>true</code> and <code>false</code>, and objects through their <code>__toString</code> method. A null string or object becomes <code>null</code>. An array, a map, or an object without <code>__toString</code> is a compile error; convert it first, with <code>implode</code> or <code>json_encode</code>.</p>
+<p>After a <code>:</code>, a format spec says how to write the value, as in <a href="function.sprintf.html"><code>sprintf</code></a> without the <code>%</code>: <code>{price:.2f}</code> for two decimals, <code>{count:5d}</code> for a width of 5, <code>{name:-10s}</code> to pad on the right, <code>{n:x}</code> for hexadecimal. A spec that <code>sprintf</code> can't use is a compile error.</p>
+
+```qiq
+double price = 3.5;
+int count = 7;
+print(f"{price:.2f} [{count:4d}] [{"tea":-5s}] {255:x}");
+```
+```output
+3.50 [   7] [tea  ] ff
+```
+
+<p>Write <code>{{</code> and <code>}}</code> for braces themselves. The text takes the same escapes as any string, such as <code>\n</code>. Ordinary strings and raw strings never include values: <code>"{name}"</code> is just those six characters.</p>
+
+```qiq
+string name = "Ada";
+print(f"{{{name}}}", "{name}", `{name}`);
+```
+```output
+{Ada} {name} {name}
 ```
 
 <h2>Chars</h2>
