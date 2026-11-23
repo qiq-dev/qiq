@@ -3675,7 +3675,7 @@ impl Emitter {
             ir.push_str(&self.emit_dispatch_table(*owner, method_name, Some(supplied)));
         }
         ir.push_str(
-            "\ndeclare i32 @printf(ptr, ...)\ndeclare i32 @strcmp(ptr, ptr)\ndeclare ptr @calloc(i64, i64)\ndeclare ptr @qiq_map_new(i32, i32)\ndeclare void @qiq_retain(ptr)\ndeclare void @qiq_release(ptr)\ndeclare ptr @qiq_object_new(i64, i64)\ndeclare void @qiq_map_set(ptr, i64, i64)\ndeclare i64 @qiq_map_get(ptr, i64)\ndeclare i64 @qiq_map_iteration_end(ptr)\ndeclare i64 @qiq_map_version(ptr)\ndeclare zeroext i1 @qiq_map_entry_live(ptr, i64, i64)\ndeclare zeroext i1 @qiq_map_find(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_map_has(ptr, i64)\ndeclare void @qiq_map_remove(ptr, i64)\ndeclare ptr @qiq_map_keys(ptr, i64, i32)\ndeclare ptr @qiq_map_values(ptr, i64, i32)\ndeclare zeroext i1 @qiq_map_contains_value(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_values_equal(ptr, ptr, ptr)\ndeclare i64 @qiq_map_key_at(ptr, i64)\ndeclare i64 @qiq_map_value_at(ptr, i64)\ndeclare i64 @qiq_string_len(ptr)\ndeclare ptr @qiq_sprintf(ptr, ptr, ptr, i64)\ndeclare void @qiq_bind_values(ptr, ptr, i64)\ndeclare ptr @qiq_json_encode(ptr, i64, i1 zeroext)\ndeclare i64 @qiq_json_decode(ptr, ptr)\ndeclare i32 @qiq_string_equality(ptr, ptr)\ndeclare i32 @qiq_string_compare(ptr, ptr)\ndeclare ptr @qiq_string_char_at(ptr, i64)\ndeclare ptr @qiq_string_concat(ptr, ptr)\ndeclare i64 @qiq_int_divide(i64, i64)\ndeclare i64 @qiq_int_modulo(i64, i64)\ndeclare i64 @qiq_int_power(i64, i64)\ndeclare i64 @qiq_int_shift_left(i64, i64)\ndeclare i64 @qiq_int_shift_right(i64, i64)\ndeclare double @llvm.pow.f64(double, double)\ndeclare void @qiq_uncaught(ptr, ptr)\ndeclare ptr @qiq_array_new(i64, i64, i32)\ndeclare void @qiq_set_arguments(i32, ptr)\ndeclare void @qiq_check_callable(ptr)\ndeclare void @qiq_array_push(ptr, i64, i64)\ndeclare i64 @qiq_range_plan(i64, i64, i64, i1 zeroext, ptr)\ndeclare ptr @qiq_range_int(i64, i64, i64, i1 zeroext)\ndeclare ptr @qiq_range_count(i64)\ndeclare ptr @qiq_range_double(double, double, double, i1 zeroext)\ndeclare ptr @qiq_range_char(ptr, ptr, i64, i1 zeroext)\ndeclare i64 @qiq_array_pop(ptr, i64)\ndeclare i64 @qiq_array_shift(ptr, i64)\ndeclare void @qiq_array_insert(ptr, i64, i64, i64)\ndeclare ptr @qiq_array_splice(ptr, i64, i64, i64, i1 zeroext, ptr)\ndeclare i64 @qiq_array_length(ptr)\ndeclare i64 @qiq_len_string(ptr)\ndeclare i64 @qiq_len_array(ptr)\ndeclare i64 @qiq_len_map(ptr)\ndeclare void @qiq_array_check_index(ptr, i64)\ndeclare void @qiq_print_value(ptr, i64)\ndeclare void @qiq_print_space()\ndeclare void @qiq_print_newline()\ndeclare i64 @qiq_double_to_int(double)\ndeclare zeroext i8 @qiq_int_to_byte(i64)\ndeclare i64 @qiq_string_to_int(ptr)\ndeclare double @qiq_string_to_double(ptr)\ndeclare ptr @qiq_int_to_string(i64)\ndeclare ptr @qiq_double_to_string(double)\n",
+            "\ndeclare i32 @printf(ptr, ...)\ndeclare i32 @strcmp(ptr, ptr)\ndeclare ptr @calloc(i64, i64)\ndeclare ptr @qiq_map_new(i32, i32)\ndeclare void @qiq_retain(ptr)\ndeclare void @qiq_release(ptr)\ndeclare ptr @qiq_object_new(i64, i64)\ndeclare void @qiq_map_set(ptr, i64, i64)\ndeclare i64 @qiq_map_get(ptr, i64)\ndeclare i64 @qiq_map_iteration_end(ptr)\ndeclare i64 @qiq_map_version(ptr)\ndeclare zeroext i1 @qiq_map_entry_live(ptr, i64, i64)\ndeclare zeroext i1 @qiq_map_find(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_map_has(ptr, i64)\ndeclare void @qiq_map_remove(ptr, i64)\ndeclare ptr @qiq_map_keys(ptr, i64, i32)\ndeclare ptr @qiq_map_values(ptr, i64, i32)\ndeclare zeroext i1 @qiq_map_contains_value(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_values_equal(ptr, ptr, ptr)\ndeclare i64 @qiq_map_key_at(ptr, i64)\ndeclare i64 @qiq_map_value_at(ptr, i64)\ndeclare i64 @qiq_string_len(ptr)\ndeclare ptr @qiq_sprintf(ptr, ptr, ptr, i64)\ndeclare void @qiq_bind_values(ptr, ptr, i64)\ndeclare ptr @qiq_json_encode(ptr, i64, i1 zeroext)\ndeclare i64 @qiq_json_decode(ptr, ptr)\ndeclare i32 @qiq_string_equality(ptr, ptr)\ndeclare i32 @qiq_string_compare(ptr, ptr)\ndeclare ptr @qiq_string_char_at(ptr, i64)\ndeclare ptr @qiq_string_concat(ptr, ptr)\ndeclare i64 @qiq_int_divide(i64, i64)\ndeclare i64 @qiq_int_modulo(i64, i64)\ndeclare i64 @qiq_int_power(i64, i64)\ndeclare i64 @qiq_int_power_unchecked(i64, i64)\ndeclare i64 @qiq_int_shift_left(i64, i64)\ndeclare i64 @qiq_int_shift_right(i64, i64)\ndeclare double @llvm.pow.f64(double, double)\ndeclare void @qiq_uncaught(ptr, ptr)\ndeclare ptr @qiq_array_new(i64, i64, i32)\ndeclare void @qiq_set_arguments(i32, ptr)\ndeclare void @qiq_check_callable(ptr)\ndeclare void @qiq_array_push(ptr, i64, i64)\ndeclare i64 @qiq_range_plan(i64, i64, i64, i1 zeroext, ptr)\ndeclare ptr @qiq_range_int(i64, i64, i64, i1 zeroext)\ndeclare ptr @qiq_range_count(i64)\ndeclare ptr @qiq_range_double(double, double, double, i1 zeroext)\ndeclare ptr @qiq_range_char(ptr, ptr, i64, i1 zeroext)\ndeclare i64 @qiq_array_pop(ptr, i64)\ndeclare i64 @qiq_array_shift(ptr, i64)\ndeclare void @qiq_array_insert(ptr, i64, i64, i64)\ndeclare ptr @qiq_array_splice(ptr, i64, i64, i64, i1 zeroext, ptr)\ndeclare i64 @qiq_array_length(ptr)\ndeclare i64 @qiq_len_string(ptr)\ndeclare i64 @qiq_len_array(ptr)\ndeclare i64 @qiq_len_map(ptr)\ndeclare void @qiq_array_check_index(ptr, i64)\ndeclare void @qiq_print_value(ptr, i64)\ndeclare void @qiq_print_space()\ndeclare void @qiq_print_newline()\ndeclare i64 @qiq_double_to_int(double)\ndeclare zeroext i8 @qiq_int_to_byte(i64)\ndeclare i64 @qiq_string_to_int(ptr)\ndeclare double @qiq_string_to_double(ptr)\ndeclare ptr @qiq_int_to_string(i64)\ndeclare ptr @qiq_double_to_string(double)\n",
         );
         ir.push_str(&extern_declarations);
         ir.push('\n');
@@ -6453,10 +6453,13 @@ impl Emitter {
             }
             ("to_int", ValueType::Byte) => result(ValueType::Int, instruction(self, format!("zext i8 {operand} to i64"), false, body)),
             ("to_int", ValueType::Bool) => result(ValueType::Int, instruction(self, format!("zext i1 {operand} to i64"), false, body)),
-            ("to_int", ValueType::Double) => result(
-                ValueType::Int,
-                instruction(self, format!("call i64 @qiq_double_to_int(double {operand})"), true, body),
-            ),
+            ("to_int", ValueType::Double) => {
+                // Inline unless out of range or NaN, for which the runtime throws.
+                let register = self.new_register();
+                let condition = format!("  %chk.low# = fcmp oge double {operand}, -9.223372036854775808e18\n  %chk.high# = fcmp olt double {operand}, 9.223372036854775808e18\n  %chk.ok# = and i1 %chk.low#, %chk.high#\n");
+                self.emit_fast_path(&register, "i64", &condition, &format!("fptosi double {operand} to i64"), &format!("call i64 @qiq_double_to_int(double {operand})"), body);
+                result(ValueType::Int, register)
+            }
             ("to_int", ValueType::String) => result(
                 ValueType::Int,
                 instruction(self, format!("call i64 @qiq_string_to_int(ptr {operand})"), true, body),
@@ -6467,10 +6470,13 @@ impl Emitter {
                 ValueType::Double,
                 instruction(self, format!("call double @qiq_string_to_double(ptr {operand})"), true, body),
             ),
-            ("to_byte", ValueType::Int) => result(
-                ValueType::Byte,
-                instruction(self, format!("call zeroext i8 @qiq_int_to_byte(i64 {operand})"), true, body),
-            ),
+            ("to_byte", ValueType::Int) => {
+                // Inline for 0 to 255; the runtime throws for the rest.
+                let register = self.new_register();
+                let condition = format!("  %chk.ok# = icmp ult i64 {operand}, 256\n");
+                self.emit_fast_path(&register, "i8", &condition, &format!("trunc i64 {operand} to i8"), &format!("call zeroext i8 @qiq_int_to_byte(i64 {operand})"), body);
+                result(ValueType::Byte, register)
+            }
             ("to_string", ValueType::Int) => result(
                 ValueType::String,
                 instruction(self, format!("call ptr @qiq_int_to_string(i64 {operand})"), false, body),
@@ -8153,12 +8159,17 @@ impl Emitter {
 
     /// Checks `index` against the array's bounds (throwing OutOfRangeException,
     /// or RuntimeException for a null array) and returns the element's address.
+    /// The check is inline (see emit_fast_path); only a null array or an
+    /// index out of range calls the runtime, which throws.
     fn emit_element_address(&mut self, array: &Value, element_type: ValueType, index: &str, body: &mut String) -> String {
+        let id = self.next_label;
+        self.next_label += 1;
+        let operand = &array.operand;
         body.push_str(&format!(
-            "  call void @qiq_array_check_index(ptr {}, i64 {index})\n",
-            array.operand
+            "  %chk.null{id} = icmp eq ptr {operand}, null\n  br i1 %chk.null{id}, label %chk.slow{id}, label %chk.length{id}\nchk.length{id}:\n  %chk.l{id} = load i64, ptr {operand}, align 8\n  %chk.in{id} = icmp ult i64 {index}, %chk.l{id}\n  br i1 %chk.in{id}, label %chk.fast{id}, label %chk.slow{id}\nchk.slow{id}:\n  call void @qiq_array_check_index(ptr {operand}, i64 {index})\n"
         ));
         self.emit_exception_check(body);
+        body.push_str(&format!("  br label %chk.fast{id}\nchk.fast{id}:\n"));
         let data = self.new_register();
         let address = self.new_register();
         body.push_str(&format!(
@@ -8167,6 +8178,30 @@ impl Emitter {
             element_type.llvm()
         ));
         address
+    }
+
+    /// A checked operation done inline on its common path. The runtime's
+    /// checked functions use the exception guard (setjmp), so LLVM can't
+    /// inline them; calling one for every `%`, `/`, or array index would cost
+    /// a call and a setjmp each time. Instead `condition` computes an i1,
+    /// `%chk.ok#` (with `#` standing for this check's number), that is true
+    /// when `fast` gives the right result; otherwise the runtime function
+    /// `slow` runs, which throws for the error cases (and handles any others,
+    /// such as INT64_MIN / -1). Writes the result, of type `llvm_type`, to
+    /// `register`. Registers are named from the label counter, as in
+    /// emit_exception_check.
+    fn emit_fast_path(&mut self, register: &str, llvm_type: &str, condition: &str, fast: &str, slow: &str, body: &mut String) {
+        let id = self.next_label;
+        self.next_label += 1;
+        let condition = condition.replace('#', &id.to_string());
+        body.push_str(&format!(
+            "{condition}  br i1 %chk.ok{id}, label %chk.fast{id}, label %chk.slow{id}\nchk.fast{id}:\n  %chk.f{id} = {fast}\n  br label %chk.join{id}\nchk.slow{id}:\n  %chk.s{id} = {slow}\n"
+        ));
+        let checked = self.next_label;
+        self.emit_exception_check(body);
+        body.push_str(&format!(
+            "  br label %chk.join{id}\nchk.join{id}:\n  {register} = phi {llvm_type} [ %chk.f{id}, %chk.fast{id} ], [ %chk.s{id}, %ok{checked} ]\n"
+        ));
     }
 
     /// After a call that can throw: if an exception is pending, branch to the
@@ -9561,6 +9596,49 @@ impl Emitter {
                 }
                 let register = self.new_register();
                 let (a, b) = (&left.operand, &right.operand);
+                // The checked int operations, inline where they can't fail
+                // (see emit_fast_path).
+                if left.value_type == ValueType::Int
+                    && matches!(operator, BinaryOp::Divide | BinaryOp::Modulo | BinaryOp::Power | BinaryOp::ShiftLeft | BinaryOp::ShiftRight)
+                {
+                    let constant = b.parse::<i64>().ok();
+                    let (fast, slow, safe, condition) = match operator {
+                        BinaryOp::Divide | BinaryOp::Modulo => {
+                            let (instruction, function) = if *operator == BinaryOp::Divide { ("sdiv", "divide") } else { ("srem", "modulo") };
+                            (
+                                format!("{instruction} i64 {a}, {b}"),
+                                format!("call i64 @qiq_int_{function}(i64 {a}, i64 {b})"),
+                                // 0 is an error; INT64_MIN / -1 overflows the instruction.
+                                constant.is_some_and(|value| value != 0 && value != -1),
+                                format!("  %chk.z# = icmp eq i64 {b}, 0\n  %chk.m# = icmp eq i64 {b}, -1\n  %chk.bad# = or i1 %chk.z#, %chk.m#\n  %chk.ok# = xor i1 %chk.bad#, true\n"),
+                            )
+                        }
+                        BinaryOp::ShiftLeft | BinaryOp::ShiftRight => {
+                            let (instruction, function) = if *operator == BinaryOp::ShiftLeft { ("shl", "left") } else { ("ashr", "right") };
+                            (
+                                format!("{instruction} i64 {a}, {b}"),
+                                format!("call i64 @qiq_int_shift_{function}(i64 {a}, i64 {b})"),
+                                // Negative amounts are errors; 64 or more is
+                                // undefined for the instruction.
+                                constant.is_some_and(|value| (0..64).contains(&value)),
+                                format!("  %chk.ok# = icmp ult i64 {b}, 64\n"),
+                            )
+                        }
+                        _ => (
+                            format!("call i64 @qiq_int_power_unchecked(i64 {a}, i64 {b})"),
+                            format!("call i64 @qiq_int_power(i64 {a}, i64 {b})"),
+                            // A negative exponent is an error.
+                            constant.is_some_and(|value| value >= 0),
+                            format!("  %chk.ok# = icmp sge i64 {b}, 0\n"),
+                        ),
+                    };
+                    if safe {
+                        body.push_str(&format!("  {register} = {fast}\n"));
+                    } else {
+                        self.emit_fast_path(&register, "i64", &condition, &fast, &slow, body);
+                    }
+                    return Ok(Value { value_type: ValueType::Int, operand: register, slot: None });
+                }
                 let instruction = if left.value_type == ValueType::Int {
                     match operator {
                         BinaryOp::Add => format!("add i64 {a}, {b}"),
@@ -12721,6 +12799,30 @@ mod tests {
     }
 
     #[test]
+    fn checked_int_operations_are_inline() {
+        // A constant divisor other than 0 and -1 can't fail: no runtime call.
+        let constant = compile_source("int x = 10; print(x % 7, x / 3, x << 2, x >> 63, x ** 3);").unwrap();
+        for instruction in ["srem i64 %v", "sdiv i64 %v", "shl i64 %v", "ashr i64 %v", "call i64 @qiq_int_power_unchecked(i64 %v"] {
+            assert!(constant.contains(instruction), "missing {instruction}: {constant}");
+        }
+        for call in ["@qiq_int_modulo(", "@qiq_int_divide(", "@qiq_int_shift_left(", "@qiq_int_shift_right(", "@qiq_int_power("] {
+            assert!(!constant.split("define i32 @main").nth(1).unwrap().contains(call), "{call} in main: {constant}");
+        }
+        // Otherwise the instruction is the fast path, and the runtime (which
+        // throws) the slow one.
+        let variable = compile_source("int x = 10; int y = 3; print(x % y, x / y, x << y, x ** y);").unwrap();
+        for both in [["srem i64", "@qiq_int_modulo("], ["sdiv i64", "@qiq_int_divide("], ["shl i64", "@qiq_int_shift_left("], ["@qiq_int_power_unchecked(", "@qiq_int_power(i64"]] {
+            assert!(variable.contains(both[0]) && variable.contains(both[1]), "{both:?}: {variable}");
+        }
+        // Array indexes are checked inline; only a failing check calls the runtime.
+        let index = compile_source("int[] a = [1, 2, 3]; int i = 1; print(a[i]);").unwrap();
+        assert!(index.contains("icmp ult i64") && index.contains("call void @qiq_array_check_index("), "{index}");
+        // Conversions too.
+        let conversions = compile_source("double d = 2.5; int n = 65; print(to_int(d), to_byte(n));").unwrap();
+        assert!(conversions.contains("fptosi double") && conversions.contains("trunc i64"), "{conversions}");
+    }
+
+    #[test]
     fn arithmetic_precedence_and_associativity() {
         // print((2 + 3) * 4): the add happens before the multiply.
         let grouped = compile_source("int a = 2; print((a + 3) * 4);").unwrap();
@@ -12732,12 +12834,12 @@ mod tests {
         assert!(left.contains("%v2 = sub i64 %v1, 4\n  %v3 = sub i64 %v2, 3"), "{left}");
         // 2 ** 3 ** 2 is 2 ** (3 ** 2).
         let right = compile_source("print(2 ** 3 ** 2);").unwrap();
-        let inner = right.find("%v0 = call i64 @qiq_int_power(i64 3, i64 2)").expect("inner power");
-        let outer = right.find("%v1 = call i64 @qiq_int_power(i64 2, i64 %v0)").expect("outer power");
+        let inner = right.find("%v0 = call i64 @qiq_int_power_unchecked(i64 3, i64 2)").expect("inner power");
+        let outer = right.find("@qiq_int_power_unchecked(i64 2, i64 %v0)").expect("outer power");
         assert!(inner < outer, "{right}");
         // -2 ** 2 is -(2 ** 2); a plain negative literal is folded.
         let negated_power = compile_source("print(-2 ** 2);").unwrap();
-        let power = negated_power.find("%v0 = call i64 @qiq_int_power(i64 2, i64 2)").expect("power");
+        let power = negated_power.find("%v0 = call i64 @qiq_int_power_unchecked(i64 2, i64 2)").expect("power");
         let negate = negated_power.find("%v1 = sub i64 0, %v0").expect("negate");
         assert!(power < negate, "{negated_power}");
         let literal = compile_source("print(-5); print(2 ** -1);").unwrap();
@@ -12849,7 +12951,9 @@ mod tests {
         assert!(ir.contains("%v2 = and i64 %v1, 1\n  %v3 = icmp eq i64 %v2, 0"), "{ir}");
         // 1 << 2 + 1 is 1 << (2 + 1).
         let shift = compile_source("print(1 << 2 + 1);").unwrap();
-        assert!(shift.contains("%v0 = add i64 2, 1\n  %v1 = call i64 @qiq_int_shift_left(i64 1, i64 %v0)"), "{shift}");
+        let sum = shift.find("%v0 = add i64 2, 1\n").expect("sum");
+        let shifted = shift.find("shl i64 1, %v0").expect("shift");
+        assert!(sum < shifted, "{shift}");
         // 1 | 6 ^ 3 & 2 is 1 | (6 ^ (3 & 2)).
         let levels = compile_source("print(1 | 6 ^ 3 & 2);").unwrap();
         assert!(levels.contains("%v0 = and i64 3, 2\n  %v1 = xor i64 6, %v0\n  %v2 = or i64 1, %v1"), "{levels}");

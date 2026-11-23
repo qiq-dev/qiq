@@ -18,9 +18,9 @@ QIQ_GUARDED(int64_t, qiq_int_modulo, 0, (int64_t left, int64_t right), (left, ri
     return left % right;
 }
 
-// Exponentiation by squaring, wrapping on overflow.
-QIQ_GUARDED(int64_t, qiq_int_power, 0, (int64_t base, int64_t exponent), (base, exponent)) {
-    if (exponent < 0) qiq_throw(QIQ_ARITHMETIC_EXCEPTION, "int exponent must not be negative; use doubles for fractional powers");
+// Exponentiation by squaring, wrapping on overflow, for an exponent the
+// compiled code has checked isn't negative. Unguarded, so LLVM can inline it.
+int64_t qiq_int_power_unchecked(int64_t base, int64_t exponent) {
     uint64_t result = 1;
     uint64_t factor = (uint64_t)base;
     uint64_t remaining = (uint64_t)exponent;
@@ -30,6 +30,12 @@ QIQ_GUARDED(int64_t, qiq_int_power, 0, (int64_t base, int64_t exponent), (base, 
         remaining >>= 1;
     }
     return (int64_t)result;
+}
+
+// The same, throwing for a negative exponent.
+QIQ_GUARDED(int64_t, qiq_int_power, 0, (int64_t base, int64_t exponent), (base, exponent)) {
+    if (exponent < 0) qiq_throw(QIQ_ARITHMETIC_EXCEPTION, "int exponent must not be negative; use doubles for fractional powers");
+    return qiq_int_power_unchecked(base, exponent);
 }
 
 // Shifts follow PHP: a negative amount is an error, and shifting by the full
