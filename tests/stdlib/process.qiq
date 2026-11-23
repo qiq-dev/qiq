@@ -1,0 +1,63 @@
+// std/os: exec, shell, and ProcessResult.
+import exec, shell, setenv, ProcessResult from "std/os";
+import File from "std/file";
+
+// Output, exit status, and error output.
+ProcessResult r = exec(["echo", "hello", "world"]);
+print(r->exitCode, r->ok(), trim(r->stdout), r->stderr == "");
+r = exec(["sh", "-c", "echo out; echo err >&2; exit 3"]);
+print(r->exitCode, r->ok(), trim(r->stdout), trim(r->stderr));
+
+// Arguments are passed as they are, with no shell in between.
+r = exec(["printf", "%s|", "a b", "\"q\"", "$HOME", "; rm -rf /"]);
+print(r->stdout);
+
+// Input, working directory, and environment.
+print(trim(exec(["tr", "a-z", "A-Z"], input: "shout\n")->stdout));
+print(trim(exec(["pwd"], cwd: "/tmp")->stdout));
+setenv("QIQ_KEPT", "kept");
+print(trim(shell("echo $QIQ_EXTRA $QIQ_KEPT", env: {"QIQ_EXTRA" => "extra"})->stdout));
+print(trim(shell("echo ${QIQ_KEPT:-gone}", env: {"QIQ_KEPT" => "replaced"})->stdout));
+
+// A shell for pipes and redirects.
+print(trim(shell("printf 'b\\na\\nc\\n' | sort | head -n 2 | tr '\\n' ,")->stdout));
+
+// Large output on both streams at once doesn't deadlock.
+r = shell("head -c 300000 /dev/zero | tr '\\0' x; head -c 300000 /dev/zero | tr '\\0' y >&2");
+print(len(r->stdout), len(r->stderr));
+// Large input to a command that reads it all.
+print(trim(exec(["wc", "-c"], input: str_repeat("z", 500000))->stdout));
+// A command that ignores its input.
+print(exec(["true"], input: str_repeat("z", 500000))->exitCode);
+
+// A signal: 128 + its number.
+print(shell("kill -9 $$")->exitCode);
+
+// check()
+print(trim(exec(["echo", "fine"])->check()->stdout));
+try {
+    shell("echo broken >&2; exit 2")->check();
+} catch (ProcessException e) {
+    print("error:", e->getMessage(), e->getCode());
+}
+
+// Commands that can't run.
+foreach ([["qiq-no-such-command"], ["/nonexistent/tool"], ["/etc/hostname"]] as command) {
+    try {
+        exec(command);
+    } catch (ProcessException e) {
+        print("error:", e->getMessage());
+    }
+}
+try { exec(["ls"], cwd: "/nonexistent"); } catch (ProcessException e) { print("error:", e->getMessage()); }
+try { exec(["sleep", "5"], timeout: 1); } catch (ProcessException e) { print("error:", e->getMessage()); }
+try { exec([]); } catch (InvalidArgumentException e) { print("error:", e->getMessage()); }
+try { exec(["ls"], env: {"A=B" => "x"}); } catch (InvalidArgumentException e) { print("error:", e->getMessage()); }
+try { exec(["ls"], timeout: -1); } catch (InvalidArgumentException e) { print("error:", e->getMessage()); }
+try { exec(["printf", "\\377"]); } catch (InvalidUtf8Exception e) { print("error:", e->getMessage()); }
+
+// Files the program has open aren't passed on to the command: it sees only
+// its standard input, output, and error, and the directory ls is reading.
+File open = File::open("/etc/hostname", "r");
+print(trim(exec(["ls", "/proc/self/fd"])->stdout) == "0\n1\n2\n3");
+open->close();

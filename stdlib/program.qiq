@@ -1,4 +1,8 @@
-// The running program, implemented in C (stdlib/runtime/program.c).
+// The running program, implemented in C (stdlib/runtime/program.c and
+// stdlib/runtime/process.c).
+
+import ProcessException from "exceptions";
+import trim from "string";
 
 // The command line: element 0 is the program (the source file with
 // `qiq run`, the executable once built), followed by the arguments. Throws
@@ -22,3 +26,76 @@ extern function unsetenv(string name): void;
 
 // The program's process ID. Each worker of the HTTP server has its own.
 extern function getpid(): int;
+
+// ---------------------------------------------------------------------------
+// Running other programs (stdlib/runtime/process.c)
+
+extern function __process_run(string[] command, string input, string cwd, string[] envNames, string[] envValues, int timeout): int;
+extern function __process_output(int stream): string;
+
+// What a command run by exec or shell did: its exit status and everything it
+// wrote to standard output and standard error.
+class ProcessResult {
+    // The exit status: 0 for success, 1 to 255 for failure, and 128 plus
+    // the signal's number if a signal ended the command.
+    public readonly int exitCode;
+    // Everything the command wrote to standard output.
+    public readonly string stdout;
+    // Everything the command wrote to standard error.
+    public readonly string stderr;
+
+    function __construct(int exitCode, string stdout, string stderr) {
+        this->exitCode = exitCode;
+        this->stdout = stdout;
+        this->stderr = stderr;
+    }
+
+    // Whether the command succeeded (exited with status 0).
+    function ok(): bool {
+        return this->exitCode == 0;
+    }
+
+    // Throws ProcessException, with the exit status as its code and the
+    // error output in its message, unless the command succeeded. Returns
+    // the result, so `exec(...)->check()->stdout` reads the output of a
+    // command that must succeed.
+    function check(): ProcessResult {
+        if (this->exitCode != 0) {
+            string message = "command failed with exit status " + to_string(this->exitCode);
+            string detail = trim(this->stderr);
+            if (detail != "") {
+                message = message + ": " + detail;
+            }
+            throw new ProcessException(message, this->exitCode);
+        }
+        return this;
+    }
+}
+
+// Runs a program and waits for it to finish. `command` is the program
+// followed by its arguments, such as ["git", "status"]; the program is
+// looked up on PATH unless it contains a "/". No shell is involved, so
+// arguments are passed exactly as given: spaces, quotes, and $ need no
+// escaping. `input` is written to the command's standard input (which is
+// otherwise empty), `cwd` is the directory it runs in, `env` adds to or
+// replaces the program's environment variables for it, and `timeout` (in
+// seconds, 0 for none) kills it if it runs longer. A command that exits
+// with an error status returns normally; check exitCode, or call check().
+// Throws ProcessException if the command can't be run or times out.
+function exec(string[] command, string input = null, string cwd = null, map[string, string] env = null, int timeout = 0): ProcessResult {
+    string[] names;
+    string[] values;
+    if (env != null) {
+        names = map_keys(env);
+        values = map_values(env);
+    }
+    int exitCode = __process_run(command, input, cwd, names, values, timeout);
+    return new ProcessResult(exitCode, __process_output(1), __process_output(2));
+}
+
+// Runs `command` with the system shell (/bin/sh -c), for pipes, redirects,
+// wildcards, and &&. Takes the same settings as exec. Never put untrusted
+// text in the command: use exec and pass it as an argument instead.
+function shell(string command, string input = null, string cwd = null, map[string, string] env = null, int timeout = 0): ProcessResult {
+    return exec(["/bin/sh", "-c", command], input, cwd, env, timeout);
+}

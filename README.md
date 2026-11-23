@@ -27,7 +27,7 @@ Hello, Ada!
 Hello, Linus!
 ```
 
-The language has classes with inheritance, interfaces, static members, anonymous functions and exceptions. It also has modules and packages, and memory is managed automatically with reference counting. The standard library covers strings, files, dates, JSON, an HTTP client and an HTTP server.
+The language has classes with inheritance, interfaces, static members, anonymous functions and exceptions. It also has modules and packages, and memory is managed automatically with reference counting. The standard library covers strings, files, dates, JSON, running other programs, an HTTP client and an HTTP server.
 
 **Documentation:** [qiq-lang.com](https://qiq-lang.com/) has the manual and the standard library reference.
 

@@ -11,6 +11,7 @@
 // │   ├── DatabaseException
 // │   │   └── ConstraintViolationException
 // │   │       └── UniqueViolationException
+// │   ├── ProcessException
 // │   ├── KeyNotFoundException
 // │   ├── OutOfRangeException
 // │   └── InvalidUtf8Exception
@@ -90,6 +91,12 @@ extern function __database_error_code(): int;
 extern function __database_error_state(): string;
 
 // A map lookup used a key that is not in the map.
+// A command couldn't be run (std/os exec and shell): it wasn't found,
+// isn't executable, the working directory doesn't exist, or it ran past
+// its timeout. A command that runs and exits with an error status doesn't
+// throw; check ProcessResult's exitCode.
+class ProcessException extends RuntimeException {}
+
 class KeyNotFoundException extends RuntimeException {}
 
 // An array index is below 0 or not less than the array's length.

@@ -22,7 +22,7 @@ OVERVIEW = (
     "<table><thead><tr><th>Import path</th><th>Contents</th></tr></thead><tbody>"
     "<tr><td><code>std/file</code></td><td><a href=\"ref.files.html\">Files</a> and the <a href=\"class.file.html\">File</a> class</td></tr>"
     "<tr><td><code>std/time</code></td><td><a href=\"ref.datetime.html\">Date and time</a>, and the <a href=\"class.datetime.html\">DateTime</a> and <a href=\"class.duration.html\">Duration</a> classes</td></tr>"
-    "<tr><td><code>std/os</code></td><td>The <a href=\"ref.program.html\">program</a>: arguments, exit status, environment</td></tr>"
+    "<tr><td><code>std/os</code></td><td>The <a href=\"ref.program.html\">program</a>: arguments, exit status, environment, and running other commands</td></tr>"
     "<tr><td><code>std/memory</code></td><td><a href=\"function.gc-collect-cycles.html\">gc_collect_cycles</a></td></tr>"
     "<tr><td><code>std/net</code></td><td>The <a href=\"class.socket.html\">Socket</a> and <a href=\"class.url.html\">Url</a> classes</td></tr>"
     "<tr><td><code>std/net/http</code></td><td>The <a href=\"ref.http.html\">HTTP client</a> and URL encoding</td></tr>"
@@ -1442,7 +1442,7 @@ ARRAYS = {
 PROGRAM = {
     "slug": "program",
     "title": "Program",
-    "intro": "The running program: its command-line arguments, its exit status, and its environment variables.",
+    "intro": "The running program: its command-line arguments, its exit status, and its environment variables, and running other programs with <code>exec</code> and <code>shell</code>. Import them from <code>std/os</code>.",
     "details": """<h2>A command-line program</h2>
 <pre class="code"><span class="type">string</span>[] args = <span class="fn">argv</span>();
 <span class="kw">if</span> (<span class="fn">len</span>(args) &lt; <span class="lit">2</span>) {
@@ -1565,6 +1565,82 @@ hello, Ada</pre>""",
                 }
             ],
             "see_also": ["argv"],
+        },
+        {
+            "name": "exec",
+            "purpose": "Run a program and wait for it",
+            "params": [
+                param("command", "string[]", "The program followed by its arguments, such as <code>[\"git\", \"status\"]</code>. The program is looked up on <code>PATH</code> unless it contains a <code>/</code>."),
+                param("input", "string", "Text written to the command's standard input. Without it, the command's standard input is empty.", "null"),
+                param("cwd", "string", "The directory the command runs in; the program's own by default.", "null"),
+                param("env", "map[string, string]", "Environment variables to add or replace for the command. It also gets the program's other variables.", "null"),
+                param("timeout", "int", "Seconds the command may run before it's killed; 0 for no limit.", "0"),
+            ],
+            "returns": "ProcessResult",
+            "description": "Runs <code>command</code>, waits for it to finish, and returns a <a href=\"class.processresult.html\">ProcessResult</a> with its exit status and everything it wrote to standard output and standard error. No shell is involved: each element of <code>command</code> reaches the program as one argument, exactly as given, so spaces, quotes, <code>$</code>, and <code>;</code> need no escaping and can't be used to inject another command. Use <a href=\"function.shell.html\">shell</a> for pipes and redirects.",
+            "return_description": "The exit status and output. A command that exits with an error status returns normally; check <code>exitCode</code> or <code>ok()</code>, or call <code>check()</code> to throw instead.",
+            "errors": [
+                "<code>ProcessException</code> if the command can't be run (the program isn't found or isn't executable, or <code>cwd</code> doesn't exist), or runs longer than <code>timeout</code>.",
+                "<code>InvalidUtf8Exception</code> if its output isn't UTF-8 text.",
+                "<code>InvalidArgumentException</code> if <code>command</code> is empty, an <code>env</code> name is empty or contains <code>=</code>, or <code>timeout</code> is negative.",
+            ],
+            "examples": [
+                {
+                    "title": "Reading a command's output",
+                    "code": 'ProcessResult result = exec(["echo", "hello", "world"]);\nprint(result->exitCode, trim(result->stdout));',
+                    "output": "0 hello world",
+                },
+                {
+                    "title": "Arguments are passed as they are",
+                    "code": 'string name = "it\'s; rm -rf ~";\nprint(exec(["printf", "[%s]", name])->stdout);',
+                    "output": "[it's; rm -rf ~]",
+                },
+                {
+                    "title": "Input, a directory, and a variable",
+                    "code": 'print(trim(exec(["tr", "a-z", "A-Z"], input: "quiet")->stdout));\nprint(trim(exec(["pwd"], cwd: "/")->stdout));\nprint(trim(exec(["printenv", "GREETING"], env: {"GREETING" => "hi"})->stdout));',
+                    "output": "QUIET\n/\nhi",
+                },
+                {
+                    "title": "Failure",
+                    "code": 'ProcessResult result = exec(["ls", "/no/such/dir"]);\nprint(result->ok(), result->exitCode > 0);\ntry {\n    exec(["no-such-program"]);\n} catch (ProcessException e) {\n    print(e->getMessage());\n}',
+                    "output": "0 1\ncommand not found: no-such-program",
+                },
+            ],
+            "notes": [
+                "PHP's <code>exec</code>, <code>shell_exec</code>, and <code>system</code> pass a string to the shell, so every value in it needs <code>escapeshellarg</code>. qiq's <code>exec</code> takes the arguments as an array, like Python's <code>subprocess.run</code> and Go's <code>exec.Command</code>.",
+                "The command doesn't inherit the program's open files, sockets, or database connections.",
+                "When the timeout is reached the command is killed with <code>SIGKILL</code>. A command ended by a signal has exit status 128 plus the signal's number, as in the shell.",
+            ],
+            "see_also": ["shell", "getenv"],
+        },
+        {
+            "name": "shell",
+            "purpose": "Run a command with the system shell",
+            "params": [
+                param("command", "string", "A shell command line, such as <code>ls *.qiq | wc -l</code>."),
+                param("input", "string", "Text written to the command's standard input.", "null"),
+                param("cwd", "string", "The directory the command runs in.", "null"),
+                param("env", "map[string, string]", "Environment variables to add or replace.", "null"),
+                param("timeout", "int", "Seconds before the command is killed; 0 for no limit.", "0"),
+            ],
+            "returns": "ProcessResult",
+            "description": "Runs <code>command</code> with <code>/bin/sh -c</code>, for pipes, redirects, wildcards, <code>&amp;&amp;</code>, and variables, and returns a <a href=\"class.processresult.html\">ProcessResult</a>. It's <code>exec([\"/bin/sh\", \"-c\", command], ...)</code>, with the same settings and errors.",
+            "return_description": "The exit status and output of the shell, which is the exit status of the last command it ran.",
+            "errors": ["As for <a href=\"function.exec.html\">exec</a>."],
+            "examples": [
+                {
+                    "title": "A pipeline",
+                    "code": 'print(trim(shell("printf \'pear\\napple\\nfig\\n\' | sort | head -n 2")->stdout));',
+                    "output": "apple\nfig",
+                },
+                {
+                    "title": "Must succeed",
+                    "code": 'try {\n    shell("echo starting; echo disk full >&2; exit 1")->check();\n} catch (ProcessException e) {\n    print(e->getMessage(), e->getCode());\n}',
+                    "output": "command failed with exit status 1: disk full 1",
+                },
+            ],
+            "notes": ["The shell interprets everything in <code>command</code>, so never build it from untrusted text, such as a request's form fields: a value like <code>x; rm -rf ~</code> would run a second command. Pass such values to <a href=\"function.exec.html\">exec</a> as arguments, or to the shell through <code>env</code> (<code>shell(\"grep -- \\\"$PATTERN\\\" log.txt\", env: {\"PATTERN\" => pattern})</code>)."],
+            "see_also": ["exec"],
         },
     ],
 }
@@ -2343,6 +2419,7 @@ EXCEPTION_CLASSES = """<h1>Exception classes</h1>
 │   ├── DatabaseException
 │   │   └── ConstraintViolationException
 │   │       └── UniqueViolationException
+│   ├── ProcessException
 │   ├── KeyNotFoundException
 │   ├── OutOfRangeException
 │   └── InvalidUtf8Exception
@@ -2371,6 +2448,7 @@ EXCEPTION_CLASSES = """<h1>Exception classes</h1>
 <tr><td><code>DatabaseException</code></td><td>A <a href="class.database.html">database</a> couldn't be opened or rejected a statement (an SQL error, a broken constraint, a missing table, a lock held for more than 5 seconds), the wrong number of values was given for a statement's placeholders, or a <a href="class.row.html">Row</a> getter was asked for a column that doesn't exist or holds another type. <code>getSqlState()</code> gives the SQLSTATE and <code>getCode()</code> the database's error number; see <a href="class.database.html">Errors</a>.</td></tr>
 <tr><td><code>ConstraintViolationException</code></td><td>A statement broke a constraint: <code>NOT NULL</code>, <code>CHECK</code>, a foreign key, or a unique key. A subclass of <code>DatabaseException</code>.</td></tr>
 <tr><td><code>UniqueViolationException</code></td><td>A row would duplicate another's value in a unique key or primary key. A subclass of <code>ConstraintViolationException</code>.</td></tr>
+<tr><td><code>ProcessException</code></td><td>A command given to <a href="function.exec.html">exec</a> or <a href="function.shell.html">shell</a> couldn't be run (it wasn't found or isn't executable, or the working directory doesn't exist), or ran past its timeout. A command that exits with an error status doesn't throw; check <code>exitCode</code>.</td></tr>
 <tr><td><code>KeyNotFoundException</code></td><td>A map lookup used a key that isn't in the map.</td></tr>
 <tr><td><code>OutOfRangeException</code></td><td>An array index is below 0 or not less than the array's length.</td></tr>
 <tr><td><code>InvalidUtf8Exception</code></td><td>Bytes or file contents that should be text aren't valid UTF-8.</td></tr>
@@ -3025,6 +3103,39 @@ mailto:help@example.com
 <p>Not supported yet: internationalized domain names written in their own script (<code>bücher.example</code>), which aren't converted to their <code>xn--</code> form.</p>
 """
 
+PROCESSRESULT_CLASS = """<h1>The ProcessResult class</h1>
+<p>What a command run by <a href="function.exec.html">exec</a> or <a href="function.shell.html">shell</a> did: its exit status and its output. Import it from <code>std/os</code> to name the type.</p>
+<h2>Class synopsis</h2>
+<div class="synopsis"><code><span class="kw">class</span> <span class="cls">ProcessResult</span> {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">public readonly</span> <span class="type">int</span> exitCode;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">public readonly</span> <span class="type">string</span> stdout;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">public readonly</span> <span class="type">string</span> stderr;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">ok</span>(): <span class="type">bool</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">check</span>(): <span class="cls">ProcessResult</span><br>
+}</code></div>
+<table>
+<thead><tr><th>Member</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>exitCode</code></td><td>The exit status: 0 for success, 1 to 255 for failure, and 128 plus the signal's number if a signal ended the command</td></tr>
+<tr><td><code>stdout</code></td><td>Everything the command wrote to standard output, including the final newline; <code>trim</code> removes it</td></tr>
+<tr><td><code>stderr</code></td><td>Everything it wrote to standard error</td></tr>
+<tr><td><code>ok()</code></td><td>Whether <code>exitCode</code> is 0</td></tr>
+<tr><td><code>check()</code></td><td>Returns the result if the command succeeded, and otherwise throws <code>ProcessException</code>, with the exit status as its code and the error output in its message</td></tr>
+</tbody>
+</table>
+<h2>Example</h2>
+<pre class="code">import exec, ProcessResult from "std/os";
+
+// When failing is an expected answer: grep exits with 1 when nothing matches.
+ProcessResult found = exec(["grep", "-c", "TODO", "main.qiq"]);
+if (found-&gt;exitCode &lt;= 1) {
+    print("TODOs:", trim(found-&gt;stdout));
+}
+
+// When the command must succeed.
+string commit = trim(exec(["git", "rev-parse", "HEAD"])-&gt;check()-&gt;stdout);</pre>
+"""
+
 # Pages for standard library classes: (href, title, summary, html).
 CLASS_PAGES = [
     ("class.file.html", "The File class", "Reading and writing files a line or a chunk at a time, including standard input and output.", FILE_CLASS),
@@ -3039,5 +3150,6 @@ CLASS_PAGES = [
     ("class.database.html", "The Database class", "SQL databases (SQLite, PostgreSQL, MySQL, and MariaDB): running statements with values for their placeholders, queries, and transactions.", DATABASE_CLASS),
     ("class.row.html", "The Row class", "One row of a query's result, read by column name with typed getters.", ROW_CLASS),
     ("class.cursor.html", "The Cursor class", "A query's rows, read a batch at a time, for results too big to hold in memory.", CURSOR_CLASS),
+    ("class.processresult.html", "The ProcessResult class", "The exit status and output of a command run by exec or shell.", PROCESSRESULT_CLASS),
     ("exception-classes.html", "Exception classes", "The exception classes thrown by the language and the standard library.", EXCEPTION_CLASSES),
 ]

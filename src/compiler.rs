@@ -3210,7 +3210,7 @@ struct FinallyContext {
 
 /// Exception classes the runtime raises, indexed by QiqExceptionKind in
 /// stdlib/runtime/qiq_runtime.h; keep the two lists in the same order.
-const RUNTIME_EXCEPTION_CLASSES: [&str; 15] = [
+const RUNTIME_EXCEPTION_CLASSES: [&str; 16] = [
     "RuntimeException",
     "ArithmeticException",
     "DivisionByZeroException",
@@ -3226,6 +3226,7 @@ const RUNTIME_EXCEPTION_CLASSES: [&str; 15] = [
     "DatabaseException",
     "ConstraintViolationException",
     "UniqueViolationException",
+    "ProcessException",
 ];
 
 /// Where `break` and `continue` go. Loops have both; a switch only has a
@@ -11097,6 +11098,19 @@ mod tests {
         assert!(compile_files(&[("main.qiq", "import x from \"github.com/a/b/x\";")])
             .unwrap_err()
             .contains("looks like a module path, but this program has no qiq.mod"));
+    }
+
+    #[test]
+    fn compiles_exec_and_shell() {
+        let source = "import exec, shell, ProcessResult from \"std/os\";\n\
+            ProcessResult r = exec([\"ls\", \"-l\"], cwd: \"/tmp\", env: {\"A\" => \"b\"}, timeout: 5);\n\
+            print(r->exitCode, r->ok(), r->stdout, r->stderr);\n\
+            try { print(shell(\"ls | wc -l\", input: \"x\")->check()->stdout); } catch (ProcessException e) { print(e->getCode()); }";
+        let ir = compile_source(source).unwrap();
+        assert!(ir.contains("@qiq_stdlib___process_run"));
+        assert!(compile_source("import exec from \"std/os\"; exec(\"ls -l\");")
+            .unwrap_err()
+            .contains("expected string[]"));
     }
 
     #[test]
