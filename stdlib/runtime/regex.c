@@ -38,6 +38,9 @@ typedef struct {
     // finishes before anything else can use the pattern (callbacks run
     // after it), so one is enough.
     pcre2_match_data *data;
+    // The group names (see __regex_names), built when first asked for and
+    // kept (retained): every match of the pattern shares them.
+    void *names;
 } QiqRegex;
 
 static QiqRegex qiq_regex_cache[QIQ_REGEX_CACHE_SIZE];
@@ -183,6 +186,7 @@ QIQ_GUARDED(int64_t, qiq_stdlib___regex_compile, 0, (const char *pattern), (patt
             free(qiq_regex_cache[index].pattern);
             pcre2_code_free(qiq_regex_cache[index].code);
             pcre2_match_data_free(qiq_regex_cache[index].data);
+            if (qiq_regex_cache[index].names != NULL) qiq_release(qiq_regex_cache[index].names);
         }
         qiq_regex_cached = 0;
     }
@@ -192,7 +196,7 @@ QIQ_GUARDED(int64_t, qiq_stdlib___regex_compile, 0, (const char *pattern), (patt
     if (copy == NULL) qiq_fatal("out of memory");
     pcre2_match_data *data = pcre2_match_data_create_from_pattern(code, NULL);
     if (data == NULL) qiq_fatal("out of memory");
-    qiq_regex_cache[qiq_regex_cached] = (QiqRegex){copy, code, groups, data};
+    qiq_regex_cache[qiq_regex_cached] = (QiqRegex){copy, code, groups, data, NULL};
     return qiq_regex_cached++;
 }
 
@@ -205,6 +209,10 @@ static QiqRegex *qiq_regex(int64_t handle) {
 // group's name, or "" for an unnamed group.
 QIQ_GUARDED(void *, qiq_stdlib___regex_names, NULL, (int64_t handle), (handle)) {
     QiqRegex *regex = qiq_regex(handle);
+    if (regex->names != NULL) {
+        qiq_retain(regex->names);
+        return regex->names;
+    }
     void *names = qiq_array_create((int64_t)regex->groups + 1, sizeof(char *), QIQ_ELEMENTS_ARE_REFERENCES);
     char **data = QIQ_ARRAY_DATA(names);
     for (uint32_t group = 0; group <= regex->groups; group++) data[group] = qiq_string_from("", 0);
@@ -222,18 +230,30 @@ QIQ_GUARDED(void *, qiq_stdlib___regex_names, NULL, (int64_t handle), (handle)) 
             data[group] = qiq_string_from(name, strlen(name));
         }
     }
+    regex->names = names;
+    qiq_retain(names);
     return names;
 }
 
-// __regex_scan(handle, subject, offset, limit): finds up to `limit` matches
+// What a caller of __regex_scan uses; what it doesn't is left out, which
+// saves an allocation per match: without QIQ_REGEX_GAPS there are no gap
+// texts at all (so one match's texts are exactly its groups), without
+// QIQ_REGEX_GROUPS the group texts are null, and without
+// QIQ_REGEX_OFFSETS there are no offsets.
+#define QIQ_REGEX_GAPS 1     // the text between matches, and after the last
+#define QIQ_REGEX_GROUPS 2   // the text of the whole match and each group
+#define QIQ_REGEX_OFFSETS 4  // their positions
+
+// __regex_scan(handle, subject, offset, limit, want): finds up to `limit` matches
 // (all if negative), starting the search at character `offset`, and returns
 // how many it found. For each match, the texts are the text since the
 // previous match (or the start of the subject), then the whole match and
 // each group (null for a group that took no part); after the last match
 // comes the rest of the subject. The offsets are each group's start and end
-// characters (-1 for a group that took no part).
-QIQ_GUARDED(int64_t, qiq_stdlib___regex_scan, 0, (int64_t handle, const char *subject, int64_t offset, int64_t limit),
-            (handle, subject, offset, limit)) {
+// characters (-1 for a group that took no part). `want` says which of
+// these the caller uses (QIQ_REGEX_*).
+QIQ_GUARDED(int64_t, qiq_stdlib___regex_scan, 0, (int64_t handle, const char *subject, int64_t offset, int64_t limit, int64_t want),
+            (handle, subject, offset, limit, want)) {
     QiqRegex *regex = qiq_regex(handle);
     if (subject == NULL) qiq_throw(QIQ_RUNTIME_EXCEPTION, "the subject is null");
     qiq_regex_clear();
@@ -276,19 +296,16 @@ QIQ_GUARDED(int64_t, qiq_stdlib___regex_scan, 0, (int64_t handle, const char *su
         // \K can put a match's start after its end; treat that as empty.
         if (match_start > match_end) match_start = match_end;
         size_t gap_end = match_start < previous_end ? previous_end : match_start;
-        qiq_regex_add_text(qiq_string_from(subject + previous_end, gap_end - previous_end));
+        if (want & QIQ_REGEX_GAPS) qiq_regex_add_text(qiq_string_from(subject + previous_end, gap_end - previous_end));
         for (uint32_t group = 0; group <= regex->groups; group++) {
             PCRE2_SIZE group_start = vector[2 * group], group_end = vector[2 * group + 1];
-            if ((int)group >= result || group_start == PCRE2_UNSET) {
-                qiq_regex_add_text(NULL);
-                qiq_regex_add_offset(-1);
-                qiq_regex_add_offset(-1);
-                continue;
-            }
+            bool unset = (int)group >= result || group_start == PCRE2_UNSET;
             if (group == 0) group_start = match_start;
-            qiq_regex_add_text(qiq_string_from(subject + group_start, group_end - group_start));
-            qiq_regex_add_offset(qiq_character_at(&position, group_start));
-            qiq_regex_add_offset(qiq_character_at(&position, group_end));
+            qiq_regex_add_text(!unset && (want & QIQ_REGEX_GROUPS) ? qiq_string_from(subject + group_start, group_end - group_start) : NULL);
+            if (want & QIQ_REGEX_OFFSETS) {
+                qiq_regex_add_offset(unset ? -1 : qiq_character_at(&position, group_start));
+                qiq_regex_add_offset(unset ? -1 : qiq_character_at(&position, group_end));
+            }
         }
         found++;
         previous_end = match_end > gap_end ? match_end : gap_end;
@@ -297,7 +314,7 @@ QIQ_GUARDED(int64_t, qiq_stdlib___regex_scan, 0, (int64_t handle, const char *su
         // before moving on, as Perl and PHP do.
         extra = match_end == match_start ? PCRE2_NOTEMPTY_ATSTART | PCRE2_ANCHORED : 0;
     }
-    qiq_regex_add_text(qiq_string_from(subject + previous_end, length - previous_end));
+    if (want & QIQ_REGEX_GAPS) qiq_regex_add_text(qiq_string_from(subject + previous_end, length - previous_end));
     return found;
 }
 

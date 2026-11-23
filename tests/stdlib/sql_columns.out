@@ -1,0 +1,9 @@
+2 two x 1 0
+1 9 w 1 0 11
+error: the result has no column 'nope'; its columns are: c1, c2, c3, c4, c5, c6, c7, c8, c9, c1, c10
+["a", "b"] ["a", "b"]
+["a", "b"]
+["a", "b", "c"] 0.5
+7 1
+3 {"data" => "(3 bytes)"}
+{"a" => "2"} 0

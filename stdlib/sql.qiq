@@ -42,9 +42,14 @@ extern function __sql_close_cursor(int cursor): void;
 // The cells of a query's rows, shared by its Row objects. Each cell has a
 // kind (1 int, 2 double, 3 string, 4 bytes, 5 NULL, 6 decimal: PostgreSQL's
 // numeric, as its exact text) and a value: the int itself, or the index of
-// its double, string, or byte array.
+// its double, string, or byte array. The doubles, texts, blobs, and
+// blobStarts arrays are null when no cell holds that kind of value.
 final class __Result {
+    // Shared with the cached statement and the next results of the same
+    // query: never changed (Row::columns returns a copy).
     public string[] columns;
+    // Column positions by name, for results with many columns; built when
+    // first needed (see position).
     public map[string, int] positions;
     public int[] kinds;
     public int[] values;
@@ -56,19 +61,35 @@ final class __Result {
     // Takes the rows the last statement collected.
     function __construct() {
         this->columns = __sql_columns();
-        this->positions = {};
-        foreach (this->columns as index => name) {
-            // With two columns of the same name, the first wins.
-            if (!map_key_exists(name, this->positions)) {
-                this->positions[name] = index;
-            }
-        }
         this->kinds = __sql_kinds();
         this->values = __sql_values();
         this->doubles = __sql_doubles();
         this->texts = __sql_texts();
         this->blobs = __sql_blobs();
         this->blobStarts = __sql_blob_starts();
+    }
+
+    // The position of the column named `column`, or -1 if there's none; with
+    // two columns of the same name, the first. A few columns are searched in
+    // order, which is quicker than hashing the name; more get a map.
+    function position(string column): int {
+        if (len(this->columns) <= 8) {
+            foreach (this->columns as index => name) {
+                if (name == column) {
+                    return index;
+                }
+            }
+            return -1;
+        }
+        if (this->positions == null) {
+            this->positions = {};
+            foreach (this->columns as index => name) {
+                if (!map_key_exists(name, this->positions)) {
+                    this->positions[name] = index;
+                }
+            }
+        }
+        return this->positions[column] ?? -1;
     }
 }
 
@@ -86,10 +107,11 @@ final class Row {
 
     // The cell of `column`.
     private function cell(string column): int {
-        if (!map_key_exists(column, this->result->positions)) {
+        int position = this->result->position(column);
+        if (position < 0) {
             throw new DatabaseException(sprintf("the result has no column '%s'; its columns are: %s", column, implode(", ", this->result->columns)));
         }
-        return this->first + this->result->positions[column];
+        return this->first + position;
     }
 
     private function mismatch(string column, int kind, string wanted): DatabaseException {
@@ -103,12 +125,17 @@ final class Row {
 
     // The column names, in the order the query gives them.
     function columns(): string[] {
-        return this->result->columns;
+        // A copy: the result's array is shared with later queries.
+        string[] names = new string[len(this->result->columns)];
+        foreach (this->result->columns as index => name) {
+            names[index] = name;
+        }
+        return names;
     }
 
     // Whether the result has a column named `column`.
     function has(string column): bool {
-        return map_key_exists(column, this->result->positions);
+        return this->result->position(column) >= 0;
     }
 
     // Whether the column is NULL.

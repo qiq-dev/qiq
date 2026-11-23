@@ -1,0 +1,37 @@
+// std/sql: finding columns by name in narrow and wide results, duplicate
+// names, the column names a cached statement keeps (and notices changing),
+// and results without doubles, texts, or blobs.
+import Database, Row from "std/sql";
+
+Database db = Database::open("sqlite::memory:");
+db->execute("CREATE TABLE t (a INTEGER, b TEXT)");
+db->execute("INSERT INTO t VALUES (1, 'one'), (2, 'two')");
+
+// Narrow (searched in order) and wide (a map) results, duplicate names
+// (the first wins), and a missing column.
+Row narrow = db->queryOne("SELECT a, b, a * 10 AS a, 'x' AS c FROM t WHERE a = ?", 2);
+print(narrow->getInt("a"), narrow->getString("b"), narrow->getString("c"), narrow->has("c"), narrow->has("z"));
+Row wide = db->queryOne("SELECT 1 AS c1, 2 AS c2, 3 AS c3, 4 AS c4, 5 AS c5, 6 AS c6, 7 AS c7, 8 AS c8, 9 AS c9, 10 AS c1, 'w' AS c10");
+print(wide->getInt("c1"), wide->getInt("c9"), wide->getString("c10"), wide->has("c10"), wide->has("c11"), len(wide->columns()));
+try { wide->getInt("nope"); } catch (DatabaseException e) { print("error:", e->getMessage()); }
+
+// The column names a query hands back can't be changed through columns().
+Row first = db->queryOne("SELECT a, b FROM t");
+string[] names = first->columns();
+names[0] = "changed";
+print(db->queryOne("SELECT a, b FROM t")->columns(), first->columns());
+
+// After the table changes, the same query sees its new columns.
+print(db->queryOne("SELECT * FROM t")->columns());
+db->execute("ALTER TABLE t ADD COLUMN c REAL");
+db->execute("UPDATE t SET c = a / 4.0");
+Row changed = db->queryOne("SELECT * FROM t WHERE a = ?", 2);
+print(changed->columns(), changed->getDouble("c"));
+
+// Only ints, only NULLs, and blobs.
+print(db->queryOne("SELECT 7 AS n")->getInt("n"), db->queryOne("SELECT NULL AS n")->isNull("n"));
+db->execute("CREATE TABLE files (name TEXT, data BLOB)");
+db->execute("INSERT INTO files VALUES (?, ?)", "f", string_to_bytes("abc"));
+Row file = db->queryOne("SELECT data FROM files");
+print(len(file->getBytes("data")), file->toMap());
+print(db->query("SELECT a FROM t ORDER BY a")[1]->toMap(), len(db->query("SELECT a FROM t WHERE a > 5")));

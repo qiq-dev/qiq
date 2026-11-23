@@ -18,7 +18,9 @@ import implode, substr from "string";
 
 extern function __regex_compile(string pattern): int;
 extern function __regex_names(int handle): string[];
-extern function __regex_scan(int handle, string subject, int offset, int limit): int;
+// `want` adds up what the caller uses: 1 the text between matches, 2 the
+// text of each match and group, 4 their positions (see regex.c).
+extern function __regex_scan(int handle, string subject, int offset, int limit, int want): int;
 extern function __regex_texts(): string[];
 extern function __regex_offsets(): int[];
 
@@ -111,9 +113,16 @@ class RegexMatch {
     }
 }
 
-// The matches of the last scan, as RegexMatch objects.
-function __regex_matches(int count, string[] texts, int[] offsets, string[] names): RegexMatch[] {
+// The matches of the last scan, as RegexMatch objects. With `gaps`, each
+// match's texts start with the text before it (see __regex_scan).
+function __regex_matches(int count, string[] texts, int[] offsets, string[] names, bool gaps): RegexMatch[] {
     int size = len(names);
+    int stride = size;
+    int skip = 0;
+    if (gaps) {
+        stride = size + 1;
+        skip = 1;
+    }
     RegexMatch[] matches = new RegexMatch[count];
     int index = 0;
     while (index < count) {
@@ -121,7 +130,7 @@ function __regex_matches(int count, string[] texts, int[] offsets, string[] name
         int[] positions = new int[2 * size];
         int group = 0;
         while (group < size) {
-            groups[group] = texts[index * (size + 1) + 1 + group];
+            groups[group] = texts[index * stride + skip + group];
             positions[2 * group] = offsets[index * 2 * size + 2 * group];
             positions[2 * group + 1] = offsets[index * 2 * size + 2 * group + 1];
             group = group + 1;
@@ -137,12 +146,15 @@ function __regex_matches(int count, string[] texts, int[] offsets, string[] name
 function preg_match(string pattern, string subject, int offset = 0): RegexMatch {
     int handle = __regex_compile(pattern);
     string[] names = __regex_names(handle);
-    int count = __regex_scan(handle, subject, offset, 1);
-    RegexMatch[] matches = __regex_matches(count, __regex_texts(), __regex_offsets(), names);
+    int count = __regex_scan(handle, subject, offset, 1, 6);
+    // Without gaps, one match's texts and offsets are exactly its groups
+    // and their positions.
+    string[] texts = __regex_texts();
+    int[] offsets = __regex_offsets();
     if (count == 0) {
         return null;
     }
-    return matches[0];
+    return new RegexMatch(texts, offsets, names);
 }
 
 // Every match of `pattern` in `subject`, in order, searching from character
@@ -150,14 +162,14 @@ function preg_match(string pattern, string subject, int offset = 0): RegexMatch 
 function preg_match_all(string pattern, string subject, int offset = 0): RegexMatch[] {
     int handle = __regex_compile(pattern);
     string[] names = __regex_names(handle);
-    int count = __regex_scan(handle, subject, offset, -1);
-    return __regex_matches(count, __regex_texts(), __regex_offsets(), names);
+    int count = __regex_scan(handle, subject, offset, -1, 6);
+    return __regex_matches(count, __regex_texts(), __regex_offsets(), names, false);
 }
 
 // Whether `pattern` matches anywhere in `subject`.
 function preg_test(string pattern, string subject): bool {
     int handle = __regex_compile(pattern);
-    int count = __regex_scan(handle, subject, 0, 1);
+    int count = __regex_scan(handle, subject, 0, 1, 0);
     __regex_texts();
     __regex_offsets();
     return count > 0;
@@ -174,7 +186,7 @@ function preg_replace(string pattern, string replacement, string subject, int li
     string[] literals = [];
     int[] references = [];
     __regex_template(replacement, names, literals, references);
-    int count = __regex_scan(handle, subject, 0, limit);
+    int count = __regex_scan(handle, subject, 0, limit, 3);
     string[] texts = __regex_texts();
     __regex_offsets();
     int size = len(names);
@@ -287,9 +299,9 @@ function __regex_group_named(string reference, string[] names): int {
 function preg_replace_callback(string pattern, function(RegexMatch): string callback, string subject, int limit = -1): string {
     int handle = __regex_compile(pattern);
     string[] names = __regex_names(handle);
-    int count = __regex_scan(handle, subject, 0, limit);
+    int count = __regex_scan(handle, subject, 0, limit, 7);
     string[] texts = __regex_texts();
-    RegexMatch[] matches = __regex_matches(count, texts, __regex_offsets(), names);
+    RegexMatch[] matches = __regex_matches(count, texts, __regex_offsets(), names, true);
     int size = len(names);
     string[] pieces = [];
     foreach (matches as index => match) {
@@ -310,7 +322,7 @@ function preg_split(string pattern, string subject, int limit = -1, bool skipEmp
     if (limit > 0) {
         matches = limit - 1;
     }
-    int count = __regex_scan(handle, subject, 0, matches);
+    int count = __regex_scan(handle, subject, 0, matches, 1);
     string[] texts = __regex_texts();
     __regex_offsets();
     int size = len(names);

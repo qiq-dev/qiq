@@ -43,6 +43,10 @@ typedef struct {
     char *sql;                // NULL when the entry is unused
     sqlite3_stmt *statement;
     uint64_t used;            // when it was last used, for evicting the oldest
+    // The statement's column names as a qiq string[], kept (retained) so a
+    // query run again hands over the same array instead of allocating its
+    // names each time; NULL until the statement first runs as a query.
+    void *columns;
 } QiqSqlCached;
 
 typedef struct {
@@ -68,7 +72,7 @@ uint64_t qiq_sql_forks;
 extern const QiqSqlDriver *const qiq_sql_postgres;
 extern const QiqSqlDriver *const qiq_sql_mysql;
 
-static sqlite3_stmt *qiq_sql_prepare(QiqSqlConnection *connection, const char *sql, const char *caller, bool keep);
+static sqlite3_stmt *qiq_sql_prepare(QiqSqlConnection *connection, const char *sql, const char *caller, bool keep, QiqSqlCached **entry);
 static void qiq_sql_bind(sqlite3_stmt *statement, sqlite3_destructor_type keep);
 static void qiq_sql_close_cursors(int64_t connection);
 
@@ -126,10 +130,15 @@ static size_t qiq_sql_blob_count, qiq_sql_blob_starts_capacity;
 static size_t qiq_sql_blob_length, qiq_sql_blobs_capacity;
 static char **qiq_sql_columns;
 static size_t qiq_sql_column_count, qiq_sql_columns_capacity;
+// Set instead of qiq_sql_columns by a SQLite query: its cached statement's
+// column names, retained for __sql_columns to hand over.
+static void *qiq_sql_columns_array;
 
 void qiq_sql_clear_results(void) {
     for (size_t index = 0; index < qiq_sql_text_count; index++) qiq_release(qiq_sql_texts[index]);
     for (size_t index = 0; index < qiq_sql_column_count; index++) qiq_release(qiq_sql_columns[index]);
+    if (qiq_sql_columns_array != NULL) qiq_release(qiq_sql_columns_array);
+    qiq_sql_columns_array = NULL;
     qiq_sql_cells = qiq_sql_double_count = qiq_sql_text_count = 0;
     qiq_sql_blob_count = qiq_sql_blob_length = qiq_sql_column_count = 0;
 }
@@ -515,6 +524,9 @@ static QiqSqlConnection *qiq_sql_connection(int64_t handle) {
         // Opened before this process was forked: the parent's connection
         // and statements are left alone (closing them here could release
         // the parent's locks) and the database is opened again.
+        for (int index = 0; index < QIQ_SQL_CACHE; index++) {
+            if (connection->cache[index].columns != NULL) qiq_release(connection->cache[index].columns);
+        }
         memset(connection->cache, 0, sizeof connection->cache);
         connection->db = NULL;
         connection->db = qiq_sql_connect(connection->filename);
@@ -556,6 +568,7 @@ QIQ_GUARDED_VOID(qiq_stdlib___sql_close, (int64_t handle), (handle)) {
             if (connection->cache[index].sql == NULL) continue;
             sqlite3_finalize(connection->cache[index].statement);
             free(connection->cache[index].sql);
+            if (connection->cache[index].columns != NULL) qiq_release(connection->cache[index].columns);
         }
         sqlite3_close_v2(connection->db);
     }
@@ -656,7 +669,7 @@ QIQ_GUARDED(int64_t, qiq_stdlib___sql_cursor, 0, (int64_t handle, const char *sq
             qiq_sql_drop_pending();
             return 0;
         }
-        statement = qiq_sql_prepare(connection, sql, "cursor", false);
+        statement = qiq_sql_prepare(connection, sql, "cursor", false, NULL);
         qiq_guard_leave(previous);
         int expected = sqlite3_bind_parameter_count(statement);
         if ((size_t)expected != qiq_sql_pending_count) {
@@ -770,14 +783,15 @@ QIQ_GUARDED_VOID(qiq_stdlib___sql_close_cursor, (int64_t handle), (handle)) {
 
 // A prepared statement for `sql`, from the cache or newly prepared and
 // added to it (evicting the least recently used). `caller` names the method
-// for errors.
-static sqlite3_stmt *qiq_sql_prepare(QiqSqlConnection *connection, const char *sql, const char *caller, bool keep) {
+// for errors. With `keep`, `entry` (if not NULL) gets its cache entry.
+static sqlite3_stmt *qiq_sql_prepare(QiqSqlConnection *connection, const char *sql, const char *caller, bool keep, QiqSqlCached **entry) {
     connection->clock++;
     QiqSqlCached *oldest = &connection->cache[0];
     for (int index = 0; keep && index < QIQ_SQL_CACHE; index++) {
         QiqSqlCached *cached = &connection->cache[index];
         if (cached->sql != NULL && strcmp(cached->sql, sql) == 0) {
             cached->used = connection->clock;
+            if (entry != NULL) *entry = cached;
             return cached->statement;
         }
         if (cached->sql == NULL || cached->used < oldest->used) oldest = cached;
@@ -811,8 +825,10 @@ static sqlite3_stmt *qiq_sql_prepare(QiqSqlConnection *connection, const char *s
     if (oldest->sql != NULL) {
         sqlite3_finalize(oldest->statement);
         free(oldest->sql);
+        if (oldest->columns != NULL) qiq_release(oldest->columns);
     }
-    *oldest = (QiqSqlCached){copy, statement, connection->clock};
+    *oldest = (QiqSqlCached){copy, statement, connection->clock, NULL};
+    if (entry != NULL) *entry = oldest;
     return statement;
 }
 
@@ -867,6 +883,7 @@ QIQ_GUARDED(int64_t, qiq_stdlib___sql_run, 0, (int64_t handle, const char *sql, 
         return connection->driver->run(connection->pg, sql, mode, caller);
     }
     sqlite3_stmt *statement;
+    QiqSqlCached *cached = NULL;
     {
         // Prepare errors throw from inside; the pending values go first.
         jmp_buf environment;
@@ -876,7 +893,7 @@ QIQ_GUARDED(int64_t, qiq_stdlib___sql_run, 0, (int64_t handle, const char *sql, 
             qiq_sql_drop_pending();
             return 0;
         }
-        statement = qiq_sql_prepare(connection, sql, caller, true);
+        statement = qiq_sql_prepare(connection, sql, caller, true, &cached);
         qiq_guard_leave(previous);
     }
     int expected = sqlite3_bind_parameter_count(statement);
@@ -889,12 +906,24 @@ QIQ_GUARDED(int64_t, qiq_stdlib___sql_run, 0, (int64_t handle, const char *sql, 
     qiq_sql_bind(statement, SQLITE_STATIC);
     int columns = sqlite3_column_count(statement);
     if (mode != 0) {
-        qiq_sql_columns = qiq_sql_grow(qiq_sql_columns, &qiq_sql_columns_capacity, (size_t)columns, sizeof(char *));
-        for (int column = 0; column < columns; column++) {
-            const char *name = sqlite3_column_name(statement, column);
-            qiq_sql_columns[column] = qiq_string_from(name, strlen(name));
+        // The names the statement had last time, unless they've changed (a
+        // statement is prepared again by SQLite after the schema changes).
+        void *kept = cached->columns;
+        bool same = kept != NULL && QIQ_ARRAY_LENGTH(kept) == columns;
+        for (int column = 0; same && column < columns; column++) {
+            same = strcmp(((char **)QIQ_ARRAY_DATA(kept))[column], sqlite3_column_name(statement, column)) == 0;
         }
-        qiq_sql_column_count = (size_t)columns;
+        if (!same) {
+            if (kept != NULL) qiq_release(kept);
+            kept = qiq_array_create(columns, sizeof(char *), QIQ_ELEMENTS_ARE_REFERENCES);
+            for (int column = 0; column < columns; column++) {
+                const char *name = sqlite3_column_name(statement, column);
+                ((char **)QIQ_ARRAY_DATA(kept))[column] = qiq_string_from(name, strlen(name));
+            }
+            cached->columns = kept;
+        }
+        qiq_retain(kept);
+        qiq_sql_columns_array = kept;
     }
     int64_t rows = 0;
     int code;
@@ -978,6 +1007,11 @@ static void *qiq_sql_int_array(const int64_t *data, size_t count) {
 }
 
 void *qiq_stdlib___sql_columns(void) {
+    if (qiq_sql_columns_array != NULL) {
+        void *kept = qiq_sql_columns_array;
+        qiq_sql_columns_array = NULL;
+        return kept;
+    }
     void *array = qiq_array_create((int64_t)qiq_sql_column_count, 8, 1);
     if (qiq_sql_column_count > 0) memcpy(QIQ_ARRAY_DATA(array), qiq_sql_columns, qiq_sql_column_count * sizeof(char *));
     qiq_sql_column_count = 0;
@@ -992,13 +1026,18 @@ void *qiq_stdlib___sql_values(void) {
     return qiq_sql_int_array(qiq_sql_values, qiq_sql_cells);
 }
 
+// The lists below are null when empty: most results have no doubles,
+// several no texts, and few any blobs, and __Result reads them only for
+// cells of their kind.
 void *qiq_stdlib___sql_doubles(void) {
+    if (qiq_sql_double_count == 0) return NULL;
     void *array = qiq_array_create((int64_t)qiq_sql_double_count, 8, 0);
     if (qiq_sql_double_count > 0) memcpy(QIQ_ARRAY_DATA(array), qiq_sql_doubles, qiq_sql_double_count * sizeof(double));
     return array;
 }
 
 void *qiq_stdlib___sql_texts(void) {
+    if (qiq_sql_text_count == 0) return NULL;
     void *array = qiq_array_create((int64_t)qiq_sql_text_count, 8, 1);
     if (qiq_sql_text_count > 0) memcpy(QIQ_ARRAY_DATA(array), qiq_sql_texts, qiq_sql_text_count * sizeof(char *));
     qiq_sql_text_count = 0;
@@ -1006,6 +1045,7 @@ void *qiq_stdlib___sql_texts(void) {
 }
 
 void *qiq_stdlib___sql_blobs(void) {
+    if (qiq_sql_blob_count == 0) return NULL;
     void *array = qiq_array_create((int64_t)qiq_sql_blob_length, 1, 0);
     if (qiq_sql_blob_length > 0) memcpy(QIQ_ARRAY_DATA(array), qiq_sql_blobs, qiq_sql_blob_length);
     return array;
@@ -1013,6 +1053,7 @@ void *qiq_stdlib___sql_blobs(void) {
 
 // Where each byte array starts in __sql_blobs, then where the last ends.
 void *qiq_stdlib___sql_blob_starts(void) {
+    if (qiq_sql_blob_count == 0) return NULL;
     qiq_sql_blob_starts = qiq_sql_grow(qiq_sql_blob_starts, &qiq_sql_blob_starts_capacity, qiq_sql_blob_count + 1, sizeof(int64_t));
     qiq_sql_blob_starts[qiq_sql_blob_count] = (int64_t)qiq_sql_blob_length;
     return qiq_sql_int_array(qiq_sql_blob_starts, qiq_sql_blob_count + 1);
