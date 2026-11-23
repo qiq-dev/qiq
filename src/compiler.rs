@@ -43,6 +43,8 @@ enum TokenKind {
     ByteType,
     Void,
     Print,
+    /// `println`: print, with each value on its own line.
+    PrintLine,
     Identifier(String),
     /// Integer literal digits (up to 2^63, so that `-9223372036854775808`
     /// can be written); range-checked by the parser.
@@ -430,6 +432,7 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
                 "byte" => TokenKind::ByteType,
                 "void" => TokenKind::Void,
                 "print" => TokenKind::Print,
+                "println" => TokenKind::PrintLine,
                 "true" => TokenKind::Boolean(true),
                 "false" => TokenKind::Boolean(false),
                 "null" => TokenKind::NullLiteral,
@@ -1288,7 +1291,10 @@ enum StatementKind {
     /// `Class::name = value;` (any StaticTarget).
     AssignStatic(StaticTarget, String, Expr),
     /// `print(a, b, ...)`: the values separated by spaces, then a newline.
-    Print(Vec<Expr>),
+    /// `print(values)`, or with true, `println(values)`: the same except that
+    /// println writes each value on its own line instead of separating them
+    /// with spaces.
+    Print(Vec<Expr>, bool),
     Expression(Expr),
     Return(Option<Expr>),
     Break,
@@ -2227,9 +2233,11 @@ impl Parser {
                 let value_type = self.parse_value_type()?;
                 self.parse_declaration(value_type)
             }
-            TokenKind::Print => {
+            TokenKind::Print | TokenKind::PrintLine => {
+                let lines = matches!(self.current().kind, TokenKind::PrintLine);
+                let name = if lines { "println" } else { "print" };
                 self.advance();
-                self.expect(TokenKind::LeftParen, "expected '(' after 'print'")?;
+                self.expect(TokenKind::LeftParen, &format!("expected '(' after '{name}'"))?;
                 let mut values = Vec::new();
                 if !matches!(self.current().kind, TokenKind::RightParen) {
                     loop {
@@ -2240,9 +2248,9 @@ impl Parser {
                         self.advance();
                     }
                 }
-                self.expect(TokenKind::RightParen, "expected ')' after print arguments")?;
-                self.expect(TokenKind::Semicolon, "expected ';' after print statement")?;
-                Ok(StatementKind::Print(values))
+                self.expect(TokenKind::RightParen, &format!("expected ')' after {name} arguments"))?;
+                self.expect(TokenKind::Semicolon, &format!("expected ';' after {name} statement"))?;
+                Ok(StatementKind::Print(values, lines))
             }
             TokenKind::Throw => {
                 self.advance();
@@ -4414,7 +4422,7 @@ impl Emitter {
                         body.push_str(&format!("  store i64 {encoded}, ptr {address}, align 8\n"));
                     }
                 }
-                StatementKind::Print(expressions) => {
+                StatementKind::Print(expressions, lines) => {
                     let mut values = Vec::new();
                     for expression in expressions {
                         let value = self.emit_expression(expression, &variables, &mut body)?;
@@ -4452,7 +4460,8 @@ impl Emitter {
                     // runtime from a type descriptor, separated by spaces.
                     for (index, value) in values.iter().enumerate() {
                         if index > 0 {
-                            body.push_str("  call void @qiq_print_space()\n");
+                            // println puts each value on its own line.
+                            body.push_str(if *lines { "  call void @qiq_print_newline()\n" } else { "  call void @qiq_print_space()\n" });
                         }
                         let descriptor = self.type_descriptor(value.value_type);
                         let descriptor = self.emit_expression(&Expr::Text(descriptor), &variables, &mut body)?;
@@ -10431,7 +10440,7 @@ fn statement_names(statement: &Statement, used: &mut std::collections::BTreeSet<
             }
             expressions(value, used, declared);
         }
-        StatementKind::Print(values) => {
+        StatementKind::Print(values, _) => {
             for expression in values {
                 expressions(expression, used, declared);
             }
@@ -11535,6 +11544,24 @@ mod tests {
         assert!(ir.contains("@qiq_stdlib___regex_scan"));
         // A pattern without a subject is a type error.
         assert!(compile_source("import preg_match from \"std/regex\"; preg_match(\"a\");").is_err());
+    }
+
+    #[test]
+    fn println_is_print_with_lines() {
+        let ir = compile_source("println(1, \"a\"); print(1, \"a\"); println(\"one\");").unwrap();
+        let main = ir.split("define i32 @main").nth(1).unwrap();
+        // Between println's values a newline; between print's a space.
+        let first = main.find("@qiq_print_newline()").unwrap();
+        let space = main.find("@qiq_print_space()").unwrap();
+        assert!(first < space, "{main}");
+        assert_eq!(compile_source("println(1)").unwrap_err(), "1:11: expected ';' after println statement");
+        assert_eq!(compile_source("println 1;").unwrap_err(), "1:9: expected '(' after 'println'");
+        // Whatever print accepts, println accepts (even a void call, as print does).
+        for values in ["", "1", "1, 2.5, true", "[1], {\"a\" => 1}", "f()"] {
+            let print = compile_source(&format!("function f(): void {{}} print({values});")).is_ok();
+            let println = compile_source(&format!("function f(): void {{}} println({values});")).is_ok();
+            assert_eq!(print, println, "{values}");
+        }
     }
 
     #[test]

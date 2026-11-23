@@ -1,0 +1,29 @@
+// println: the same as print, except that each value goes on its own line.
+class Point {
+    function __construct(public int x, public int y) {}
+    function __toString(): string {
+        return f"({this->x}, {this->y})";
+    }
+}
+class Plain {}
+
+string missing = null;
+Point origin = new Point(0, 0);
+
+// No values, and one: exactly as print.
+print();
+println();
+print("one");
+println("one");
+print(missing);
+println(missing);
+print(2.50, true, 'c');
+println(2.50);
+println(true);
+println('c');
+
+// Several: one per line.
+print("Ada", 36, 2.5, false, missing, null);
+println("Ada", 36, 2.5, false, missing, null);
+println([1, 2, 3], {"a" => [true]}, origin, new Plain(), to_byte(7));
+println(f"{origin} and {missing}", "done");

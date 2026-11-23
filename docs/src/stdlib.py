@@ -706,7 +706,24 @@ OUTPUT = {
             "notes": [
                 "Booleans print as <code>true</code> and <code>false</code>. Inside arrays and maps, strings and chars are quoted, so the output reads like a qiq literal.",
             ],
-            "see_also": ["to_string"],
+            "see_also": ["println", "to_string"],
+        },
+        {
+            "name": "println",
+            "purpose": "Write values to standard output, one per line",
+            "params": [param("values", "any...", "Zero or more values of any type except <code>void</code>.")],
+            "returns": "void",
+            "description": "Writes each of its arguments as <a href=\"function.print.html\">print</a> writes it, each on its own line. With one value or none, it's the same as <code>print</code>. Like <code>print</code>, it's a statement built into the language.",
+            "return_description": "Nothing; <code>println</code> is a statement.",
+            "errors": [],
+            "examples": [
+                {
+                    "title": "One value per line",
+                    "code": 'string name = "Ada";\nint age = 36;\nprintln(name, age, [1, 2], true);\nprint(name, age);',
+                    "output": "Ada\n36\n[1, 2]\ntrue\nAda 36",
+                }
+            ],
+            "see_also": ["print"],
         }
     ],
 }

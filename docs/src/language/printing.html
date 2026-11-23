@@ -13,6 +13,17 @@ age: 36
 1.5 2 1e+20 true false
 ```
 
+<p><code>println(...)</code> is the same, except that it writes each argument on its own line. With one argument or none, it's the same as <code>print</code>.</p>
+
+```qiq
+println("age:", 36, [1, 2]);
+```
+```output
+age:
+36
+[1, 2]
+```
+
 <h2>Scalars</h2>
 <ul>
 <li>Ints, strings, and chars print as plain text.</li>

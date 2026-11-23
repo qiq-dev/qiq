@@ -68,7 +68,7 @@ LANGUAGE = [
 KEYWORDS = set(
     "function return try catch finally throw if else new foreach while switch case default as "
     "break continue class abstract final static public private protected extends interface "
-    "implements parent print import from extern self this".split()
+    "implements parent print println import from extern self this".split()
 )
 TYPES = set("int double bool string char byte void map".split())
 LITERALS = set("true false null".split())
