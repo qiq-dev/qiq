@@ -33,6 +33,11 @@ typedef struct {
     char *pattern;     // as written, with delimiters and flags
     pcre2_code *code;
     uint32_t groups;   // capture groups, not counting the whole match
+    // Kept with the pattern and reused by every scan: creating one per call
+    // costs more than a short match itself with musl's malloc. A scan always
+    // finishes before anything else can use the pattern (callbacks run
+    // after it), so one is enough.
+    pcre2_match_data *data;
 } QiqRegex;
 
 static QiqRegex qiq_regex_cache[QIQ_REGEX_CACHE_SIZE];
@@ -177,6 +182,7 @@ QIQ_GUARDED(int64_t, qiq_stdlib___regex_compile, 0, (const char *pattern), (patt
         for (int64_t index = 0; index < qiq_regex_cached; index++) {
             free(qiq_regex_cache[index].pattern);
             pcre2_code_free(qiq_regex_cache[index].code);
+            pcre2_match_data_free(qiq_regex_cache[index].data);
         }
         qiq_regex_cached = 0;
     }
@@ -184,7 +190,9 @@ QIQ_GUARDED(int64_t, qiq_stdlib___regex_compile, 0, (const char *pattern), (patt
     pcre2_pattern_info(code, PCRE2_INFO_CAPTURECOUNT, &groups);
     char *copy = strdup(pattern);
     if (copy == NULL) qiq_fatal("out of memory");
-    qiq_regex_cache[qiq_regex_cached] = (QiqRegex){copy, code, groups};
+    pcre2_match_data *data = pcre2_match_data_create_from_pattern(code, NULL);
+    if (data == NULL) qiq_fatal("out of memory");
+    qiq_regex_cache[qiq_regex_cached] = (QiqRegex){copy, code, groups, data};
     return qiq_regex_cached++;
 }
 
@@ -238,8 +246,7 @@ QIQ_GUARDED(int64_t, qiq_stdlib___regex_scan, 0, (int64_t handle, const char *su
         start++;
         while (start < length && ((unsigned char)subject[start] & 0xc0) == 0x80) start++;
     }
-    pcre2_match_data *data = pcre2_match_data_create_from_pattern(regex->code, NULL);
-    if (data == NULL) qiq_fatal("out of memory");
+    pcre2_match_data *data = regex->data;
     PCRE2_SIZE *vector = pcre2_get_ovector_pointer(data);
     QiqPosition position = {subject, 0, 0};
     size_t previous_end = 0;  // where the text since the previous match starts
@@ -257,7 +264,6 @@ QIQ_GUARDED(int64_t, qiq_stdlib___regex_scan, 0, (int64_t handle, const char *su
             continue;
         }
         if (result < 0) {
-            pcre2_match_data_free(data);
             qiq_regex_clear();
             if (result == PCRE2_ERROR_MATCHLIMIT || result == PCRE2_ERROR_DEPTHLIMIT || result == PCRE2_ERROR_HEAPLIMIT) {
                 qiq_throwf(QIQ_REGEX_EXCEPTION, "%s needs too much backtracking on this text (the match limit was reached); make its repetitions less ambiguous", regex->pattern);
@@ -291,7 +297,6 @@ QIQ_GUARDED(int64_t, qiq_stdlib___regex_scan, 0, (int64_t handle, const char *su
         // before moving on, as Perl and PHP do.
         extra = match_end == match_start ? PCRE2_NOTEMPTY_ATSTART | PCRE2_ANCHORED : 0;
     }
-    pcre2_match_data_free(data);
     qiq_regex_add_text(qiq_string_from(subject + previous_end, length - previous_end));
     return found;
 }
