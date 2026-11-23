@@ -16,6 +16,7 @@ MODULES = [
     ("crypto.qiq", "std/crypto"),
     ("sql.qiq", "std/sql"),
     ("regex.qiq", "std/regex"),
+    ("math.qiq", "std/math"),
 ]
 DECL = re.compile(r"^\s*(?:(?:extern|final|abstract)\s+)*(function|class|interface)\s+([A-Za-z_]\w*)")
 

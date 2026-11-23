@@ -1,0 +1,58 @@
+// std/math: rounding, roots, logarithms, trigonometry, number_format,
+// random numbers, and abs, min, max, and clamp on ints and doubles.
+import abs, min, max, clamp, floor, ceil, round, sqrt, exp, log, log10, log2, hypot,
+    sin, cos, tan, asin, acos, atan, atan2, deg2rad, rad2deg, pi, is_nan, is_finite, is_infinite,
+    number_format, random_int, random_double from "std/math";
+
+// abs, min, max, and clamp keep the type they're given.
+int i = abs(-7);
+double d = abs(-2.5);
+print(i, d, abs(0), abs(-0.0), abs(-9223372036854775807 - 1));
+print(min(3, 1, 2), max(3, 1, 2), min(2.5, -1.5), max(0.5, 0.25, 0.75), min([5, 3, 8]), max([1.5, 9.5, 2.5]));
+print(clamp(15, 0, 10), clamp(-3, 0, 10), clamp(5, 0, 10), clamp(1.5, 0.0, 1.0), clamp(0.25, 0.0, 1.0));
+int[] ints = [4, -2, 7];
+print(min(ints), max(ints), min(ints[0], ints[1]));
+
+// Rounding: doubles, halves away from zero, as PHP.
+print(floor(2.7), floor(-2.7), ceil(2.1), ceil(-2.1), floor(3.0));
+print(round(2.5), round(-2.5), round(0.5), round(1.4999), round(1.005, 2), round(2.675, 2), round(1234.5678, -2), round(-1234.5678, 1));
+print(to_int(round(7.6)), to_int(floor(-0.5)));
+
+// Roots, logarithms, and trigonometry.
+print(sqrt(16.0), sqrt(2.0), exp(1.0), log(exp(2.0)), log(8.0, 2.0), log(1000.0, 10.0), log10(0.001), log2(1024.0), hypot(3.0, 4.0));
+print(pi(), sin(pi() / 2.0), cos(0.0), tan(0.0), asin(1.0), acos(1.0), atan(1.0) * 4.0, atan2(1.0, 1.0), deg2rad(180.0), rad2deg(pi()));
+print(is_nan(sqrt(-1.0)), is_nan(1.0), is_finite(1.0 / 3.0), is_infinite(1.0 / 0.0), is_finite(0.0 / 0.0));
+
+// number_format: ints exactly, doubles rounded.
+print(number_format(1234567.891), number_format(1234567.891, 2), number_format(1234567.891, 2, ",", "."), number_format(0.5));
+print(number_format(9223372036854775807), number_format(-1234567, 2), number_format(-0.4), number_format(1234.5, -2), number_format(987654, -3, ".", " "));
+print(number_format(1.0 / 0.0), number_format(0.0 / 0.0), number_format(123, 0, ".", ""));
+
+// Random numbers: always in range, and every value of a small range appears.
+map[int, int] seen = {};
+foreach (range(1, 2000) as n) {
+    int roll = random_int(1, 6);
+    seen[roll] = (seen[roll] ?? 0) + 1;
+}
+print(len(seen), min(map_keys(seen)), max(map_keys(seen)));
+bool inside = true;
+foreach (range(1, 2000) as n) {
+    double x = random_double();
+    inside = inside && x >= 0.0 && x < 1.0;
+}
+print(inside, random_int(5, 5), random_int(-9223372036854775807 - 1, 9223372036854775807) != 0 || true);
+
+// Errors.
+try { random_int(2, 1); } catch (InvalidArgumentException e) { print("error:", e->getMessage()); }
+try { clamp(1, 10, 0); } catch (InvalidArgumentException e) { print("error:", e->getMessage()); }
+try { clamp(1.0, 1.0, 0.0); } catch (InvalidArgumentException e) { print("error:", e->getMessage()); }
+int[] empty = [];
+try { min(empty); } catch (InvalidArgumentException e) { print("error:", e->getMessage()); }
+try { log(2.0, 1.0); } catch (InvalidArgumentException e) { print("error:", e->getMessage()); }
+
+// Used as values: the declared functions (for abs, min, max, and clamp, the
+// double versions).
+function(double): double absolute = abs;
+function(double): double down = floor;
+function(double, double): double smaller = min;
+print(absolute(-2.5), down(2.5), smaller(1.5, 0.5));

@@ -1,0 +1,114 @@
+// Math: rounding, roots, logarithms, trigonometry, number_format, and
+// random numbers, implemented in C (stdlib/runtime/math.c). The names and
+// results are PHP's.
+//
+//   import round, sqrt, max from "std/math";
+//
+// abs, min, max, and clamp work on ints and on doubles, and give the same
+// type back: the compiler handles them itself, for any number of values
+// (min and max also take an array). The versions below, for doubles, are
+// what you get when you use one as a function value.
+
+import InvalidArgumentException from "exceptions";
+
+// Rounding. Each returns a double; to_int converts the result.
+
+// The largest whole number not above `x`: floor(2.7) is 2, floor(-2.7) is -3.
+extern function floor(double x): double;
+// The smallest whole number not below `x`: ceil(2.1) is 3, ceil(-2.1) is -2.
+extern function ceil(double x): double;
+// `x` rounded to `precision` decimal places (to tens, hundreds, ... when
+// negative), with halves rounded away from zero, as PHP's round does:
+// round(2.5) is 3, round(-2.5) is -3, and round(1.005, 2) is 1.01.
+extern function round(double x, int precision = 0): double;
+
+// Roots, powers, and logarithms. Use ** for powers.
+
+// The square root; NAN for a negative number.
+extern function sqrt(double x): double;
+// e to the power `x`.
+extern function exp(double x): double;
+// The logarithm of `x` to `base`, the natural logarithm by default. Throws
+// InvalidArgumentException for a base that's 0 or less, or 1.
+extern function log(double x, double base = 2.718281828459045): double;
+extern function log10(double x): double;
+extern function log2(double x): double;
+// sqrt(x * x + y * y), without overflow for large values.
+extern function hypot(double x, double y): double;
+
+// Trigonometry, in radians.
+
+extern function sin(double x): double;
+extern function cos(double x): double;
+extern function tan(double x): double;
+extern function asin(double x): double;
+extern function acos(double x): double;
+extern function atan(double x): double;
+// The angle of the point (x, y) from the x axis, from -pi to pi.
+extern function atan2(double y, double x): double;
+extern function deg2rad(double degrees): double;
+extern function rad2deg(double radians): double;
+// pi, 3.141592653589793.
+extern function pi(): double;
+
+// Special values: 0.0 / 0.0 is NAN, and 1.0 / 0.0 is INF.
+
+extern function is_nan(double x): bool;
+extern function is_finite(double x): bool;
+extern function is_infinite(double x): bool;
+
+// `x` as text with `decimals` decimal places (rounded as round does) and
+// `thousands` between each group of three digits: number_format(1234567.891, 2)
+// is "1,234,567.89". `x` can be an int too.
+extern function number_format(double x, int decimals = 0, string point = ".", string thousands = ","): string;
+// number_format of an int, exactly (the compiler calls it for an int).
+extern function __number_format_int(int x, int decimals, string point, string thousands): string;
+
+// Random numbers, from the operating system's secure source, so they're
+// suitable for tokens and passwords, as PHP's random_int.
+
+// A random int from `min` to `max`, both included. Throws
+// InvalidArgumentException if `min` is greater than `max`.
+extern function random_int(int min, int max): int;
+// A random double from 0 up to (not including) 1.
+extern function random_double(): double;
+
+// The absolute value: abs(-3) is 3, abs(-2.5) is 2.5.
+function abs(double x): double {
+    if (x < 0.0) {
+        return -x;
+    }
+    return x + 0.0;
+}
+
+// The smallest of the values: min(3, 1, 2) is 1, min([2.5, 0.5]) is 0.5.
+// Throws InvalidArgumentException for an empty array.
+function min(double a, double b): double {
+    if (b < a) {
+        return b;
+    }
+    return a;
+}
+
+// The largest of the values: max(3, 1, 2) is 3.
+function max(double a, double b): double {
+    if (b > a) {
+        return b;
+    }
+    return a;
+}
+
+// `x`, or `low` if it's below that, or `high` if it's above: clamp(15, 0, 10)
+// is 10. Throws InvalidArgumentException if `low` is greater than `high`.
+function clamp(double x, double low, double high): double {
+    if (!(low <= high)) {
+        throw new InvalidArgumentException("clamp: low (" + to_string(low) + ") is greater than high (" + to_string(high) + ")");
+    }
+    if (x < low) {
+        return low;
+    }
+    if (x > high) {
+        return high;
+    }
+    return x;
+}

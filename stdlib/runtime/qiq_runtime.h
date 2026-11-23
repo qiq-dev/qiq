@@ -70,6 +70,10 @@ _Noreturn void qiq_fatal(const char *message);
 #define QIQ_INT_TEXT_SIZE 21
 int qiq_format_int(char *buffer, int64_t value);
 
+// `length` random bytes from the kernel (getrandom, or /dev/urandom);
+// throws RuntimeException naming `caller` if there's no source (crypto.c).
+void qiq_random_bytes(unsigned char *out, size_t length, const char *caller);
+
 // Whether `length` bytes are UTF-8 text a qiq string can hold: valid, and
 // without NUL bytes (crypto.c).
 bool qiq_is_utf8_text(const unsigned char *bytes, size_t length);

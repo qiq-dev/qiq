@@ -3906,7 +3906,7 @@ impl Emitter {
             ir.push_str(&self.emit_dispatch_table(*owner, method_name, Some(supplied)));
         }
         ir.push_str(
-            "\ndeclare i32 @printf(ptr, ...)\ndeclare i32 @strcmp(ptr, ptr)\ndeclare ptr @calloc(i64, i64)\ndeclare ptr @qiq_map_new(i32, i32)\ndeclare void @qiq_retain(ptr)\ndeclare void @qiq_release(ptr)\ndeclare ptr @qiq_object_new(i64, i64)\ndeclare void @qiq_map_set(ptr, i64, i64)\ndeclare i64 @qiq_map_get(ptr, i64)\ndeclare i64 @qiq_map_iteration_end(ptr)\ndeclare i64 @qiq_map_version(ptr)\ndeclare zeroext i1 @qiq_map_entry_live(ptr, i64, i64)\ndeclare zeroext i1 @qiq_map_find(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_map_has(ptr, i64)\ndeclare void @qiq_map_remove(ptr, i64)\ndeclare ptr @qiq_map_keys(ptr, i64, i32)\ndeclare ptr @qiq_map_values(ptr, i64, i32)\ndeclare zeroext i1 @qiq_map_contains_value(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_values_equal(ptr, ptr, ptr)\ndeclare i64 @qiq_map_key_at(ptr, i64)\ndeclare i64 @qiq_map_value_at(ptr, i64)\ndeclare i64 @qiq_string_len(ptr)\ndeclare ptr @qiq_sprintf(ptr, ptr, ptr, i64)\ndeclare void @qiq_bind_values(ptr, ptr, i64)\ndeclare ptr @qiq_json_encode(ptr, i64, i1 zeroext)\ndeclare i64 @qiq_json_decode(ptr, ptr)\ndeclare i32 @qiq_string_equality(ptr, ptr)\ndeclare i32 @qiq_string_compare(ptr, ptr)\ndeclare ptr @qiq_string_char_at(ptr, i64)\ndeclare ptr @qiq_string_concat(ptr, ptr)\ndeclare i64 @qiq_int_divide(i64, i64)\ndeclare i64 @qiq_int_modulo(i64, i64)\ndeclare i64 @qiq_int_power(i64, i64)\ndeclare i64 @qiq_int_power_unchecked(i64, i64)\ndeclare i64 @qiq_int_shift_left(i64, i64)\ndeclare i64 @qiq_int_shift_right(i64, i64)\ndeclare double @llvm.pow.f64(double, double)\ndeclare void @qiq_uncaught(ptr, ptr)\ndeclare ptr @qiq_array_new(i64, i64, i32)\ndeclare void @qiq_set_arguments(i32, ptr)\ndeclare void @qiq_check_callable(ptr)\ndeclare void @qiq_array_push(ptr, i64, i64)\ndeclare i64 @qiq_range_plan(i64, i64, i64, i1 zeroext, ptr)\ndeclare ptr @qiq_range_int(i64, i64, i64, i1 zeroext)\ndeclare ptr @qiq_range_count(i64)\ndeclare ptr @qiq_range_double(double, double, double, i1 zeroext)\ndeclare ptr @qiq_range_char(ptr, ptr, i64, i1 zeroext)\ndeclare i64 @qiq_array_pop(ptr, i64)\ndeclare i64 @qiq_array_shift(ptr, i64)\ndeclare void @qiq_array_insert(ptr, i64, i64, i64)\ndeclare ptr @qiq_array_splice(ptr, i64, i64, i64, i1 zeroext, ptr)\ndeclare i64 @qiq_array_length(ptr)\ndeclare i64 @qiq_len_string(ptr)\ndeclare i64 @qiq_len_array(ptr)\ndeclare i64 @qiq_len_map(ptr)\ndeclare void @qiq_array_check_index(ptr, i64)\ndeclare void @qiq_print_value(ptr, i64)\ndeclare void @qiq_print_space()\ndeclare void @qiq_print_newline()\ndeclare i64 @qiq_double_to_int(double)\ndeclare zeroext i8 @qiq_int_to_byte(i64)\ndeclare i64 @qiq_string_to_int(ptr)\ndeclare double @qiq_string_to_double(ptr)\ndeclare ptr @qiq_int_to_string(i64)\ndeclare ptr @qiq_double_to_string(double)\n",
+            "\ndeclare i32 @printf(ptr, ...)\ndeclare i32 @strcmp(ptr, ptr)\ndeclare ptr @calloc(i64, i64)\ndeclare ptr @qiq_map_new(i32, i32)\ndeclare void @qiq_retain(ptr)\ndeclare void @qiq_release(ptr)\ndeclare ptr @qiq_object_new(i64, i64)\ndeclare void @qiq_map_set(ptr, i64, i64)\ndeclare i64 @qiq_map_get(ptr, i64)\ndeclare i64 @qiq_map_iteration_end(ptr)\ndeclare i64 @qiq_map_version(ptr)\ndeclare zeroext i1 @qiq_map_entry_live(ptr, i64, i64)\ndeclare zeroext i1 @qiq_map_find(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_map_has(ptr, i64)\ndeclare void @qiq_map_remove(ptr, i64)\ndeclare ptr @qiq_map_keys(ptr, i64, i32)\ndeclare ptr @qiq_map_values(ptr, i64, i32)\ndeclare zeroext i1 @qiq_map_contains_value(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_values_equal(ptr, ptr, ptr)\ndeclare i64 @qiq_map_key_at(ptr, i64)\ndeclare i64 @qiq_map_value_at(ptr, i64)\ndeclare i64 @qiq_string_len(ptr)\ndeclare ptr @qiq_sprintf(ptr, ptr, ptr, i64)\ndeclare void @qiq_bind_values(ptr, ptr, i64)\ndeclare ptr @qiq_json_encode(ptr, i64, i1 zeroext)\ndeclare i64 @qiq_json_decode(ptr, ptr)\ndeclare i32 @qiq_string_equality(ptr, ptr)\ndeclare i32 @qiq_string_compare(ptr, ptr)\ndeclare ptr @qiq_string_char_at(ptr, i64)\ndeclare ptr @qiq_string_concat(ptr, ptr)\ndeclare i64 @qiq_int_divide(i64, i64)\ndeclare i64 @qiq_int_modulo(i64, i64)\ndeclare i64 @qiq_int_power(i64, i64)\ndeclare i64 @qiq_int_power_unchecked(i64, i64)\ndeclare i64 @qiq_int_shift_left(i64, i64)\ndeclare i64 @qiq_int_shift_right(i64, i64)\ndeclare double @llvm.pow.f64(double, double)\ndeclare double @llvm.fabs.f64(double)\ndeclare i64 @qiq_math_min_int(ptr)\ndeclare i64 @qiq_math_max_int(ptr)\ndeclare double @qiq_math_min_double(ptr)\ndeclare double @qiq_math_max_double(ptr)\ndeclare i64 @qiq_math_clamp_int(i64, i64, i64)\ndeclare double @qiq_math_clamp_double(double, double, double)\ndeclare void @qiq_uncaught(ptr, ptr)\ndeclare ptr @qiq_array_new(i64, i64, i32)\ndeclare void @qiq_set_arguments(i32, ptr)\ndeclare void @qiq_check_callable(ptr)\ndeclare void @qiq_array_push(ptr, i64, i64)\ndeclare i64 @qiq_range_plan(i64, i64, i64, i1 zeroext, ptr)\ndeclare ptr @qiq_range_int(i64, i64, i64, i1 zeroext)\ndeclare ptr @qiq_range_count(i64)\ndeclare ptr @qiq_range_double(double, double, double, i1 zeroext)\ndeclare ptr @qiq_range_char(ptr, ptr, i64, i1 zeroext)\ndeclare i64 @qiq_array_pop(ptr, i64)\ndeclare i64 @qiq_array_shift(ptr, i64)\ndeclare void @qiq_array_insert(ptr, i64, i64, i64)\ndeclare ptr @qiq_array_splice(ptr, i64, i64, i64, i1 zeroext, ptr)\ndeclare i64 @qiq_array_length(ptr)\ndeclare i64 @qiq_len_string(ptr)\ndeclare i64 @qiq_len_array(ptr)\ndeclare i64 @qiq_len_map(ptr)\ndeclare void @qiq_array_check_index(ptr, i64)\ndeclare void @qiq_print_value(ptr, i64)\ndeclare void @qiq_print_space()\ndeclare void @qiq_print_newline()\ndeclare i64 @qiq_double_to_int(double)\ndeclare zeroext i8 @qiq_int_to_byte(i64)\ndeclare i64 @qiq_string_to_int(ptr)\ndeclare double @qiq_string_to_double(ptr)\ndeclare ptr @qiq_int_to_string(i64)\ndeclare ptr @qiq_double_to_string(double)\n",
         );
         ir.push_str(&extern_declarations);
         ir.push('\n');
@@ -6612,6 +6612,165 @@ impl Emitter {
 
     /// `to_int`, `to_double`, `to_byte`, and `to_string`: built in rather than
     /// declared in the standard library because each accepts several types.
+    /// A call to std/math's abs, min, max, clamp, or number_format, which
+    /// take ints or doubles (qiq has no overloading, so the compiler does
+    /// this, as it does for len). abs, min, max, and clamp are inline: one or
+    /// two instructions per value, and min and max of an array call the
+    /// runtime. number_format of an int converts it to a double and then
+    /// calls the declared function. Returns None for the other functions.
+    fn emit_math_generic(
+        &mut self,
+        function: &str,
+        called: &str,
+        arguments: &[Expr],
+        variables: &HashMap<String, Value>,
+        body: &mut String,
+    ) -> Result<Option<Value>, String> {
+        if function == "number_format" {
+            // The first argument is evaluated once and passed on as a hidden
+            // variable. A double goes to the declared function (seeing the
+            // variable again means this is that call); an int goes to
+            // __number_format_int, which writes every int exactly.
+            let Some(first) = arguments.first() else { return Ok(None) };
+            if matches!(first, Expr::NamedArgument(..)) || matches!(first, Expr::Variable(name) if name == "#math.number") {
+                return Ok(None);
+            }
+            let value = self.emit_expression(first, variables, body)?;
+            let is_int = value.value_type == ValueType::Int;
+            let mut scope = variables.clone();
+            scope.insert("#math.number".to_string(), Value { slot: None, ..value });
+            let mut rest = vec![Expr::Variable("#math.number".to_string())];
+            rest.extend_from_slice(&arguments[1..]);
+            if !is_int {
+                // By the name it was called by, which an import can change.
+                return self.emit_expression(&Expr::Call(called.to_string(), rest), &scope, body).map(Some);
+            }
+            let symbol = "qiq_stdlib___number_format_int".to_string();
+            let mut parameters = self.signatures.get("qiq_stdlib_number_format").ok_or("std/math isn't loaded")?.parameters.clone();
+            parameters[0].value_type = ValueType::Int;
+            if !self.called_functions.contains(&symbol) {
+                self.called_functions.push(symbol.clone());
+            }
+            let callee = format!("function '{called}'");
+            let resolved = Self::resolve_arguments(&parameters, &rest, &callee)?;
+            let operands = self.emit_arguments(&parameters, &resolved, true, &callee, &format!("argument type mismatch calling '{called}'"), &scope, body)?;
+            let register = self.new_register();
+            body.push_str(&format!("  {register} = call ptr @{symbol}({})\n", operands.join(", ")));
+            self.emit_exception_check(body);
+            return Ok(Some(self.own(Value { value_type: ValueType::String, operand: register, slot: None })));
+        }
+        if !matches!(function, "abs" | "min" | "max" | "clamp") {
+            return Ok(None);
+        }
+        if arguments.iter().any(|argument| matches!(argument, Expr::NamedArgument(..))) {
+            return Err(format!("{function} takes no named arguments"));
+        }
+        let mut values = Vec::new();
+        for argument in arguments {
+            values.push(self.emit_expression(argument, variables, body)?);
+        }
+        let number = |this: &Self, value: &Value| -> Result<bool, String> {
+            match value.value_type {
+                ValueType::Int => Ok(false),
+                ValueType::Double => Ok(true),
+                other => Err(format!("{function} works on ints and doubles, found {}", this.type_name(other))),
+            }
+        };
+        // min and max of an array.
+        if matches!(function, "min" | "max") && values.len() == 1 {
+            let element = self.element_of(values[0].value_type);
+            let double = match element {
+                Some(ValueType::Int) => false,
+                Some(ValueType::Double) => true,
+                _ => return Err(format!("{function} takes two or more values, or an int[] or double[], found {}", self.type_name(values[0].value_type))),
+            };
+            let register = self.new_register();
+            let (llvm, kind) = if double { ("double", "double") } else { ("i64", "int") };
+            body.push_str(&format!("  {register} = call {llvm} @qiq_math_{function}_{kind}(ptr {})\n", values[0].operand));
+            self.emit_exception_check(body);
+            let value_type = if double { ValueType::Double } else { ValueType::Int };
+            return Ok(Some(Value { value_type, operand: register, slot: None }));
+        }
+        let expected = match function {
+            "abs" => "1 value",
+            "clamp" => "3 values (x, low, high)",
+            _ => "two or more values, or an array",
+        };
+        let count_ok = match function {
+            "abs" => values.len() == 1,
+            "clamp" => values.len() == 3,
+            _ => values.len() >= 2,
+        };
+        if !count_ok {
+            return Err(format!("{function} takes {expected}, found {}", values.len()));
+        }
+        let double = number(self, &values[0])?;
+        for value in &values[1..] {
+            if number(self, value)? != double {
+                return Err(format!(
+                    "{function}: the values must all be ints or all doubles, found {} and {}",
+                    self.type_name(values[0].value_type),
+                    self.type_name(value.value_type)
+                ));
+            }
+        }
+        let (llvm, less, greater) = if double { ("double", "fcmp olt double", "fcmp ogt double") } else { ("i64", "icmp slt i64", "icmp sgt i64") };
+        let value_type = if double { ValueType::Double } else { ValueType::Int };
+        // `pick(a, b, comparison)`: b if `b comparison a` holds, else a.
+        let pick = |this: &mut Self, a: &str, b: &str, comparison: &str, body: &mut String| -> String {
+            let test = this.new_register();
+            let result = this.new_register();
+            body.push_str(&format!("  {test} = {comparison} {b}, {a}\n  {result} = select i1 {test}, {llvm} {b}, {llvm} {a}\n"));
+            result
+        };
+        let operand = match function {
+            "abs" if double => {
+                let register = self.new_register();
+                body.push_str(&format!("  {register} = call double @llvm.fabs.f64(double {})\n", values[0].operand));
+                register
+            }
+            "abs" => {
+                // INT64_MIN stays INT64_MIN, as - wraps.
+                let negated = self.new_register();
+                body.push_str(&format!("  {negated} = sub i64 0, {}\n", values[0].operand));
+                pick(self, &values[0].operand, &negated, greater, body)
+            }
+            "min" | "max" => {
+                let comparison = if function == "min" { less } else { greater };
+                let mut best = values[0].operand.clone();
+                for value in &values[1..] {
+                    best = pick(self, &best, &value.operand, comparison, body);
+                }
+                best
+            }
+            _ => {
+                // clamp: inline when low <= high; the runtime throws otherwise.
+                let (x, low, high) = (&values[0].operand, &values[1].operand, &values[2].operand);
+                let register = self.new_register();
+                let order = if double { "fcmp ole double" } else { "icmp sle i64" };
+                let condition = format!("  %chk.ok# = {order} {low}, {high}\n");
+                // max(low, min(x, high)), as one expression for the fast path.
+                let inner = self.new_register();
+                let inner_test = self.new_register();
+                let outer_test = self.new_register();
+                body.push_str(&format!(
+                    "  {inner_test} = {less} {high}, {x}\n  {inner} = select i1 {inner_test}, {llvm} {high}, {llvm} {x}\n  {outer_test} = {greater} {low}, {inner}\n"
+                ));
+                let kind = if double { "double" } else { "int" };
+                self.emit_fast_path(
+                    &register,
+                    llvm,
+                    &condition,
+                    &format!("select i1 {outer_test}, {llvm} {low}, {llvm} {inner}"),
+                    &format!("call {llvm} @qiq_math_clamp_{kind}({llvm} {x}, {llvm} {low}, {llvm} {high})"),
+                    body,
+                );
+                register
+            }
+        };
+        Ok(Some(Value { value_type, operand, slot: None }))
+    }
+
     /// An f-string's `{expression}` as text: as to_string converts it, with
     /// an object's __toString, and with null (a null string, char, or
     /// object, or `null` itself) as "null", the way print writes it.
@@ -9758,6 +9917,16 @@ impl Emitter {
                         format!("function '{name}' is not declared{}", stdlib_hint(name))
                     }
                 })?;
+                // abs, min, max, clamp, and number_format from std/math work
+                // on ints and doubles: compiled here for the types given.
+                // (number_format is an extern, named for its C function; only
+                // the standard library can declare externs.)
+                let math = symbol.strip_prefix("qiq.stdlib.math.").or((symbol == "qiq_stdlib_number_format").then_some("number_format"));
+                if let Some(function) = math {
+                    if let Some(value) = self.emit_math_generic(function, name, arguments, variables, body)? {
+                        return Ok(value);
+                    }
+                }
                 if !self.called_functions.contains(&symbol) {
                     self.called_functions.push(symbol.clone());
                 }
@@ -11274,6 +11443,7 @@ const STDLIB_MODULES: &[(&str, Option<&str>, &str)] = &[
     ("crypto.qiq", Some("std/crypto"), include_str!("../stdlib/crypto.qiq")),
     ("sql.qiq", Some("std/sql"), include_str!("../stdlib/sql.qiq")),
     ("regex.qiq", Some("std/regex"), include_str!("../stdlib/regex.qiq")),
+    ("math.qiq", Some("std/math"), include_str!("../stdlib/math.qiq")),
 ];
 
 /// Standard library modules that have moved, as (old path, new path), so
@@ -11544,6 +11714,29 @@ mod tests {
         assert!(ir.contains("@qiq_stdlib___regex_scan"));
         // A pattern without a subject is a type error.
         assert!(compile_source("import preg_match from \"std/regex\"; preg_match(\"a\");").is_err());
+    }
+
+    #[test]
+    fn math_generics_keep_their_types() {
+        let program = |body: &str| format!("import abs, min, max, clamp, number_format, number_format as nf from \"std/math\";\n{body}");
+        // The result has the arguments' type, so these assignments type-check.
+        let ok = program("int a = abs(-1); double b = abs(-1.5); int c = min(3, 1, 2); double d = max(1.5, 2.5); int e = min([1, 2]); double f = max([1.5]); int g = clamp(5, 0, 3); double h = clamp(0.5, 0.0, 1.0); string i = number_format(1234567) + nf(2.5, 1) + nf(3, 2, \",\", \".\");");
+        let ir = compile_source(&ok).unwrap();
+        let main = ir.split("define i32 @main").nth(1).unwrap();
+        // Inline: no calls for abs, min, max, or clamp on values.
+        for call in ["qiq.stdlib.math.abs", "qiq.stdlib.math.min(", "qiq.stdlib.math.max(", "qiq.stdlib.math.clamp("] {
+            assert!(!main.contains(call), "{call}: {main}");
+        }
+        assert!(main.contains("@llvm.fabs.f64") && main.contains("@qiq_math_min_int(") && main.contains("@qiq_stdlib___number_format_int(") && main.contains("@qiq_stdlib_number_format("));
+        let error = |body: &str| compile_source(&program(body)).unwrap_err();
+        assert!(error("int x = abs(-1.5);").contains("double"));
+        assert!(error("print(min(1, 2.5));").contains("min: the values must all be ints or all doubles, found int and double"));
+        assert!(error("print(max(\"a\", \"b\"));").contains("max works on ints and doubles, found string"));
+        assert!(error("print(min(1));").contains("min takes two or more values, or an int[] or double[], found int"));
+        assert!(error("print(clamp(1, 2));").contains("clamp takes 3 values (x, low, high), found 2"));
+        assert!(error("print(abs(x: 1));").contains("abs takes no named arguments"));
+        // A min of your own is an ordinary function.
+        assert!(compile_source("function min(string a, string b): string { return a; } print(min(\"x\", \"y\"));").is_ok());
     }
 
     #[test]

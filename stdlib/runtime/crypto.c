@@ -487,8 +487,9 @@ static void qiq_bcrypt(const char *password, const unsigned char salt[16], int c
     out[60] = '\0';
 }
 
-// `length` random bytes from the kernel.
-static void qiq_random_bytes(unsigned char *out, size_t length) {
+// `length` random bytes from the kernel, for `caller`'s errors (also used
+// by random_int and random_double in math.c).
+void qiq_random_bytes(unsigned char *out, size_t length, const char *caller) {
     size_t done = 0;
     while (done < length) {
         ssize_t got = getrandom(out + done, length - done, 0);
@@ -497,14 +498,14 @@ static void qiq_random_bytes(unsigned char *out, size_t length) {
         } else if (got < 0 && errno != EINTR) {
             // Kernels before 3.17 have no getrandom.
             int fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
-            if (fd < 0) qiq_throw(QIQ_RUNTIME_EXCEPTION, "bcrypt_hash: no source of random numbers");
+            if (fd < 0) qiq_throwf(QIQ_RUNTIME_EXCEPTION, "%s: no source of random numbers", caller);
             while (done < length) {
                 ssize_t read_count = read(fd, out + done, length - done);
                 if (read_count > 0) done += (size_t)read_count;
                 else if (read_count < 0 && errno == EINTR) continue;
                 else {
                     close(fd);
-                    qiq_throw(QIQ_RUNTIME_EXCEPTION, "bcrypt_hash: no source of random numbers");
+                    qiq_throwf(QIQ_RUNTIME_EXCEPTION, "%s: no source of random numbers", caller);
                 }
             }
             close(fd);
@@ -521,7 +522,7 @@ QIQ_GUARDED(char *, qiq_stdlib_bcrypt_hash, NULL, (const char *password, int64_t
         qiq_throw(QIQ_INVALID_ARGUMENT_EXCEPTION, "bcrypt_hash: bcrypt only uses the first 72 bytes of a password, and this one is longer");
     }
     unsigned char salt[16];
-    qiq_random_bytes(salt, sizeof salt);
+    qiq_random_bytes(salt, sizeof salt, "bcrypt_hash");
     char hash[61];
     qiq_bcrypt(password, salt, (int)cost, 'y', hash);
     return qiq_string_from(hash, 60);

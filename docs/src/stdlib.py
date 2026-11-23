@@ -28,6 +28,7 @@ OVERVIEW = (
     "<tr><td><code>std/net/http</code></td><td>The <a href=\"ref.http.html\">HTTP client</a> and URL encoding</td></tr>"
     "<tr><td><code>std/net/http/server</code></td><td>The <a href=\"ref.http-server.html\">HTTP server</a></td></tr>"
     "<tr><td><code>std/crypto</code></td><td><a href=\"ref.crypto.html\">Hashing and encoding</a>: MD5, SHA-1, SHA-2, HMAC, hex, base64, and password hashing</td></tr>"
+    "<tr><td><code>std/math</code></td><td><a href=\"ref.math.html\">Math</a>: rounding, roots, logarithms, trigonometry, <code>number_format</code>, and secure random numbers</td></tr>"
     "<tr><td><code>std/regex</code></td><td><a href=\"ref.regex.html\">Regular expressions</a>, with PHP's <code>preg_*</code> functions, and the <a href=\"class.regexmatch.html\">RegexMatch</a> class</td></tr>"
     "<tr><td><code>std/sql</code></td><td>SQL databases (SQLite, PostgreSQL, MySQL, and MariaDB): the <a href=\"class.database.html\">Database</a>, <a href=\"class.row.html\">Row</a>, and <a href=\"class.cursor.html\">Cursor</a> classes</td></tr>"
     "</tbody></table>\n"
@@ -2563,7 +2564,145 @@ REGEXMATCH_CLASS = r"""<h1>The RegexMatch class</h1>
 print(m-&gt;text, m-&gt;group(1), m-&gt;group(2) ?? "none", m-&gt;start, m-&gt;end);   // width= width none 0 6</pre>
 """
 
-CATEGORIES = [GENERAL, STRINGS, REGEX, ARRAYS, MAPS, FILES, DATES, JSON, HTTP, HTTP_SERVER, CRYPTO, PROGRAM, CONVERSIONS, OUTPUT]
+def _simple(name, purpose, params, returns, description, code, output, see_also, errors=None, notes=None):
+    entry = {"name": name, "purpose": purpose, "params": params, "returns": returns, "description": description,
+             "return_description": "", "errors": errors or [], "examples": [{"title": "Example", "code": code, "output": output}],
+             "see_also": see_also}
+    if notes: entry["notes"] = notes
+    return entry
+
+_X = [param("x", "double", "The value.")]
+_GENERIC = "It works on ints and on doubles and returns the same type: the compiler handles it for the types it's given."
+
+MATH = {
+    "slug": "math",
+    "title": "Math",
+    "intro": (
+        "Rounding, roots, logarithms, trigonometry, number formatting, and secure random numbers, from <code>std/math</code>, "
+        "with PHP's names and results. <code>abs</code>, <code>min</code>, <code>max</code>, and <code>clamp</code> work on ints and doubles alike; "
+        "the rest take doubles. Use the <code>**</code> operator for powers, and <code>/</code> and <code>%</code> for integer division and remainders."
+    ),
+    "details": r"""<h2>Ints and doubles</h2>
+<p>qiq doesn't mix ints and doubles in arithmetic, and the same goes for these functions: <code>sqrt(16)</code> is a compile error, and <code>sqrt(16.0)</code> or <code>sqrt(to_double(n))</code> is what to write. <code>floor</code>, <code>ceil</code>, and <code>round</code> return doubles, as in PHP; <code>to_int(round(x))</code> makes an int of the result. <code>number_format</code> takes either.</p>
+<h2 id="rounding-as-in-php">Rounding as in PHP</h2>
+<p><code>round</code> rounds halves away from zero, so <code>round(2.5)</code> is 3 and <code>round(-2.5)</code> is -3. It computes exactly as PHP 8.3 does: when the requested place is within the 15 significant digits a double holds reliably, the value is first rounded to those 15 digits. So <code>round(1.005, 2)</code> is 1.01, as written, although the double nearest 1.005 is slightly below it, and a result of arithmetic such as <code>2.8499999999999996</code>, which is 2.85 with a little error, rounds as 2.85 does. Checked against PHP 8.3 on 285,000 values, the results are the same, with one exception PHP itself fixed in 8.4: values just below a half, such as <code>0.49999999999999994</code>, round down, where PHP 8.3 rounds them up.</p>""",
+    "functions": [
+        {
+            "name": "abs", "purpose": "The absolute value", "params": [param("x", "int|double", "The value.")], "returns": "int|double",
+            "description": "Returns <code>x</code> without its sign. " + _GENERIC,
+            "return_description": "The value, never negative (except for the smallest int, which has no positive counterpart and stays as it is, as <code>-</code> wraps).",
+            "errors": [],
+            "examples": [{"title": "Ints and doubles", "code": "print(abs(-7), abs(2.5), abs(-0.25));", "output": "7 2.5 0.25"}],
+            "see_also": ["min", "max"],
+        },
+        {
+            "name": "min", "purpose": "The smallest of several values",
+            "params": [param("values", "int...|double...|int[]|double[]", "Two or more ints, or two or more doubles, or one array of them.")],
+            "returns": "int|double",
+            "description": "Returns the smallest of its arguments, or of the elements of an array. " + _GENERIC,
+            "return_description": "The smallest value.",
+            "errors": ["<code>InvalidArgumentException</code> for an empty array."],
+            "examples": [{"title": "Values and arrays", "code": "int[] scores = [72, 95, 64];\nprint(min(3, 1, 2), min(2.5, -1.5), min(scores));", "output": "1 -1.5 64"}],
+            "see_also": ["max", "clamp"],
+        },
+        {
+            "name": "max", "purpose": "The largest of several values",
+            "params": [param("values", "int...|double...|int[]|double[]", "Two or more ints, or two or more doubles, or one array of them.")],
+            "returns": "int|double",
+            "description": "Returns the largest of its arguments, or of the elements of an array. " + _GENERIC,
+            "return_description": "The largest value.",
+            "errors": ["<code>InvalidArgumentException</code> for an empty array."],
+            "examples": [{"title": "Values and arrays", "code": "double[] prices = [4.5, 12.0, 7.25];\nprint(max(3, 1, 2), max(prices));", "output": "3 12"}],
+            "see_also": ["min", "clamp"],
+        },
+        {
+            "name": "clamp", "purpose": "Limit a value to a range",
+            "params": [param("x", "int|double", "The value."), param("low", "int|double", "The smallest result."), param("high", "int|double", "The largest result.")],
+            "returns": "int|double",
+            "description": "Returns <code>x</code>, or <code>low</code> if <code>x</code> is below it, or <code>high</code> if it's above: <code>max(low, min(x, high))</code> in one call. " + _GENERIC + " PHP has no <code>clamp</code>.",
+            "return_description": "A value from <code>low</code> to <code>high</code>.",
+            "errors": ["<code>InvalidArgumentException</code> if <code>low</code> is greater than <code>high</code>."],
+            "examples": [{"title": "Keeping a value in range", "code": "print(clamp(15, 0, 10), clamp(-3, 0, 10), clamp(0.5, 0.0, 1.0));", "output": "10 0 0.5"}],
+            "see_also": ["min", "max"],
+        },
+        _simple("floor", "Round down", _X, "double", "Returns the largest whole number not above <code>x</code>, as a double.", "print(floor(2.7), floor(-2.7), to_int(floor(9.99)));", "2 -3 9", ["ceil", "round"]),
+        _simple("ceil", "Round up", _X, "double", "Returns the smallest whole number not below <code>x</code>, as a double.", "int items = 23;\nint perPage = 10;\nprint(ceil(2.1), ceil(-2.1), to_int(ceil(to_double(items) / to_double(perPage))));", "3 -2 3", ["floor", "round"]),
+        {
+            "name": "round", "purpose": "Round to a number of decimal places",
+            "params": [param("x", "double", "The value."), param("precision", "int", "Decimal places; negative rounds to tens, hundreds, and so on.", "0")],
+            "returns": "double",
+            "description": "Returns <code>x</code> rounded to <code>precision</code> decimal places, with halves rounded away from zero, as PHP's <code>round</code> (see <a href=\"#rounding-as-in-php\">above</a>).",
+            "return_description": "The rounded value, as a double.",
+            "errors": [],
+            "examples": [{"title": "Places and halves", "code": "print(round(2.5), round(-2.5), round(3.14159, 2), round(1.005, 2), round(1234.5, -2));", "output": "3 -3 3.14 1.01 1200"}],
+            "notes": ["To print a rounded value with a fixed number of decimals, such as <code>3.10</code>, use <a href=\"function.number-format.html\">number_format</a> or an f-string spec like <code>{x:.2f}</code>."],
+            "see_also": ["floor", "ceil", "number_format"],
+        },
+        {
+            "name": "number_format", "purpose": "Format a number with grouped thousands",
+            "params": [param("x", "int|double", "The number."), param("decimals", "int", "Decimal places; negative rounds before the point.", "0"),
+                       param("point", "string", "The decimal point.", "\".\""), param("thousands", "string", "Put between each group of three digits.", "\",\"")],
+            "returns": "string",
+            "description": "Returns <code>x</code> as text, rounded to <code>decimals</code> places as <code>round</code> rounds, with <code>thousands</code> between each group of three digits, as PHP's <code>number_format</code>. An int is written exactly, however large. A value that rounds to zero has no minus sign.",
+            "return_description": "The formatted number.",
+            "errors": [],
+            "examples": [{"title": "Prices and counts", "code": "print(number_format(1234567.891, 2));\nprint(number_format(1234567.891, 2, \",\", \".\"));\nprint(number_format(9876543), number_format(0.5), number_format(-0.4));", "output": "1,234,567.89\n1.234.567,89\n9,876,543 1 0"}],
+            "see_also": ["round", "sprintf"],
+        },
+        _simple("sqrt", "Square root", _X, "double", "Returns the square root of <code>x</code>, or <code>NAN</code> for a negative number.", "print(sqrt(16.0), sqrt(2.0), is_nan(sqrt(-1.0)));", "4 1.41421 true", ["hypot"]),
+        _simple("exp", "e to a power", _X, "double", "Returns <i>e</i> raised to the power <code>x</code>.", "print(exp(0.0), exp(1.0));", "1 2.71828", ["log"]),
+        {
+            "name": "log", "purpose": "Logarithm",
+            "params": [param("x", "double", "The value."), param("base", "double", "The base; <i>e</i> (a natural logarithm) by default.", "e")],
+            "returns": "double",
+            "description": "Returns the logarithm of <code>x</code> to <code>base</code>. For bases 10 and 2, <code>log10</code> and <code>log2</code> are exact for powers of the base.",
+            "return_description": "The logarithm; <code>-INF</code> for 0 and <code>NAN</code> for a negative number.",
+            "errors": ["<code>InvalidArgumentException</code> if <code>base</code> is 0 or less, or 1."],
+            "examples": [{"title": "Bases", "code": "print(log(exp(2.0)), log(8.0, 2.0), log10(1000.0), log2(1024.0));", "output": "2 3 3 10"}],
+            "see_also": ["exp", "log10", "log2"],
+        },
+        _simple("log10", "Base-10 logarithm", _X, "double", "Returns the base-10 logarithm of <code>x</code>.", "print(log10(1000.0), log10(0.01));", "3 -2", ["log"]),
+        _simple("log2", "Base-2 logarithm", _X, "double", "Returns the base-2 logarithm of <code>x</code>.", "print(log2(8.0), log2(1.0));", "3 0", ["log"]),
+        _simple("hypot", "Length of a hypotenuse", [param("x", "double", "One side."), param("y", "double", "The other side.")], "double",
+                "Returns <code>sqrt(x * x + y * y)</code>, without overflowing for large values: the distance of the point (x, y) from the origin.", "print(hypot(3.0, 4.0));", "5", ["sqrt"]),
+        _simple("sin", "Sine", [param("x", "double", "An angle in radians.")], "double", "Returns the sine of <code>x</code>. <code>cos</code> and <code>tan</code> work the same way.", "print(sin(pi() / 2.0), cos(0.0), tan(pi() / 4.0));", "1 1 1", ["cos", "tan", "deg2rad"]),
+        _simple("cos", "Cosine", [param("x", "double", "An angle in radians.")], "double", "Returns the cosine of <code>x</code>.", "print(cos(pi()));", "-1", ["sin", "tan"]),
+        _simple("tan", "Tangent", [param("x", "double", "An angle in radians.")], "double", "Returns the tangent of <code>x</code>.", "print(tan(0.0));", "0", ["sin", "cos"]),
+        _simple("asin", "Arc sine", _X, "double", "Returns the angle, in radians from -pi/2 to pi/2, whose sine is <code>x</code>; <code>NAN</code> outside -1 to 1.", "print(asin(1.0), rad2deg(asin(0.5)));", "1.5708 30", ["acos", "atan"]),
+        _simple("acos", "Arc cosine", _X, "double", "Returns the angle, in radians from 0 to pi, whose cosine is <code>x</code>; <code>NAN</code> outside -1 to 1.", "print(acos(1.0), acos(-1.0));", "0 3.14159", ["asin", "atan"]),
+        _simple("atan", "Arc tangent", _X, "double", "Returns the angle, in radians from -pi/2 to pi/2, whose tangent is <code>x</code>.", "print(atan(1.0) * 4.0);", "3.14159", ["atan2"]),
+        _simple("atan2", "Angle of a point", [param("y", "double", "The point's y."), param("x", "double", "The point's x.")], "double",
+                "Returns the angle of the point (x, y) from the positive x axis, in radians from -pi to pi, using the signs of both to find the quadrant.", "print(rad2deg(atan2(1.0, 1.0)), rad2deg(atan2(1.0, -1.0)));", "45 135", ["atan"]),
+        _simple("deg2rad", "Degrees to radians", [param("degrees", "double", "An angle in degrees.")], "double", "Returns the angle in radians.", "print(deg2rad(180.0));", "3.14159", ["rad2deg"]),
+        _simple("rad2deg", "Radians to degrees", [param("radians", "double", "An angle in radians.")], "double", "Returns the angle in degrees.", "print(rad2deg(pi() / 2.0));", "90", ["deg2rad"]),
+        _simple("pi", "The number pi", [], "double", "Returns pi, 3.141592653589793, like PHP's <code>pi()</code> and <code>M_PI</code>.", "print(pi(), number_format(pi(), 5));", "3.14159 3.14159", ["deg2rad"]),
+        _simple("is_nan", "Check for not-a-number", _X, "bool", "Returns whether <code>x</code> is <code>NAN</code>, the result of operations such as <code>0.0 / 0.0</code> or <code>sqrt(-1.0)</code>. <code>NAN</code> isn't equal to anything, itself included, so <code>x == x</code> can't tell.", "double nan = 0.0 / 0.0;\nprint(is_nan(nan), nan == nan, is_nan(1.0));", "true false false", ["is_finite", "is_infinite"]),
+        _simple("is_finite", "Check for an ordinary number", _X, "bool", "Returns whether <code>x</code> is neither infinite nor <code>NAN</code>.", "print(is_finite(1.5), is_finite(1.0 / 0.0));", "true false", ["is_nan", "is_infinite"]),
+        _simple("is_infinite", "Check for infinity", _X, "bool", "Returns whether <code>x</code> is <code>INF</code> or <code>-INF</code>, the result of dividing a nonzero double by zero, for example.", "print(is_infinite(-1.0 / 0.0), is_infinite(1e308));", "true false", ["is_finite"]),
+        {
+            "name": "random_int", "purpose": "A secure random int in a range",
+            "params": [param("min", "int", "The smallest result."), param("max", "int", "The largest result.")],
+            "returns": "int",
+            "description": "Returns a random int from <code>min</code> to <code>max</code>, both included, each equally likely, from the operating system's secure random source, as PHP's <code>random_int</code>. It's suitable for tokens, codes, and passwords.",
+            "return_description": "The random int.",
+            "errors": ["<code>InvalidArgumentException</code> if <code>min</code> is greater than <code>max</code>."],
+            "examples": [{"title": "Dice", "code": "int roll = random_int(1, 6);\nprint(roll >= 1 && roll <= 6);", "output": "true"}],
+            "notes": ["Each call asks the kernel; nothing is kept between calls, so the processes of the <a href=\"function.http-serve.html\">HTTP server</a> never share numbers."],
+            "see_also": ["random_double"],
+        },
+        {
+            "name": "random_double", "purpose": "A secure random double from 0 to 1",
+            "params": [], "returns": "double",
+            "description": "Returns a random double from 0 up to, but not including, 1, from the operating system's secure random source, with every multiple of 2<sup>-53</sup> in that range equally likely.",
+            "return_description": "The random double.",
+            "errors": [],
+            "examples": [{"title": "A probability", "code": "bool heads = random_double() < 0.5;\nprint(heads || !heads);", "output": "true"}],
+            "see_also": ["random_int"],
+        },
+    ],
+}
+
+CATEGORIES = [GENERAL, STRINGS, REGEX, MATH, ARRAYS, MAPS, FILES, DATES, JSON, HTTP, HTTP_SERVER, CRYPTO, PROGRAM, CONVERSIONS, OUTPUT]
 
 FILE_CLASS = """<h1>The File class</h1>
 <p>A <code>File</code> reads or writes a file a piece at a time: a line, or a chunk of bytes. Use it for files too large to load at once, for files you build up gradually, and for standard input and output. To read or write a whole file in one call, the <a href="ref.files.html">file functions</a> are simpler.</p>
