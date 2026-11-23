@@ -28,6 +28,7 @@ OVERVIEW = (
     "<tr><td><code>std/net/http</code></td><td>The <a href=\"ref.http.html\">HTTP client</a> and URL encoding</td></tr>"
     "<tr><td><code>std/net/http/server</code></td><td>The <a href=\"ref.http-server.html\">HTTP server</a></td></tr>"
     "<tr><td><code>std/crypto</code></td><td><a href=\"ref.crypto.html\">Hashing and encoding</a>: MD5, SHA-1, SHA-2, HMAC, hex, base64, and password hashing</td></tr>"
+    "<tr><td><code>std/regex</code></td><td><a href=\"ref.regex.html\">Regular expressions</a>, with PHP's <code>preg_*</code> functions, and the <a href=\"class.regexmatch.html\">RegexMatch</a> class</td></tr>"
     "<tr><td><code>std/sql</code></td><td>SQL databases (SQLite, PostgreSQL, MySQL, and MariaDB): the <a href=\"class.database.html\">Database</a>, <a href=\"class.row.html\">Row</a>, and <a href=\"class.cursor.html\">Cursor</a> classes</td></tr>"
     "</tbody></table>\n"
     "<pre class=\"code\">import File, file_get_contents from \"std/file\";\nimport date from \"std/time\";</pre>\n"
@@ -2282,7 +2283,269 @@ CRYPTO = {
     ],
 }
 
-CATEGORIES = [GENERAL, STRINGS, ARRAYS, MAPS, FILES, DATES, JSON, HTTP, HTTP_SERVER, CRYPTO, PROGRAM, CONVERSIONS, OUTPUT]
+REGEX = {
+    "slug": "regex",
+    "title": "Regular expressions",
+    "intro": (
+        "Pattern matching with PHP's <code>preg_*</code> functions, from <code>std/regex</code>. Matching is done by PCRE2, the library PHP uses, "
+        "so a pattern that works in PHP works the same here. The results are returned rather than written into a <code>$matches</code> argument: "
+        "<code>preg_match</code> returns a <a href=\"class.regexmatch.html\">RegexMatch</a>, or <code>null</code>."
+    ),
+    "details": r"""<h2>Writing patterns</h2>
+<p>A pattern is written as in PHP: between delimiters, usually <code>/</code>, followed by any flags. Write patterns as <a href="strings.html">raw strings</a>, between backticks, so their backslashes need no escaping: <code>`/\d+\.\d+/`</code> rather than <code>"/\\d+\\.\\d+/"</code>.</p>
+<p>The delimiter can be any ASCII punctuation character. <code>#</code> saves escaping slashes in paths and URLs (<code>`#^/users/(\d+)$#`</code>), and the bracket pairs <code>()</code>, <code>[]</code>, <code>{}</code>, and <code>&lt;&gt;</code> work too.</p>
+<table>
+<thead><tr><th>Flag</th><th>Effect</th></tr></thead>
+<tbody>
+<tr><td><code>i</code></td><td>Case-insensitive</td></tr>
+<tr><td><code>m</code></td><td><code>^</code> and <code>$</code> match at the start and end of each line</td></tr>
+<tr><td><code>s</code></td><td><code>.</code> also matches a newline</td></tr>
+<tr><td><code>x</code></td><td>Whitespace in the pattern is ignored, and <code>#</code> starts a comment</td></tr>
+<tr><td><code>U</code></td><td>Quantifiers are lazy by default, and <code>?</code> makes them greedy</td></tr>
+<tr><td><code>D</code></td><td><code>$</code> matches only at the very end, not before a final newline</td></tr>
+<tr><td><code>A</code></td><td>The match must start where the search starts</td></tr>
+<tr><td><code>n</code></td><td>Plain <code>(...)</code> doesn't capture; only named groups do</td></tr>
+<tr><td><code>J</code></td><td>Several groups may have the same name</td></tr>
+<tr><td><code>u</code></td><td>Accepted for PHP compatibility; it's always on</td></tr>
+</tbody>
+</table>
+<p>The pattern syntax is PCRE2's, which is Perl's: classes such as <code>\d</code>, <code>\w</code>, <code>\s</code>, and <code>\b</code>, lazy quantifiers such as <code>*?</code>, groups <code>(...)</code>, named groups <code>(?&lt;name&gt;...)</code>, non-capturing groups <code>(?:...)</code>, lookahead and lookbehind (<code>(?=...)</code>, <code>(?&lt;=...)</code>), backreferences (<code>\1</code>), and Unicode properties such as <code>\p{L}</code> for any letter.</p>
+<h2>Differences from PHP</h2>
+<ul>
+<li>Every pattern works on characters, as with PHP's <code>u</code> flag: <code>.</code> matches one character, and <code>\w</code>, <code>\d</code>, and <code>\b</code> know letters and digits in every script.</li>
+<li>Positions count characters, as everywhere in qiq, rather than bytes, so they work with <code>substr</code>.</li>
+<li>A malformed pattern throws <code>RegexException</code> instead of returning <code>false</code> with a warning. So does a pattern that needs too much backtracking on its text, such as <code>`/(a+)+$/`</code> on a long run of <code>a</code>s, where PHP returns <code>false</code> and sets <code>preg_last_error()</code>.</li>
+<li>A group that took no part in a match is <code>null</code>, not an empty string.</li>
+<li><code>preg_match</code> and <code>preg_match_all</code> return matches; <code>preg_test</code> answers whether there is one.</li>
+</ul>
+<p>Compiled patterns are cached, as in PHP, so a pattern used in a loop is compiled only once.</p>""",
+    "functions": [
+        {
+            "name": "preg_match",
+            "purpose": "Find the first match of a pattern",
+            "params": [
+                param("pattern", "string", "The pattern, between delimiters: <code>`/\\d+/`</code>."),
+                param("subject", "string", "The text to search."),
+                param("offset", "int", "The character to start searching from.", "0"),
+            ],
+            "returns": "RegexMatch",
+            "description": "Searches <code>subject</code> for <code>pattern</code> and returns the first match as a <a href=\"class.regexmatch.html\">RegexMatch</a>, with its text, position, and groups. Like PHP's <code>preg_match($pattern, $subject, $matches)</code>, but the match is returned rather than written into <code>$matches</code>.",
+            "return_description": "The first match, or <code>null</code> if there is none.",
+            "errors": [
+                "<code>RegexException</code> if the pattern is malformed or needs too much backtracking.",
+                "<code>InvalidArgumentException</code> if <code>offset</code> is negative or past the end of <code>subject</code>.",
+            ],
+            "examples": [
+                {
+                    "title": "Groups",
+                    "code": r"""RegexMatch m = preg_match(`/(\d{4})-(\d{2})-(\d{2})/`, "Released on 2026-11-23.");
+if (m != null) {
+    print(m->text, m->group(1), m->group(2), m->start);
+}""",
+                    "output": "2026-11-23 2026 11 12",
+                },
+                {
+                    "title": "Named groups",
+                    "code": r"""RegexMatch m = preg_match(`/(?<user>[\w.]+)@(?<host>[\w.]+)/`, "mail ada@example.com");
+print(m->named("user"), m->named("host"));
+print(m->namedGroups());""",
+                    "output": "ada example.com\n{\"user\" => \"ada\", \"host\" => \"example.com\"}",
+                },
+                {
+                    "title": "No match",
+                    "code": r"""string version = preg_match(`/v(\d+)/`, "no version here")?->group(1) ?? "unknown";
+print(version);""",
+                    "output": "unknown",
+                },
+            ],
+            "see_also": ["preg_match_all", "preg_test"],
+        },
+        {
+            "name": "preg_match_all",
+            "purpose": "Find every match of a pattern",
+            "params": [
+                param("pattern", "string", "The pattern."),
+                param("subject", "string", "The text to search."),
+                param("offset", "int", "The character to start searching from.", "0"),
+            ],
+            "returns": "RegexMatch[]",
+            "description": "Returns every match of <code>pattern</code> in <code>subject</code>, in order, as <a href=\"class.regexmatch.html\">RegexMatch</a> objects. Matches don't overlap: each search starts where the previous match ended. This is PHP's <code>preg_match_all</code> with <code>PREG_SET_ORDER</code>: one object per match.",
+            "return_description": "The matches; an empty array if there are none.",
+            "errors": ["<code>RegexException</code> if the pattern is malformed or needs too much backtracking."],
+            "examples": [
+                {
+                    "title": "Every match",
+                    "code": r"""foreach (preg_match_all(`/#(\w+)/`, "Tagged #qiq and #regex.") as tag) {
+    print(tag->group(1), tag->start);
+}""",
+                    "output": "qiq 7\nregex 16",
+                },
+                {
+                    "title": "Counting",
+                    "code": r"""print(len(preg_match_all(`/\b\w+\b/`, "one two three")));""",
+                    "output": "3",
+                },
+            ],
+            "see_also": ["preg_match"],
+        },
+        {
+            "name": "preg_test",
+            "purpose": "Check whether a pattern matches",
+            "params": [param("pattern", "string", "The pattern."), param("subject", "string", "The text to search.")],
+            "returns": "bool",
+            "description": "Returns whether <code>pattern</code> matches anywhere in <code>subject</code>. Use it where PHP code writes <code>if (preg_match(...))</code>.",
+            "return_description": "<code>true</code> if there is a match.",
+            "errors": ["<code>RegexException</code> if the pattern is malformed or needs too much backtracking."],
+            "examples": [
+                {
+                    "title": "Validating input",
+                    "code": r"""foreach (["ada_99", "no spaces!", "ok"] as name) {
+    print(name, preg_test(`/^\w{3,16}$/`, name));
+}""",
+                    "output": "ada_99 1\nno spaces! 0\nok 0",
+                }
+            ],
+            "see_also": ["preg_match"],
+        },
+        {
+            "name": "preg_replace",
+            "purpose": "Replace matches of a pattern",
+            "params": [
+                param("pattern", "string", "The pattern."),
+                param("replacement", "string", "The text for each match, in which <code>$1</code> stands for the first group."),
+                param("subject", "string", "The text to change."),
+                param("limit", "int", "The most matches to replace; -1 for all.", "-1"),
+            ],
+            "returns": "string",
+            "description": "Returns <code>subject</code> with each match of <code>pattern</code> replaced by <code>replacement</code>. In the replacement, <code>$0</code> stands for the whole match, <code>$1</code> to <code>$99</code> for a group (<code>\\1</code> and <code>${1}</code> work too), <code>${name}</code> for a named group, and <code>$$</code> for a dollar sign. A group that took no part in the match gives an empty string.",
+            "return_description": "The new string.",
+            "errors": ["<code>RegexException</code> if the pattern is malformed or needs too much backtracking, or the replacement refers to a group the pattern doesn't have."],
+            "examples": [
+                {
+                    "title": "Collapsing whitespace",
+                    "code": r"""print(preg_replace(`/\s+/`, " ", "too    many\n\nspaces"));""",
+                    "output": "too many spaces",
+                },
+                {
+                    "title": "Rearranging with groups",
+                    "code": r"""print(preg_replace(`/(\d{4})-(\d{2})-(\d{2})/`, "$3/$2/$1", "Due 2026-11-23."));
+print(preg_replace(`/(?<first>\w+) (?<last>\w+)/`, "${last}, ${first}", "Ada Lovelace"));""",
+                    "output": "Due 23/11/2026.\nLovelace, Ada",
+                },
+                {
+                    "title": "Only the first",
+                    "code": r"""print(preg_replace(`/o/`, "0", "foo boo", 1));""",
+                    "output": "f0o boo",
+                },
+            ],
+            "notes": ["PHP's <code>preg_replace</code> also accepts arrays of patterns and replacements. In qiq, call it once for each."],
+            "see_also": ["preg_replace_callback", "str_replace"],
+        },
+        {
+            "name": "preg_replace_callback",
+            "purpose": "Replace matches with what a function returns",
+            "params": [
+                param("pattern", "string", "The pattern."),
+                param("callback", "function(RegexMatch): string", "Called with each match; returns its replacement."),
+                param("subject", "string", "The text to change."),
+                param("limit", "int", "The most matches to replace; -1 for all.", "-1"),
+            ],
+            "returns": "string",
+            "description": "Returns <code>subject</code> with each match of <code>pattern</code> replaced by what <code>callback</code> returns for it, for replacements that need computing.",
+            "return_description": "The new string.",
+            "errors": ["<code>RegexException</code> if the pattern is malformed or needs too much backtracking, and whatever <code>callback</code> throws."],
+            "examples": [
+                {
+                    "title": "Computed replacements",
+                    "code": r"""print(preg_replace_callback(`/\d+/`, fn(RegexMatch m) => to_string(to_int(m->text) * 2), "3 apples and 10 pears"));
+print(preg_replace_callback(`/\b\w/`, fn(RegexMatch m) => strtoupper(m->text), "the quick brown fox"));""",
+                    "output": "6 apples and 20 pears\nThe Quick Brown Fox",
+                }
+            ],
+            "see_also": ["preg_replace"],
+        },
+        {
+            "name": "preg_split",
+            "purpose": "Split a string at matches of a pattern",
+            "params": [
+                param("pattern", "string", "The pattern that separates the pieces."),
+                param("subject", "string", "The text to split."),
+                param("limit", "int", "Above 0, the most pieces to return, the last holding the rest; -1 for no limit.", "-1"),
+                param("skipEmpty", "bool", "Leave out empty pieces, as PHP's <code>PREG_SPLIT_NO_EMPTY</code>.", "false"),
+            ],
+            "returns": "string[]",
+            "description": "Splits <code>subject</code> at each match of <code>pattern</code> and returns the pieces between them. Like <code>explode</code>, but the separator is a pattern.",
+            "return_description": "The pieces.",
+            "errors": ["<code>RegexException</code> if the pattern is malformed or needs too much backtracking."],
+            "examples": [
+                {
+                    "title": "Several separators",
+                    "code": r"""print(preg_split(`/[\s,;]+/`, "red, green;blue  yellow"));
+print(preg_split(`/,/`, "a,,b,", skipEmpty: true));
+print(preg_split(`/=/`, "key=value=more", 2));""",
+                    "output": "[\"red\", \"green\", \"blue\", \"yellow\"]\n[\"a\", \"b\"]\n[\"key\", \"value=more\"]",
+                }
+            ],
+            "see_also": ["explode"],
+        },
+        {
+            "name": "preg_quote",
+            "purpose": "Escape text for use in a pattern",
+            "params": [
+                param("text", "string", "The text to match literally."),
+                param("delimiter", "string", "The pattern's delimiter, if it isn't one of the characters escaped anyway.", "null"),
+            ],
+            "returns": "string",
+            "description": "Returns <code>text</code> with a backslash before each character that has a meaning in a pattern (<code>. \\ + * ? [ ^ ] $ ( ) { } = ! &lt; &gt; | : - #</code>) and before <code>delimiter</code>, so text from a user or a file can go inside a pattern and match only itself.",
+            "return_description": "The escaped text.",
+            "errors": [],
+            "examples": [
+                {
+                    "title": "Searching for user input",
+                    "code": r"""string search = "$9.99 (sale)";
+print(preg_quote(search));
+print(preg_test("/" + preg_quote(search, "/") + "/i", "Now $9.99 (SALE)!"));""",
+                    "output": "\\$9\\.99 \\(sale\\)\n1",
+                }
+            ],
+            "see_also": ["preg_match"],
+        },
+    ],
+}
+
+REGEXMATCH_CLASS = r"""<h1>The RegexMatch class</h1>
+<p>A match of a regular expression, from <a href="function.preg-match.html">preg_match</a>, <a href="function.preg-match-all.html">preg_match_all</a>, or <a href="function.preg-replace-callback.html">preg_replace_callback</a>: the text it matched, where, and its groups. Import it from <code>std/regex</code> to name the type.</p>
+<h2>Class synopsis</h2>
+<div class="synopsis"><code><span class="kw">class</span> <span class="cls">RegexMatch</span> {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">public readonly</span> <span class="type">string</span> text;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">public readonly</span> <span class="type">int</span> start;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">public readonly</span> <span class="type">int</span> end;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">public readonly</span> <span class="type">string[]</span> groups;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">group</span>(<span class="type">int</span> number): <span class="type">string</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">named</span>(<span class="type">string</span> name): <span class="type">string</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">namedGroups</span>(): <span class="type">map[string, string]</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">groupStart</span>(<span class="type">int</span> number): <span class="type">int</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">groupEnd</span>(<span class="type">int</span> number): <span class="type">int</span><br>
+}</code></div>
+<table>
+<thead><tr><th>Member</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>text</code></td><td>The whole match</td></tr>
+<tr><td><code>start</code>, <code>end</code></td><td>The position of its first character, and of the character after its last, so <code>end - start</code> is its length and <code>substr(subject, start, end - start)</code> is <code>text</code></td></tr>
+<tr><td><code>groups</code></td><td>The whole match, then each group in the order its opening parenthesis appears; <code>null</code> for a group that took no part</td></tr>
+<tr><td><code>group(number)</code></td><td>One group: 0 for the whole match, 1 for the first group. Throws <code>OutOfRangeException</code> if the pattern has no such group.</td></tr>
+<tr><td><code>named(name)</code></td><td>A group written <code>(?&lt;name&gt;...)</code>. Throws <code>InvalidArgumentException</code> if the pattern has no group with that name.</td></tr>
+<tr><td><code>namedGroups()</code></td><td>Every named group, by name</td></tr>
+<tr><td><code>groupStart(number)</code>, <code>groupEnd(number)</code></td><td>Where a group starts and ends, or -1 if it took no part</td></tr>
+</tbody>
+</table>
+<p>Positions count characters, not bytes, as everywhere in qiq.</p>
+<h2>Example</h2>
+<pre class="code">RegexMatch m = preg_match(`/(\w+)=(\d+)?/`, "width= height=40");
+print(m-&gt;text, m-&gt;group(1), m-&gt;group(2) ?? "none", m-&gt;start, m-&gt;end);   // width= width none 0 6</pre>
+"""
+
+CATEGORIES = [GENERAL, STRINGS, REGEX, ARRAYS, MAPS, FILES, DATES, JSON, HTTP, HTTP_SERVER, CRYPTO, PROGRAM, CONVERSIONS, OUTPUT]
 
 FILE_CLASS = """<h1>The File class</h1>
 <p>A <code>File</code> reads or writes a file a piece at a time: a line, or a chunk of bytes. Use it for files too large to load at once, for files you build up gradually, and for standard input and output. To read or write a whole file in one call, the <a href="ref.files.html">file functions</a> are simpler.</p>
@@ -2427,6 +2690,7 @@ EXCEPTION_CLASSES = """<h1>Exception classes</h1>
 │   └── DivisionByZeroException
 ├── InvalidArgumentException
 ├── JsonException
+├── RegexException
 └── HttpException</pre>
 <h2>The Exception class</h2>
 <div class="synopsis"><code><span class="kw">class</span> <span class="cls">Exception</span> {<br>
@@ -2455,6 +2719,7 @@ EXCEPTION_CLASSES = """<h1>Exception classes</h1>
 <tr><td><code>ArithmeticException</code></td><td>An int raised to a negative power, a negative shift amount, or a double that can't be converted to an int.</td></tr>
 <tr><td><code>DivisionByZeroException</code></td><td>Int <code>/</code> or <code>%</code> with a zero right-hand side.</td></tr>
 <tr><td><code>InvalidArgumentException</code></td><td>A standard library function was given an argument it can't accept, such as a negative <code>str_repeat</code> count.</td></tr>
+<tr><td><code>RegexException</code></td><td>A <a href="ref.regex.html">regular expression</a> is malformed, its replacement refers to a group it doesn't have, or it needs too much backtracking on its text.</td></tr>
 <tr><td><code>JsonException</code></td><td><code>json_decode</code> was given text that isn't JSON or doesn't match the type it decodes into, or <code>json_encode</code> was given a value JSON can't represent.</td></tr>
 <tr><td><code>NetworkException</code></td><td>A network connection failed: the host couldn't be found, refused the connection, timed out, closed it early, or failed the TLS certificate check. A subclass of <code>IOException</code>.</td></tr>
 <tr><td><code>HttpException</code></td><td><code>Response::raiseForStatus()</code> found a 4xx or 5xx status (the status is the exception's code), or a request was redirected more than 10 times.</td></tr>
@@ -3150,6 +3415,7 @@ CLASS_PAGES = [
     ("class.database.html", "The Database class", "SQL databases (SQLite, PostgreSQL, MySQL, and MariaDB): running statements with values for their placeholders, queries, and transactions.", DATABASE_CLASS),
     ("class.row.html", "The Row class", "One row of a query's result, read by column name with typed getters.", ROW_CLASS),
     ("class.cursor.html", "The Cursor class", "A query's rows, read a batch at a time, for results too big to hold in memory.", CURSOR_CLASS),
+    ("class.regexmatch.html", "The RegexMatch class", "A match of a regular expression: its text, position, and groups.", REGEXMATCH_CLASS),
     ("class.processresult.html", "The ProcessResult class", "The exit status and output of a command run by exec or shell.", PROCESSRESULT_CLASS),
     ("exception-classes.html", "Exception classes", "The exception classes thrown by the language and the standard library.", EXCEPTION_CLASSES),
 ]

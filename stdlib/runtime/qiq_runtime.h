@@ -26,6 +26,7 @@ typedef enum {
     QIQ_CONSTRAINT_VIOLATION_EXCEPTION = 13,
     QIQ_UNIQUE_VIOLATION_EXCEPTION = 14,
     QIQ_PROCESS_EXCEPTION = 15,
+    QIQ_REGEX_EXCEPTION = 16,
 } QiqExceptionKind;
 
 // Raises a qiq exception of `kind` and abandons the current runtime call: the

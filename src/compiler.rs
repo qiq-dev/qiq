@@ -357,6 +357,29 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
                 return Err(format!("{token_line}:{token_column}: unterminated string literal"));
             }
             TokenKind::Text(value)
+        } else if current == '`' {
+            // A raw string: everything up to the next backtick, as it is. No
+            // escapes, and it may span lines, for regular expressions, SQL,
+            // and Windows paths.
+            cursor += 1;
+            column += 1;
+            let start = cursor;
+            while cursor < chars.len() && chars[cursor] != '`' {
+                if chars[cursor] == '\n' {
+                    line += 1;
+                    column = 1;
+                } else {
+                    column += 1;
+                }
+                cursor += 1;
+            }
+            if cursor >= chars.len() {
+                return Err(format!("{token_line}:{token_column}: unterminated raw string; add '`' to end it"));
+            }
+            let value: String = chars[start..cursor].iter().collect();
+            cursor += 1;
+            column += 1;
+            TokenKind::Text(value)
         } else {
             cursor += 1;
             column += 1;
@@ -3210,7 +3233,7 @@ struct FinallyContext {
 
 /// Exception classes the runtime raises, indexed by QiqExceptionKind in
 /// stdlib/runtime/qiq_runtime.h; keep the two lists in the same order.
-const RUNTIME_EXCEPTION_CLASSES: [&str; 16] = [
+const RUNTIME_EXCEPTION_CLASSES: [&str; 17] = [
     "RuntimeException",
     "ArithmeticException",
     "DivisionByZeroException",
@@ -3227,6 +3250,7 @@ const RUNTIME_EXCEPTION_CLASSES: [&str; 16] = [
     "ConstraintViolationException",
     "UniqueViolationException",
     "ProcessException",
+    "RegexException",
 ];
 
 /// Where `break` and `continue` go. Loops have both; a switch only has a
@@ -10857,6 +10881,7 @@ const STDLIB_MODULES: &[(&str, Option<&str>, &str)] = &[
     ("server.qiq", Some("std/net/http/server"), include_str!("../stdlib/server.qiq")),
     ("crypto.qiq", Some("std/crypto"), include_str!("../stdlib/crypto.qiq")),
     ("sql.qiq", Some("std/sql"), include_str!("../stdlib/sql.qiq")),
+    ("regex.qiq", Some("std/regex"), include_str!("../stdlib/regex.qiq")),
 ];
 
 /// Standard library modules that have moved, as (old path, new path), so
@@ -10989,7 +11014,7 @@ pub fn compile_source(source: &str) -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{compile_source, compile_with_reader};
+    use super::{compile_source, compile_with_reader, lex, TokenKind};
     use std::collections::HashMap;
     use std::path::Path;
 
@@ -11111,6 +11136,40 @@ mod tests {
         assert!(compile_source("import exec from \"std/os\"; exec(\"ls -l\");")
             .unwrap_err()
             .contains("expected string[]"));
+    }
+
+    #[test]
+    fn compiles_regex_functions() {
+        let source = "import preg_match, preg_match_all, preg_replace, preg_replace_callback, preg_split, preg_quote, preg_test, RegexMatch from \"std/regex\";\n\
+            RegexMatch m = preg_match(`/(\\d+)/`, \"a1\");\n\
+            if (m != null) { print(m->text, m->group(1), m->start, m->groups); }\n\
+            print(len(preg_match_all(`/a/i`, \"Aa\")), preg_test(`/a/`, \"a\"), preg_quote(\"a.b\"));\n\
+            print(preg_replace(`/a/`, \"$0$0\", \"a\"), preg_split(`/,/`, \"a,b\", skipEmpty: true));\n\
+            print(preg_replace_callback(`/\\w/`, fn(RegexMatch x) => strtoupper(x->text), \"ab\"));\n\
+            try { preg_match(`/(/`, \"\"); } catch (RegexException e) { print(e->getMessage()); }";
+        let ir = compile_source(source).unwrap();
+        assert!(ir.contains("@qiq_stdlib___regex_scan"));
+        // A pattern without a subject is a type error.
+        assert!(compile_source("import preg_match from \"std/regex\"; preg_match(\"a\");").is_err());
+    }
+
+    #[test]
+    fn lexes_raw_strings() {
+        let text = |source: &str| match lex(source).unwrap().into_iter().next().unwrap().kind {
+            TokenKind::Text(value) => value,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(text(r"`\d+\.\n`"), r"\d+\.\n");
+        assert_eq!(text("`\"quoted\" and 'c' // not a comment /* nor this */`"), "\"quoted\" and 'c' // not a comment /* nor this */");
+        assert_eq!(text("`two\nlines`"), "two\nlines");
+        assert_eq!(text("``"), "");
+
+        // Lines and columns after a multi-line raw string are still right.
+        let after = compile_source("string s = `a\nb`; int x = ;").unwrap_err();
+        assert!(after.starts_with("2:13:"), "{after}");
+        let unterminated = compile_source("int x = 1;\nstring s = `never closed;").unwrap_err();
+        assert!(unterminated.contains("2:12: unterminated raw string"), "{unterminated}");
+        assert!(compile_source("string s = `C:\\Users\\ada` + \"\\n\"; print(s);").is_ok());
     }
 
     #[test]

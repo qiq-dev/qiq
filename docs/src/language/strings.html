@@ -16,6 +16,24 @@
 </table>
 <p>There is no variable interpolation; build strings with <code>+</code>.</p>
 
+<h2>Raw strings</h2>
+<p>A string between backticks is raw: backslashes are just backslashes, and it ends at the next backtick, so it can span lines. Raw strings suit regular expressions, Windows paths, and longer text such as SQL. A raw string can't contain a backtick; join one on with <code>+</code> if you need it.</p>
+
+```qiq
+string pattern = `^\d{4}-\d{2}$`;      // the same as "^\\d{4}-\\d{2}$"
+string path = `C:\Users\ada`;
+string sql = `
+    SELECT name
+    FROM users
+    WHERE active = 1`;
+print(pattern, path);
+print(len(pattern) == len("^\\d{4}-\\d{2}$"));
+```
+```output
+^\d{4}-\d{2}$ C:\Users\ada
+1
+```
+
 <h2>Chars</h2>
 <p>A <code>char</code> is exactly one Unicode character in single quotes, such as <code>'a'</code>, <code>'é'</code>, or <code>'界'</code>. Iterating over a string with <code>foreach</code> gives its chars.</p>
 

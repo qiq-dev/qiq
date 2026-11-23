@@ -10,6 +10,10 @@
 //! - SQLite, built from `vendor/sqlite-autoconf-3540100.tar.gz` (SHA3-256
 //!   b6ced585c750916b1052667239a12c25a7ff34e7f06e1e6e01ecb0427657d9c4, as
 //!   sqlite.org lists it) as a static library for programs using std/sql;
+//! - PCRE2, built from `vendor/pcre2-10.49.tar.bz2` (sha256
+//!   53c156e1ba416a20da8e65395daa132da0d80e76910424caca3fcdae7831d384, signed
+//!   by the release key in PCRE2's SECURITY.md) as a static library for
+//!   programs using std/regex;
 //! - the C runtime (`stdlib/runtime/*.c`), precompiled to LLVM bitcode so it
 //!   is optimized together with each program;
 //! - LLVM 18, linked into qiq statically (only the components qiq uses).
@@ -25,6 +29,41 @@ use std::process::Command;
 const MUSL: &str = "musl-1.2.5";
 const MBEDTLS: &str = "mbedtls-3.6.8";
 const SQLITE: &str = "sqlite-autoconf-3540100";
+const PCRE2: &str = "pcre2-10.49";
+/// PCRE2's files for 8-bit (UTF-8) strings, from its NON-AUTOTOOLS-BUILD.
+const PCRE2_SOURCES: &[&str] = &[
+    "pcre2_auto_possess.c",
+    "pcre2_chkdint.c",
+    "pcre2_chartables.c",
+    "pcre2_compile.c",
+    "pcre2_compile_cgroup.c",
+    "pcre2_compile_class.c",
+    "pcre2_config.c",
+    "pcre2_context.c",
+    "pcre2_convert.c",
+    "pcre2_dfa_match.c",
+    "pcre2_error.c",
+    "pcre2_extuni.c",
+    "pcre2_find_bracket.c",
+    "pcre2_jit_compile.c",
+    "pcre2_maketables.c",
+    "pcre2_match.c",
+    "pcre2_match_data.c",
+    "pcre2_match_next.c",
+    "pcre2_newline.c",
+    "pcre2_ord2utf.c",
+    "pcre2_pattern_info.c",
+    "pcre2_script_run.c",
+    "pcre2_serialize.c",
+    "pcre2_string_utils.c",
+    "pcre2_study.c",
+    "pcre2_substitute.c",
+    "pcre2_substring.c",
+    "pcre2_tables.c",
+    "pcre2_ucd.c",
+    "pcre2_valid_utf.c",
+    "pcre2_xclass.c",
+];
 /// SQLite's compile-time options: no threads (each server worker is a
 /// process) or loadable extensions (programs are static), sub-second sleeps
 /// while waiting for locks, double-quoted strings only as identifiers, and
@@ -64,6 +103,7 @@ const RUNTIME_SOURCES: &[&str] = &[
     "tz.c",
     "url.c",
     "process.c",
+    "regex.c",
 ];
 /// LLVM components qiq uses: reading IR, linking modules, optimizing, and
 /// emitting x86-64 object code (plus what inkwell references).
@@ -231,6 +271,53 @@ fn build_sqlite(out: &Path, clang: &str, musl: &Path) -> (PathBuf, PathBuf) {
     (archive, source)
 }
 
+/// Builds PCRE2 into `out/libpcre2.a` once, for UTF-8 with Unicode support
+/// and without the JIT, compiled for x86-64 Linux with musl. Returns the
+/// archive and the directory of pcre2.h.
+fn build_pcre2(out: &Path, clang: &str, musl: &Path) -> (PathBuf, PathBuf) {
+    let source = out.join(PCRE2).join("src");
+    let archive = out.join("libpcre2.a");
+    if archive.exists() {
+        return (archive, source);
+    }
+    let tarball = Path::new("vendor").join(format!("{PCRE2}.tar.bz2"));
+    run(Command::new("tar").arg("xjf").arg(&tarball).arg("-C").arg(out));
+    for (from, to) in [("config.h.generic", "config.h"), ("pcre2.h.generic", "pcre2.h"), ("pcre2_chartables.c.dist", "pcre2_chartables.c")] {
+        std::fs::copy(source.join(from), source.join(to)).unwrap();
+    }
+    let objects = out.join("pcre2-objects");
+    std::fs::create_dir_all(&objects).unwrap();
+    let jobs: usize = env::var("NUM_JOBS").ok().and_then(|jobs| jobs.parse().ok()).unwrap_or(4).max(1);
+    let chunk = PCRE2_SOURCES.len().div_ceil(jobs).max(1);
+    std::thread::scope(|scope| {
+        for files in PCRE2_SOURCES.chunks(chunk) {
+            let (objects, source) = (&objects, &source);
+            scope.spawn(move || {
+                for file in files {
+                    run(Command::new(clang)
+                        .args(["--target=x86_64-unknown-linux-musl", "-O2", "-ffunction-sections", "-fdata-sections"])
+                        .args(["-DHAVE_CONFIG_H", "-DPCRE2_CODE_UNIT_WIDTH=8", "-DPCRE2_STATIC", "-DSUPPORT_UNICODE"])
+                        .args(["-fno-stack-protector", "-nostdlibinc", "-isystem"])
+                        .arg(musl.join("include"))
+                        .arg("-I")
+                        .arg(source)
+                        .arg("-c")
+                        .arg(source.join(file))
+                        .arg("-o")
+                        .arg(objects.join(file).with_extension("o")));
+                }
+            });
+        }
+    });
+    let mut command = Command::new(tool("LLVM_AR", "llvm-ar-18"));
+    command.arg("rcs").arg(&archive);
+    for file in PCRE2_SOURCES {
+        command.arg(objects.join(file).with_extension("o"));
+    }
+    run(&mut command);
+    (archive, source)
+}
+
 fn main() {
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let clang = tool("CLANG", "clang");
@@ -240,6 +327,7 @@ fn main() {
     println!("cargo:rerun-if-changed={MUSL_MEMCPY}");
     println!("cargo:rerun-if-changed=vendor/{MBEDTLS}.tar.bz2");
     println!("cargo:rerun-if-changed=vendor/{SQLITE}.tar.gz");
+    println!("cargo:rerun-if-changed=vendor/{PCRE2}.tar.bz2");
     println!("cargo:rerun-if-changed=vendor/tzdata.bin");
     println!("cargo:rerun-if-changed=stdlib/runtime");
 
@@ -249,6 +337,8 @@ fn main() {
     let (mbedtls, mbedtls_include) = build_mbedtls(&out, &clang, &musl);
     // SQLite for std/sql.
     let (sqlite, sqlite_include) = build_sqlite(&out, &clang, &musl);
+    // PCRE2 for std/regex.
+    let (pcre2, pcre2_include) = build_pcre2(&out, &clang, &musl);
 
     // The C runtime, as bitcode for x86-64 Linux with musl.
     let runtime_dir = out.join("runtime");
@@ -282,6 +372,9 @@ fn main() {
             .arg("-I")
             .arg(&sqlite_include)
             .arg("-I")
+            .arg(&pcre2_include)
+            .args(["-DPCRE2_CODE_UNIT_WIDTH=8", "-DPCRE2_STATIC"])
+            .arg("-I")
             .arg(&runtime_dir)
             .arg(&input)
             .arg("-o")
@@ -305,6 +398,10 @@ fn main() {
     embedded.push_str(&format!(
         "\n/// SQLite, for programs that use std/sql.\npub const SQLITE: &[u8] = include_bytes!({:?});\n",
         sqlite.display().to_string()
+    ));
+    embedded.push_str(&format!(
+        "\n/// PCRE2, for programs that use std/regex.\npub const PCRE2: &[u8] = include_bytes!({:?});\n",
+        pcre2.display().to_string()
     ));
     std::fs::write(out.join("embedded.rs"), embedded).unwrap();
 

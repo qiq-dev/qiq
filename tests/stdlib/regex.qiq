@@ -1,0 +1,73 @@
+// std/regex: preg_match, preg_match_all, preg_test, preg_replace,
+// preg_replace_callback, preg_split, preg_quote, and RegexMatch.
+import preg_match, preg_match_all, preg_test, preg_replace, preg_replace_callback, preg_split, preg_quote, RegexMatch from "std/regex";
+
+// A match, its groups, and their positions.
+RegexMatch m = preg_match(`/(?<year>\d{4})-(\d{2})/`, "due 2026-11, paid 2026-12");
+print(m->text, m->group(0), m->group(1), m->named("year"), m->group(2), m->start, m->end);
+print(m->groupStart(2), m->groupEnd(2), m->groups, m->namedGroups());
+print(preg_match(`/x/`, "abc") == null);
+
+// Positions count characters, not bytes.
+m = preg_match(`/b+/`, "ééé abbb");
+print(m->start, m->end, m->text);
+print(preg_match(`/\w+/`, "café crème", 5)->text);
+
+// A group that takes no part is null.
+m = preg_match(`/(a)|(b)/`, "b");
+print(m->group(1) == null, m->group(2), m->groupStart(1));
+
+// Flags.
+print(preg_test(`/HELLO/i`, "say hello"), preg_test(`/HELLO/`, "say hello"));
+print(len(preg_match_all(`/^\w+/m`, "one\ntwo\nthree")));
+print(preg_match(`/a.b/s`, "a\nb") != null, preg_match(`/a.b/`, "a\nb") == null);
+print(preg_match(`/ (\d+) \s* (px|em) /x`, "width: 12 px")->group(2));
+print(preg_match(`/a+/U`, "aaa")->text, preg_match(`#/usr/(\w+)#`, "/usr/bin")->group(1), preg_match(`{a}`, "a")->text);
+
+// Unicode: \w and \d know other scripts, and . is a whole character.
+print(preg_match(`/\w+/`, "  Ünïcödé!")->text, len(preg_match(`/./`, "界")->text), preg_test(`/^\p{Lu}/`, "Émile"));
+
+// All matches, including empty ones, without looping forever.
+foreach (preg_match_all(`/#(\w+)/`, "#qiq and #php, #c") as tag) {
+    print(tag->group(1), tag->start);
+}
+print(len(preg_match_all(`/x*/`, "axb")), len(preg_match_all(`/\d/`, "none")));
+
+// Replacing.
+print(preg_replace(`/\s+/`, " ", "a   b \t\n c"));
+print(preg_replace(`/(\w+)@(\w+)/`, "$2 at $1, \\1 ${2} $$5 $0", "ada@home"));
+print(preg_replace(`/(?<first>\w+) (?<last>\w+)/`, "${last}, ${first}", "Ada Lovelace"));
+print(preg_replace(`/o/`, "0", "foo boo", 2), preg_replace(`/x*/`, "-", "abc"));
+print(preg_replace(`/(a)|b/`, "[$1]", "ab"));
+print(preg_replace_callback(`/\b[a-z]/`, fn(RegexMatch x) => strtoupper(x->text), "the quick fox"));
+print(preg_replace_callback(`/\d+/`, fn(RegexMatch x) => to_string(to_int(x->text) * 2), "3 apples, 10 pears", 1));
+
+// Splitting.
+print(preg_split(`/[\s,]+/`, "a, b  c,d"));
+print(preg_split(`/,/`, "a,,b,", skipEmpty: true), preg_split(`/,/`, "a,b,c,d", 2));
+print(preg_split(`//`, "abc", skipEmpty: true));
+
+// Quoting.
+print(preg_quote("1.5*2 (x)? #/"), preg_quote("a/b", "/"));
+print(preg_test("/" + preg_quote("$9.99 (sale)") + "/", "now $9.99 (sale)!"));
+
+// Errors.
+string[] bad = [`/(\d+/`, `/x/q`, `abc`, `/abc`, ``, `/[z-a]/`];
+foreach (bad as pattern) {
+    try { preg_match(pattern, "x"); } catch (RegexException e) { print("error:", e->getMessage()); }
+}
+try { preg_match(`/(a+)+$/`, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab"); } catch (RegexException e) { print("error:", e->getMessage()); }
+try { preg_replace(`/(a)/`, "$2", "a"); } catch (RegexException e) { print("error:", e->getMessage()); }
+try { preg_replace(`/(a)/`, "${nope}", "a"); } catch (RegexException e) { print("error:", e->getMessage()); }
+try { preg_match(`/(a)/`, "a")->group(2); } catch (OutOfRangeException e) { print("error:", e->getMessage()); }
+try { preg_match(`/(a)/`, "a")->named("x"); } catch (InvalidArgumentException e) { print("error:", e->getMessage()); }
+try { preg_match(`/a/`, "abc", 9); } catch (InvalidArgumentException e) { print("error:", e->getMessage()); }
+
+// The cache: many patterns, and the same one many times.
+int total = 0;
+foreach (range(1, 5000) as n) {
+    if (preg_test("/^" + to_string(n % 4100) + "$/", to_string(n % 4100))) {
+        total = total + 1;
+    }
+}
+print(total);

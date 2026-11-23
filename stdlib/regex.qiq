@@ -1,0 +1,348 @@
+// Regular expressions, as PHP's preg_* functions, with PCRE2 (the library
+// PHP uses), implemented in C (stdlib/runtime/regex.c). Functions whose
+// names start with "__" are internal to the standard library.
+//
+//   import preg_match, preg_replace, RegexMatch from "std/regex";
+//
+//   RegexMatch m = preg_match(`/(\d{4})-(\d{2})/`, "due 2026-11");
+//   if (m != null) { print(m->group(1)); }
+//
+// A pattern is written as in PHP: between delimiters, usually /, followed by
+// flags such as i. Write patterns as raw strings (between backticks), so
+// their backslashes need no escaping. Patterns always work on characters,
+// as with PHP's u flag, and positions count characters, as everywhere in
+// qiq. A malformed pattern throws RegexException.
+
+import RegexException, InvalidArgumentException, OutOfRangeException from "exceptions";
+import implode, substr from "string";
+
+extern function __regex_compile(string pattern): int;
+extern function __regex_names(int handle): string[];
+extern function __regex_scan(int handle, string subject, int offset, int limit): int;
+extern function __regex_texts(): string[];
+extern function __regex_offsets(): int[];
+
+// A match of a regular expression: the text it matched, where, and its
+// groups.
+class RegexMatch {
+    // The whole match.
+    public readonly string text;
+    // The positions of its first character and of the character after its
+    // last, so `end - start` is its length.
+    public readonly int start;
+    public readonly int end;
+    // The whole match (element 0), then each group, in the order their
+    // opening parentheses appear. A group that took no part in the match,
+    // such as an unused alternative, is null.
+    public readonly string[] groups;
+    private int[] offsets;
+    private string[] names;
+
+    function __construct(string[] groups, int[] offsets, string[] names) {
+        this->groups = groups;
+        this->offsets = offsets;
+        this->names = names;
+        this->text = groups[0];
+        this->start = offsets[0];
+        this->end = offsets[1];
+    }
+
+    // A group by number: 0 for the whole match, 1 for the first group. Null
+    // if the group took no part in the match. Throws OutOfRangeException if
+    // the pattern has no such group.
+    function group(int number): string {
+        return this->groups[this->__check(number)];
+    }
+
+    // A named group, written (?<name>...), or null if it took no part in the
+    // match. Throws InvalidArgumentException if the pattern has no group
+    // with that name.
+    function named(string name): string {
+        return this->groups[this->__number(name)];
+    }
+
+    // Where a group starts and ends, by number, or -1 if it took no part in
+    // the match.
+    function groupStart(int number): int {
+        return this->offsets[2 * this->__check(number)];
+    }
+
+    function groupEnd(int number): int {
+        return this->offsets[2 * this->__check(number) + 1];
+    }
+
+    // The names of the named groups, each with its value (null for one that
+    // took no part in the match).
+    function namedGroups(): map[string, string] {
+        map[string, string] named = {};
+        foreach (this->names as number => name) {
+            if (name != "" && (!map_key_exists(name, named) || named[name] == null)) {
+                named[name] = this->groups[number];
+            }
+        }
+        return named;
+    }
+
+    private function __check(int number): int {
+        if (number < 0 || number >= len(this->groups)) {
+            throw new OutOfRangeException("group " + to_string(number) + " doesn't exist: the pattern has " + to_string(len(this->groups) - 1) + " group(s)");
+        }
+        return number;
+    }
+
+    private function __number(string name): int {
+        int found = -1;
+        foreach (this->names as number => candidate) {
+            if (candidate == name) {
+                // With the J flag, several groups can share a name: the
+                // first that took part in the match.
+                if (this->groups[number] != null) {
+                    return number;
+                }
+                if (found < 0) {
+                    found = number;
+                }
+            }
+        }
+        if (found < 0) {
+            throw new InvalidArgumentException("the pattern has no group named '" + name + "'");
+        }
+        return found;
+    }
+}
+
+// The matches of the last scan, as RegexMatch objects.
+function __regex_matches(int count, string[] texts, int[] offsets, string[] names): RegexMatch[] {
+    int size = len(names);
+    RegexMatch[] matches = new RegexMatch[count];
+    int index = 0;
+    while (index < count) {
+        string[] groups = new string[size];
+        int[] positions = new int[2 * size];
+        int group = 0;
+        while (group < size) {
+            groups[group] = texts[index * (size + 1) + 1 + group];
+            positions[2 * group] = offsets[index * 2 * size + 2 * group];
+            positions[2 * group + 1] = offsets[index * 2 * size + 2 * group + 1];
+            group = group + 1;
+        }
+        matches[index] = new RegexMatch(groups, positions, names);
+        index = index + 1;
+    }
+    return matches;
+}
+
+// The first match of `pattern` in `subject`, searching from character
+// `offset`, or null if there is none.
+function preg_match(string pattern, string subject, int offset = 0): RegexMatch {
+    int handle = __regex_compile(pattern);
+    string[] names = __regex_names(handle);
+    int count = __regex_scan(handle, subject, offset, 1);
+    RegexMatch[] matches = __regex_matches(count, __regex_texts(), __regex_offsets(), names);
+    if (count == 0) {
+        return null;
+    }
+    return matches[0];
+}
+
+// Every match of `pattern` in `subject`, in order, searching from character
+// `offset`. Matches don't overlap.
+function preg_match_all(string pattern, string subject, int offset = 0): RegexMatch[] {
+    int handle = __regex_compile(pattern);
+    string[] names = __regex_names(handle);
+    int count = __regex_scan(handle, subject, offset, -1);
+    return __regex_matches(count, __regex_texts(), __regex_offsets(), names);
+}
+
+// Whether `pattern` matches anywhere in `subject`.
+function preg_test(string pattern, string subject): bool {
+    int handle = __regex_compile(pattern);
+    int count = __regex_scan(handle, subject, 0, 1);
+    __regex_texts();
+    __regex_offsets();
+    return count > 0;
+}
+
+// Replaces matches of `pattern` in `subject` with `replacement`, in which
+// $1 (or ${1}, or \1) stands for the first group's text, $0 for the whole
+// match, ${name} for a named group, and $$ for a dollar sign. Replaces
+// every match, or the first `limit` if it isn't negative.
+function preg_replace(string pattern, string replacement, string subject, int limit = -1): string {
+    int handle = __regex_compile(pattern);
+    string[] names = __regex_names(handle);
+    // The replacement as pieces: text, or a group's number (and "" as text).
+    string[] literals = [];
+    int[] references = [];
+    __regex_template(replacement, names, literals, references);
+    int count = __regex_scan(handle, subject, 0, limit);
+    string[] texts = __regex_texts();
+    __regex_offsets();
+    int size = len(names);
+    string[] pieces = [];
+    int index = 0;
+    while (index < count) {
+        int base = index * (size + 1);
+        array_push(pieces, texts[base]);
+        foreach (literals as piece => literal) {
+            int group = references[piece];
+            if (group < 0) {
+                array_push(pieces, literal);
+            } else {
+                array_push(pieces, texts[base + 1 + group] ?? "");
+            }
+        }
+        index = index + 1;
+    }
+    array_push(pieces, texts[count * (size + 1)]);
+    return implode("", pieces);
+}
+
+// Reads a replacement into text pieces and group references (-1 for text).
+function __regex_template(string replacement, string[] names, string[] literals, int[] references): void {
+    string[] chars = [];
+    foreach (replacement as c) {
+        array_push(chars, to_string(c));
+    }
+    int count = len(chars);
+    string[] text = [];
+    int index = 0;
+    while (index < count) {
+        string c = chars[index];
+        string next = chars[index + 1] ?? "";
+        int group = -1;
+        int used = 0;
+        if (c == "$" && next == "$") {
+            array_push(text, "$");
+            index = index + 2;
+            continue;
+        }
+        if ((c == "$" || c == "\\") && __regex_is_digit(next)) {
+            // One or two digits, as in PHP.
+            used = 2;
+            group = to_int(next);
+            string after = chars[index + 2] ?? "";
+            if (__regex_is_digit(after)) {
+                group = group * 10 + to_int(after);
+                used = 3;
+            }
+        } else if (c == "$" && next == "{") {
+            int close = index + 2;
+            string[] name = [];
+            while (close < count && chars[close] != "}") {
+                array_push(name, chars[close]);
+                close = close + 1;
+            }
+            if (close >= count) {
+                throw new RegexException("the replacement has a '${' without a closing '}'");
+            }
+            string reference = implode("", name);
+            used = close - index + 1;
+            group = __regex_group_named(reference, names);
+        } else {
+            array_push(text, c);
+            index = index + 1;
+            continue;
+        }
+        if (group >= len(names)) {
+            throw new RegexException("the replacement refers to group " + to_string(group) + ", but the pattern has " + to_string(len(names) - 1) + " group(s)");
+        }
+        array_push(literals, implode("", text));
+        array_push(references, -1);
+        text = [];
+        array_push(literals, "");
+        array_push(references, group);
+        index = index + used;
+    }
+    array_push(literals, implode("", text));
+    array_push(references, -1);
+}
+
+function __regex_is_digit(string c): bool {
+    return c != "" && c >= "0" && c <= "9";
+}
+
+// The number of the group ${reference} names: a number, or a group's name.
+function __regex_group_named(string reference, string[] names): int {
+    if (reference != "") {
+        bool digits = true;
+        foreach (reference as c) {
+            if (!__regex_is_digit(to_string(c))) {
+                digits = false;
+            }
+        }
+        if (digits) {
+            return to_int(reference);
+        }
+        foreach (names as number => name) {
+            if (name == reference) {
+                return number;
+            }
+        }
+    }
+    throw new RegexException("the replacement refers to a group named '" + reference + "', which the pattern doesn't have");
+}
+
+// Replaces matches of `pattern` in `subject` with what `callback` returns
+// for each. Replaces every match, or the first `limit` if it isn't negative.
+function preg_replace_callback(string pattern, function(RegexMatch): string callback, string subject, int limit = -1): string {
+    int handle = __regex_compile(pattern);
+    string[] names = __regex_names(handle);
+    int count = __regex_scan(handle, subject, 0, limit);
+    string[] texts = __regex_texts();
+    RegexMatch[] matches = __regex_matches(count, texts, __regex_offsets(), names);
+    int size = len(names);
+    string[] pieces = [];
+    foreach (matches as index => match) {
+        array_push(pieces, texts[index * (size + 1)]);
+        array_push(pieces, callback(match));
+    }
+    array_push(pieces, texts[count * (size + 1)]);
+    return implode("", pieces);
+}
+
+// Splits `subject` at each match of `pattern`. With a `limit` above 0, it
+// returns at most that many pieces, the last holding the rest of the
+// subject. With `skipEmpty`, empty pieces are left out.
+function preg_split(string pattern, string subject, int limit = -1, bool skipEmpty = false): string[] {
+    int handle = __regex_compile(pattern);
+    string[] names = __regex_names(handle);
+    int matches = -1;
+    if (limit > 0) {
+        matches = limit - 1;
+    }
+    int count = __regex_scan(handle, subject, 0, matches);
+    string[] texts = __regex_texts();
+    __regex_offsets();
+    int size = len(names);
+    string[] pieces = [];
+    int index = 0;
+    while (index <= count) {
+        string piece = texts[index * (size + 1)];
+        if (!skipEmpty || piece != "") {
+            array_push(pieces, piece);
+        }
+        index = index + 1;
+    }
+    return pieces;
+}
+
+// `text` with every character that has a meaning in a pattern escaped with
+// a backslash, so it matches itself: . \ + * ? [ ^ ] $ ( ) { } = ! < > | :
+// - # and, if given, the delimiter.
+function preg_quote(string text, string delimiter = null): string {
+    string special = ".\\+*?[^]$(){}=!<>|:-#";
+    if (delimiter != null) {
+        special = special + delimiter;
+    }
+    string[] pieces = [];
+    foreach (text as c) {
+        string character = to_string(c);
+        foreach (special as s) {
+            if (s == c) {
+                array_push(pieces, "\\");
+            }
+        }
+        array_push(pieces, character);
+    }
+    return implode("", pieces);
+}

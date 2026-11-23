@@ -19,6 +19,7 @@
 // │   └── DivisionByZeroException
 // ├── InvalidArgumentException
 // ├── JsonException
+// ├── RegexException
 // └── HttpException
 //
 // The runtime raises some of these itself (see QiqExceptionKind in
@@ -121,3 +122,7 @@ class JsonException extends Exception {}
 // An HTTP request got an error status (from Response::raiseForStatus, with
 // the status as its code) or was redirected too many times.
 class HttpException extends Exception {}
+
+// A regular expression (std/regex) is malformed, or needs too much
+// backtracking on the text it's matched against.
+class RegexException extends Exception {}

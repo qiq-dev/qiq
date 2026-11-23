@@ -27,7 +27,7 @@ Hello, Ada!
 Hello, Linus!
 ```
 
-The language has classes with inheritance, interfaces, static members, anonymous functions and exceptions. It also has modules and packages, and memory is managed automatically with reference counting. The standard library covers strings, files, dates, JSON, running other programs, an HTTP client and an HTTP server.
+The language has classes with inheritance, interfaces, static members, anonymous functions and exceptions. It also has modules and packages, and memory is managed automatically with reference counting. The standard library covers strings, regular expressions, files, dates, JSON, running other programs, an HTTP client and an HTTP server.
 
 **Documentation:** [qiq-lang.com](https://qiq-lang.com/) has the manual and the standard library reference.
 
@@ -42,7 +42,7 @@ sudo mv qiq /usr/local/bin/
 qiq version
 ```
 
-The `qiq` binary runs on x86-64 Linux with glibc and needs nothing else. LLVM, the qiq runtime, musl libc, Mbed TLS and a linker are all built into it. The programs it builds don't even need glibc. Programs that make HTTPS requests read the system's CA certificates (the `ca-certificates` package) when they run.
+The `qiq` binary runs on x86-64 Linux with glibc and needs nothing else. LLVM, the qiq runtime, musl libc, Mbed TLS, SQLite, PCRE2 and a linker are all built into it. The programs it builds don't even need glibc. Programs that make HTTPS requests read the system's CA certificates (the `ca-certificates` package) when they run.
 
 ## Usage
 
