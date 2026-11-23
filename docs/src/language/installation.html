@@ -12,6 +12,20 @@
 </tbody>
 </table>
 
+<h2>Installing qiq</h2>
+<p>Download the binary from the <a href="https://github.com/qiq-dev/qiq/releases">releases page</a>. Its file name includes the version and platform, for example <code>qiq-0.2.0-x86_64-linux</code>. Rename it to <code>qiq</code>, make it executable, and move it to a directory on your <code>PATH</code>:</p>
+
+```sh
+mv qiq-0.2.0-x86_64-linux qiq
+chmod +x qiq
+sudo mv qiq /usr/local/bin/
+qiq version                # check that it works
+```
+
+<p>If you can't use <code>sudo</code>, put it in <code>~/.local/bin</code> instead. Most Linux distributions already include that directory in <code>PATH</code>.</p>
+<p>To upgrade, download the new release and replace the file the same way.</p>
+<p>For editor support, see the <a href="https://github.com/qiq-dev/vscode">VS Code extension</a>.</p>
+
 <h2>Your first program</h2>
 <p>Save this as <code>hello.qiq</code>:</p>
 
