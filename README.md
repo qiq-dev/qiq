@@ -76,11 +76,11 @@ The first build also compiles musl and Mbed TLS from the tarballs in `vendor/`, 
 ## Tests
 
 ```sh
-cargo test                                      # compiler, qiq.mod and package-fetching unit tests
-./target/release/qiq run tests/classes.qiq      # any example program in tests/
+cargo test --release                            # unit tests, and every program in tests/
+./target/release/qiq run tests/classes.qiq      # one program, from the repository root
 ```
 
-The programs in `tests/` cover one feature each, and the ones in `tests/stdlib/` cover the standard library. Run them from the repository root, since some read and write files there. `tests/stdlib/http.qiq` needs internet access.
+The programs in `tests/` cover one feature each, and the ones in `tests/stdlib/` cover the standard library. `cargo test` runs them all and checks what each prints against its `.out` file (see [tests/programs.rs](tests/programs.rs)). The HTTP and database tests run only when `QIQ_TEST_NETWORK`, `QIQ_TEST_MYSQL` or `QIQ_TEST_POSTGRES` is set.
 
 ## Repository layout
 

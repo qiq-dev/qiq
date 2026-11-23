@@ -1,0 +1,24 @@
+0 1 hello world 1
+3 0 out err
+a b|"q"|$HOME|; rm -rf /|
+SHOUT
+/tmp
+extra kept
+replaced
+a,b,
+300000 300000
+500000
+0
+137
+fine
+error: command failed with exit status 2: broken 2
+error: command not found: qiq-no-such-command
+error: could not run /nonexistent/tool: no such file
+error: could not run /etc/hostname: permission denied
+error: could not run ls: working directory /nonexistent: No such file or directory
+error: sleep timed out after 1 second and was killed
+error: exec: the command is empty; give the program and its arguments, as in ["ls", "-l"]
+error: exec: "A=B" isn't an environment variable name (it's empty or contains =)
+error: exec: the timeout must be 0 (none) or more seconds, found -1
+error: the output of printf is not UTF-8 text
+1

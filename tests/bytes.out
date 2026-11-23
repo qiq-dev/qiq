@@ -1,0 +1,21 @@
+255 80
+[137, 80, 78, 71, 13, 10, 26, 10]
+8
+looks like a PNG
+10 255
+InvalidUtf8Exception: tests/bytes_output.bin is not valid UTF-8
+[104, 195, 169, 108, 108, 111]
+héllo
+InvalidUtf8Exception: invalid UTF-8 string
+256
+3 -3 1
+3.5 255
+65 200
+count: 42, ratio: 0.5, false
+34 5
+425
+cannot convert 256 to byte: bytes are 0 to 255
+"12a" is not an int
+"" is not a double
+cannot convert 1e+19 to int
+"99999999999999999999" is outside the int range

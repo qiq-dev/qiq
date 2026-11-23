@@ -1,0 +1,14 @@
+Ada 36 1 ["math", "code"] London 2
+{"name":"Ada","age":36,"admin":true,"tags":["math","café"],"address":{"city":"London","lines":["12 Main St"]},"scores":{"b":2,"a":1}}
+{
+    "city": "London",
+    "lines": [
+        "12 Main St"
+    ]
+}
+[3, 1, 2] 4 {"tea":2.5,"cake":4}
+[1.5,0.1,1.0e+20] "line\nbreak \"quoted\"" null
+$.name: expected string, found a number
+$.tags[1]: expected string, found a number
+$.age: expected int, found a number with a fraction or exponent
+syntax error at line 1, column 14: expected a string key

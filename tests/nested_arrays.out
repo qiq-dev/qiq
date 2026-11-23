@@ -1,0 +1,15 @@
+6
+9
+6
+10
+10
+1 0 0
+0 1 0
+0 0 1
+lin is 29
+29
+9
+10
+bc
+OutOfRangeException: index 7 is out of range for an array of length 3
+RuntimeException: array is null

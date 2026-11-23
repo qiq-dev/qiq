@@ -1,5 +1,6 @@
 // Your own exceptions extend Exception (or a subclass) and inherit its
 // constructor: new ConfigException("message", code).
+// test: exit 1
 class ConfigException extends Exception {}
 
 function loadPort(string text): int {

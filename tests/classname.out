@@ -1,0 +1,9 @@
+Account Shape Circle Url Url
+Circle Circle has area 3
+Square Square has area 4
+Post via Model Post Post Model Post
+Account Square Url
+{"Circle" => 1, "Square" => 1}
+Square
+error: cannot read ::class of null
+error: index 5 is out of range for an array of length 2

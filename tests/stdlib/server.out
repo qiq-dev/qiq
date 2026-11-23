@@ -1,0 +1,27 @@
+GET / -> 200 home {}
+GET /about -> 200 root {}
+GET /items/42 -> 200 item {"id":"42"}
+HEAD /items/42 -> 200 item {"id":"42"}
+DELETE /items/7 -> 200 delete {"id":"7"}
+PUT /items/7 -> 200 root {}
+GET /items/new -> 200 new {}
+GET /items/a%20b -> 200 item {"id":"a b"}
+GET /static/css/site.css -> 200 static {}
+GET /static -> 301 <a href="/static/">Moved Permanently</a>. Location=/static/
+GET /static?v=1 -> 301 <a href="/static/?v=1">Moved Permanently</a>. Location=/static/?v=1
+GET /files/a/b%2Fc.txt -> 200 files {"path":"a/b/c.txt"}
+POST /form?page=2 -> 201 hello Ada López page 2 X-Name=Ada López
+GET /form -> 200 root {}
+GET /boom threw kaboom
+GET /users/1 -> 200 user {"id":"1"}
+GET /nothing -> 404 no route for /nothing
+route pattern 'items' must have a path starting with /
+invalid wildcard '{$}' in route pattern '/a/{$}/b'
+invalid wildcard '{rest...}' in route pattern '/{rest...}/x'
+invalid wildcard '{x' in route pattern '/{x'
+route pattern '/a//b' has an empty segment
+route pattern 'GET /items/{name}' conflicts with 'GET /items/{id}'
+GET /docs/a/b.html -> 200 docs sees /a/b.html
+a b+c a b c
+&lt;a href=&quot;x&quot;&gt;Tom &amp; &#039;Jerry&#039;&lt;/a&gt;
+text/html; charset=utf-8 text/javascript; charset=utf-8 application/octet-stream application/octet-stream

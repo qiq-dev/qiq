@@ -1,5 +1,6 @@
 // std/sql with MySQL or MariaDB: run with QIQ_TEST_MYSQL=mysql://user:password@host/database
 // (it creates and drops a table named users). Types, placeholders, errors, transactions, queryAs.
+// test: needs QIQ_TEST_MYSQL
 import Database, Row, Cursor from "std/sql";
 import getenv, exit from "std/os";
 import microtime from "std/time";

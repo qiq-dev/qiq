@@ -1,0 +1,11 @@
+["a", "b", "c", "d"] 4
+a ["b", "c", "d"] b
+d ["b", "c"]
+["b"]
+[2, 3] [1, 4, 5]
+[5] [1, 4, 8, 9]
+[0, 1, 4, 8, 9]
+10000 99980001
+["x", "y", "y"]
+index 10 is out of range for an array of length 3
+array_pop: the array is empty

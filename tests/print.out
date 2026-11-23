@@ -1,0 +1,17 @@
+[1, 2, 3]
+["a", "b,c", "quote\"d"]
+[[1, 2], [3]]
+[1.5, -2]
+[true, false]
+['x', 'é']
+[null, null]
+{"ada" => 36}
+{"tags" => ["x", "y"]}
+[]
+Square
+[Square, Shape]
+Ada 36
+age: 36 adult: 1
+scores [9, 7] {"best" => 9}
+
+done

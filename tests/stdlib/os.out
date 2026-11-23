@@ -1,0 +1,9 @@
+1
+two
+unset
+1 1
+Asia/Tokyo JST
+America/New_York EST
+error: setenv: "" isn't a variable name (it's empty or contains =)
+error: setenv: "A=B" isn't a variable name (it's empty or contains =)
+error: setenv: the value is null; unsetenv removes a variable

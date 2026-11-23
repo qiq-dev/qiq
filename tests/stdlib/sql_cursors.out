@@ -1,0 +1,30 @@
+10 n10
+3 11 13
+986 499409 1 0
+600 400 0
+0
+after close: 1
+db usable: 1000
+update cursor: 1 x
+error: cursor: the SQL has 1 placeholder (?), but 0 values were given
+error: no such table: nope
+during: 7
+after: 8
+h ok
+unique: 23505 2067 UNIQUE constraint failed: users.email
+constraint: 23502 1299 NOT NULL constraint failed: users.name
+constraint: 23514 275 CHECK constraint failed: age >= 0
+constraint: 23503 787 FOREIGN KEY constraint failed
+other: HY000 1 no such table: nope
+HY000 7
+HY000 query: the SQL has 1 placeholder (?), but 0 values were given
+1 click -
+4 click -
+7 click -
+10 click -
+batch 4 1
+batch 4 5
+batch 2 9
+click 4
+view 6
+view

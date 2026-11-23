@@ -1,0 +1,41 @@
+2026-11 2026-11 2026 2026 11 4 11
+9 11 ["2026-11", "2026", "11"] {"year" => "2026"}
+1
+5 8 bbb
+crème
+1 b -1
+1 0
+3
+1 1
+px
+a bin a
+Ünïcödé 1 1
+qiq 0
+php 9
+c 15
+4 0
+a b c
+home at ada, ada home $5 ada@home
+Lovelace, Ada
+f00 boo -a-b-c-
+[a][]
+The Quick Fox
+6 apples, 10 pears
+["a", "b", "c", "d"]
+["a", "b"] ["a", "b,c,d"]
+["a", "b", "c"]
+1\.5\*2 \(x\)\? \#/ a\/b
+1
+error: invalid regular expression /(\d+/: missing closing parenthesis at offset 4
+error: unknown flag 'q' in /x/q; the flags are i, m, s, x, u, U, D, A, n, and J
+error: the delimiter can't be a letter, digit, or backslash: write the pattern between delimiters, as in "/abc/"
+error: no ending delimiter '/' in /abc
+error: empty regular expression; write it between delimiters, as in `/\d+/`
+error: invalid regular expression /[z-a]/: range out of order in character class at offset 4
+error: /(a+)+$/ needs too much backtracking on this text (the match limit was reached); make its repetitions less ambiguous
+error: the replacement refers to group 2, but the pattern has 1 group(s)
+error: the replacement refers to a group named 'nope', which the pattern doesn't have
+error: group 2 doesn't exist: the pattern has 1 group(s)
+error: the pattern has no group named 'x'
+error: offset 9 is past the end of the subject
+5000

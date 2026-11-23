@@ -1,0 +1,9 @@
+#1 Ada <ada@example.com> 36 1
+#2 Lin <none> 0 0
+#2 Lin <none> 0 0
+Ada 1
+1
+blue 1 null
+red 4 [9, 8]
+1
+error: the result has no column 'name'; its columns are: id

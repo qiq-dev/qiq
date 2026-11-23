@@ -1,5 +1,6 @@
 // HTTP requests. Needs internet access:
 //   ./target/release/qiq run tests/stdlib/http.qiq
+// test: needs QIQ_TEST_NETWORK
 import http_build_query, http_get, rawurlencode, Response, urlencode from "std/net/http";
 
 class Repository {

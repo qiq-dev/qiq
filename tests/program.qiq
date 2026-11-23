@@ -1,5 +1,7 @@
 // argv(), exit(), and getenv(). Try:
 //   ./target/release/qiq run tests/program.qiq Ada "Grace Hopper"; echo $?
+// test: args Ada "Grace Hopper"
+// test: exit 3
 import File from "std/file";
 import argv, exit, getenv from "std/os";
 

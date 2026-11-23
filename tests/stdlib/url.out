@@ -1,0 +1,55 @@
+https://api.example.com/v1/search?q=caf%C3%A9+%26+cr%C3%A8me&page=2
+https us er p@ss 2001:db8::1 8443 /a b/c /a%20b/c top part
+x ["x", "y"] 1 1 a b ["tag", "empty", "plus"]
+https://us%20er:p%40ss@[2001:db8::1]:8443/a%20b/c?tag=x&tag=y&empty&plus=a+b#top%20part
+g:h -> g:h
+g -> http://a/b/c/g
+./g -> http://a/b/c/g
+g/ -> http://a/b/c/g/
+/g -> http://a/g
+//g -> http://g
+?y -> http://a/b/c/d;p?y
+g?y -> http://a/b/c/g?y
+#s -> http://a/b/c/d;p?q#s
+g#s -> http://a/b/c/g#s
+g?y#s -> http://a/b/c/g?y#s
+;x -> http://a/b/c/;x
+g;x -> http://a/b/c/g;x
+ -> http://a/b/c/d;p?q
+. -> http://a/b/c/
+./ -> http://a/b/c/
+.. -> http://a/b/
+../ -> http://a/b/
+../g -> http://a/b/g
+../.. -> http://a/
+../../ -> http://a/
+../../g -> http://a/g
+../../../g -> http://a/g
+/./g -> http://a/g
+/../g -> http://a/g
+g. -> http://a/b/c/g.
+.g -> http://a/b/c/.g
+g.. -> http://a/b/c/g..
+..g -> http://a/b/c/..g
+./../g -> http://a/b/g
+./g/. -> http://a/b/c/g/
+g/./h -> http://a/b/c/g/h
+g/../h -> http://a/b/c/h
+g;x=1/./y -> http://a/b/c/g;x=1/y
+g;x=1/../y -> http://a/b/c/y
+ada@example.com 1 file:///tmp/a%20b 1
+http://x.com/a%20b/%C3%A9?q=1%202#f%20g http://Example.com:80 0
+https://api.example.com/v1/search?page=2 https://api.example.com/v1/search https://api.example.com/v1/search?q=caf%C3%A9+%26+cr%C3%A8me&page=2&page=3 https://api.example.com/v1/search?a=1&b=2 https://api.example.com/v1/search
+http://ada:s%3Ae%40c@[::1]:8080/a%20b/%C3%BC#x%20y
+0 1 1 0
+error: Url::parse: the path of "http://x.com/%zz" has a % that isn't followed by two hex digits
+error: Url::parse: "http://x.com:99999/" has a port above 65535
+error: Url::parse: "http://x.com:8a/" has a port that isn't a number
+error: Url::parse: "http://[::1/" has a [ in its host without a ]
+error: Url::parse: "http://ex ample.com/" has a character its host can't have
+parsed http://x.com/%C3
+error: Url::withPort: 70000 isn't a port from 0 to 65535
+error: Url::withHost: "a/b" isn't a host
+error: Url::withScheme: "1http" isn't a scheme: a letter, then letters, digits, +, -, or .
+{"title":"docs","href":"https://example.com/a%20b?x=1"} ["/x",null]
+http://shop.example.com:8080/items/a%20b?page=2&tag=x shop.example.com 8080 /items/a b 2

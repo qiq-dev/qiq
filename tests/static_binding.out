@@ -1,0 +1,10 @@
+3 hits 0.5 1
+["a", "z"]
+5 5 10 20
+models users
+hello from a user a row in users
+a row in models
+base derived derived derived
+a square with side 3
+Concrete
+RuntimeException: cannot instantiate abstract class 'Template'

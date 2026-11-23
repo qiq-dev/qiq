@@ -115,7 +115,16 @@ Downloaded modules are cached in `~/.cache/qiq/mod/` (or `$XDG_CACHE_HOME/qiq/mo
 cargo test
 ```
 
-`cargo test` runs the unit tests in `src/compiler.rs`, `src/modfile.rs` and `src/fetch.rs`. Programs in `tests/` exercise one feature each. Run them with `./target/release/qiq run tests/<name>.qiq` from the repository root. When you add a language feature, add a test program for it, and add a unit test where the behaviour can be checked inside the compiler.
+`cargo test` runs the unit tests in `src/compiler.rs`, `src/modfile.rs` and `src/fetch.rs`, and then every program in `tests/` and `tests/stdlib/` (and each `main.qiq` in a directory below them). Each program must print exactly what its `.out` file says, write to standard error only what its `.err` file says, and exit with status 0. A few comments at the top of a program change that: `// test: exit 1` for a program that should fail, `// test: args a "b c"` for arguments, and `// test: needs QIQ_TEST_MYSQL` for one that runs only when that variable is set (the HTTP test needs `QIQ_TEST_NETWORK`, and the database tests need `QIQ_TEST_MYSQL` or `QIQ_TEST_POSTGRES` set to a database URL). [tests/programs.rs](tests/programs.rs) has the details.
+
+When you add a language feature, add a test program for it, and add a unit test where the behaviour can be checked inside the compiler. To record a new program's output, or update one after a change, check the output is right, then run:
+
+```sh
+QIQ_UPDATE_TESTS=1 cargo test --release --test programs
+git diff tests/          # review what changed
+```
+
+Everything else a test builds or writes under `tests/` is ignored by git.
 
 ## Documentation
 

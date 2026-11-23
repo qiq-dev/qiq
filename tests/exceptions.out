@@ -1,0 +1,28 @@
+8080
+caught port is empty
+7
+finally after catch
+finally before return
+1
+5
+1
+finally
+finally
+3
+finally
+finally
+inner finally
+outer caught inner
+outer finally
+finally still runs
+caught second, from catch
+logging rethrown
+caught rethrown again
+caught cannot load settings
+caught retries must not be negative
+DivisionByZeroException: modulo by zero
+ArithmeticException: int exponent must not be negative; use doubles for fractional powers
+KeyNotFoundException: map key not found
+InvalidArgumentException: str_repeat count must not be negative
+Exception: strpos offset is outside the string
+about to fail

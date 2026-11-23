@@ -1,5 +1,6 @@
 // std/sql with PostgreSQL: run with QIQ_TEST_POSTGRES=postgres://user:password@host/database
 // (it creates and drops a table named users). Types, placeholders, errors, transactions, queryAs.
+// test: needs QIQ_TEST_POSTGRES
 import Database, Row, Cursor from "std/sql";
 import getenv, exit from "std/os";
 import microtime from "std/time";

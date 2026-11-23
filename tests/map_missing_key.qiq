@@ -1,2 +1,5 @@
+// Reading a key that isn't in a map throws KeyNotFoundException; uncaught, it
+// ends the program with status 1 and a message on standard error.
+// test: exit 1
 map[string, int] counts = {"present" => 1};
 print(counts["missing"]);
