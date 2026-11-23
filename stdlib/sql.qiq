@@ -31,7 +31,9 @@ extern function __sql_columns(): string[];
 extern function __sql_kinds(): int[];
 extern function __sql_values(): int[];
 extern function __sql_doubles(): double[];
-extern function __sql_texts(): string[];
+extern function __sql_text_bytes(): byte[];
+extern function __sql_text_starts(): int[];
+extern function __sql_text(byte[] data, int start, int end): string;
 extern function __sql_blobs(): byte[];
 extern function __sql_blob_starts(): int[];
 extern function __sql_slice(byte[] data, int start, int end): byte[];
@@ -42,8 +44,9 @@ extern function __sql_close_cursor(int cursor): void;
 // The cells of a query's rows, shared by its Row objects. Each cell has a
 // kind (1 int, 2 double, 3 string, 4 bytes, 5 NULL, 6 decimal: PostgreSQL's
 // numeric, as its exact text) and a value: the int itself, or the index of
-// its double, string, or byte array. The doubles, texts, blobs, and
-// blobStarts arrays are null when no cell holds that kind of value.
+// its double, text, or byte array. The doubles, text, and blob arrays are
+// null when no cell holds that kind of value. A text cell becomes a string
+// when it's first read (see text), so unread columns cost nothing.
 final class __Result {
     // Shared with the cached statement and the next results of the same
     // query: never changed (Row::columns returns a copy).
@@ -54,6 +57,9 @@ final class __Result {
     public int[] kinds;
     public int[] values;
     public double[] doubles;
+    public byte[] textBytes;
+    public int[] textStarts;
+    // Text cells already made into strings, by index; null until read.
     public string[] texts;
     public byte[] blobs;
     public int[] blobStarts;
@@ -64,9 +70,23 @@ final class __Result {
         this->kinds = __sql_kinds();
         this->values = __sql_values();
         this->doubles = __sql_doubles();
-        this->texts = __sql_texts();
+        this->textBytes = __sql_text_bytes();
+        this->textStarts = __sql_text_starts();
+        if (this->textStarts != null) {
+            this->texts = new string[len(this->textStarts) - 1];
+        }
         this->blobs = __sql_blobs();
         this->blobStarts = __sql_blob_starts();
+    }
+
+    // Text cell `index` as a string, made when first read.
+    function text(int index): string {
+        string made = this->texts[index];
+        if (made == null) {
+            made = __sql_text(this->textBytes, this->textStarts[index], this->textStarts[index + 1]);
+            this->texts[index] = made;
+        }
+        return made;
     }
 
     // The position of the column named `column`, or -1 if there's none; with
@@ -149,7 +169,7 @@ final class Row {
         int kind = this->result->kinds[cell];
         if (kind == 6) {
             // A decimal with no fraction, as from PostgreSQL's SUM of bigints.
-            string text = this->result->texts[this->result->values[cell]];
+            string text = this->result->text(this->result->values[cell]);
             if (!str_contains(text, ".") && !str_contains(text, "N")) {
                 return to_int(text);
             }
@@ -177,7 +197,7 @@ final class Row {
             return to_double(this->result->values[cell]);
         }
         if (kind == 6) {
-            return to_double(this->result->texts[this->result->values[cell]]);
+            return to_double(this->result->text(this->result->values[cell]));
         }
         if (kind != 2) {
             throw this->mismatch(column, kind, "getDouble");
@@ -222,7 +242,7 @@ final class Row {
         if (kind != 3 && kind != 6) {
             throw this->mismatch(column, kind, "getString");
         }
-        return this->result->texts[this->result->values[cell]];
+        return this->result->text(this->result->values[cell]);
     }
 
     // A BLOB column, or null when it's NULL. Also reads TEXT that isn't
@@ -256,7 +276,7 @@ final class Row {
         if (kind != 3) {
             throw this->mismatch(column, kind, "getDateTime");
         }
-        string text = this->result->texts[this->result->values[cell]];
+        string text = this->result->text(this->result->values[cell]);
         try {
             return DateTime::parse(text, null, zone);
         } catch (InvalidArgumentException e) {
@@ -280,7 +300,7 @@ final class Row {
                 case 2:
                     row[name] = to_string(this->result->doubles[value]);
                 case 3, 6:
-                    row[name] = this->result->texts[value];
+                    row[name] = this->result->text(value);
                 case 4:
                     row[name] = sprintf("(%d bytes)", this->result->blobStarts[value + 1] - this->result->blobStarts[value]);
                 default:

@@ -22,6 +22,7 @@ extern function __regex_names(int handle): string[];
 // text of each match and group, 4 their positions (see regex.c).
 extern function __regex_scan(int handle, string subject, int offset, int limit, int want): int;
 extern function __regex_texts(): string[];
+extern function __regex_replace(int handle, string subject, string replacement, int limit): string;
 extern function __regex_offsets(): int[];
 
 // A match of a regular expression: the text it matched, where, and its
@@ -180,118 +181,7 @@ function preg_test(string pattern, string subject): bool {
 // match, ${name} for a named group, and $$ for a dollar sign. Replaces
 // every match, or the first `limit` if it isn't negative.
 function preg_replace(string pattern, string replacement, string subject, int limit = -1): string {
-    int handle = __regex_compile(pattern);
-    string[] names = __regex_names(handle);
-    // The replacement as pieces: text, or a group's number (and "" as text).
-    string[] literals = [];
-    int[] references = [];
-    __regex_template(replacement, names, literals, references);
-    int count = __regex_scan(handle, subject, 0, limit, 3);
-    string[] texts = __regex_texts();
-    __regex_offsets();
-    int size = len(names);
-    string[] pieces = [];
-    int index = 0;
-    while (index < count) {
-        int base = index * (size + 1);
-        array_push(pieces, texts[base]);
-        foreach (literals as piece => literal) {
-            int group = references[piece];
-            if (group < 0) {
-                array_push(pieces, literal);
-            } else {
-                array_push(pieces, texts[base + 1 + group] ?? "");
-            }
-        }
-        index = index + 1;
-    }
-    array_push(pieces, texts[count * (size + 1)]);
-    return implode("", pieces);
-}
-
-// Reads a replacement into text pieces and group references (-1 for text).
-function __regex_template(string replacement, string[] names, string[] literals, int[] references): void {
-    string[] chars = [];
-    foreach (replacement as c) {
-        array_push(chars, to_string(c));
-    }
-    int count = len(chars);
-    string[] text = [];
-    int index = 0;
-    while (index < count) {
-        string c = chars[index];
-        string next = chars[index + 1] ?? "";
-        int group = -1;
-        int used = 0;
-        if (c == "$" && next == "$") {
-            array_push(text, "$");
-            index = index + 2;
-            continue;
-        }
-        if ((c == "$" || c == "\\") && __regex_is_digit(next)) {
-            // One or two digits, as in PHP.
-            used = 2;
-            group = to_int(next);
-            string after = chars[index + 2] ?? "";
-            if (__regex_is_digit(after)) {
-                group = group * 10 + to_int(after);
-                used = 3;
-            }
-        } else if (c == "$" && next == "{") {
-            int close = index + 2;
-            string[] name = [];
-            while (close < count && chars[close] != "}") {
-                array_push(name, chars[close]);
-                close = close + 1;
-            }
-            if (close >= count) {
-                throw new RegexException("the replacement has a '${' without a closing '}'");
-            }
-            string reference = implode("", name);
-            used = close - index + 1;
-            group = __regex_group_named(reference, names);
-        } else {
-            array_push(text, c);
-            index = index + 1;
-            continue;
-        }
-        if (group >= len(names)) {
-            throw new RegexException("the replacement refers to group " + to_string(group) + ", but the pattern has " + to_string(len(names) - 1) + " group(s)");
-        }
-        array_push(literals, implode("", text));
-        array_push(references, -1);
-        text = [];
-        array_push(literals, "");
-        array_push(references, group);
-        index = index + used;
-    }
-    array_push(literals, implode("", text));
-    array_push(references, -1);
-}
-
-function __regex_is_digit(string c): bool {
-    return c != "" && c >= "0" && c <= "9";
-}
-
-// The number of the group ${reference} names: a number, or a group's name.
-function __regex_group_named(string reference, string[] names): int {
-    if (reference != "") {
-        bool digits = true;
-        foreach (reference as c) {
-            if (!__regex_is_digit(to_string(c))) {
-                digits = false;
-            }
-        }
-        if (digits) {
-            return to_int(reference);
-        }
-        foreach (names as number => name) {
-            if (name == reference) {
-                return number;
-            }
-        }
-    }
-    throw new RegexException("the replacement refers to a group named '" + reference + "', which the pattern doesn't have");
+    return __regex_replace(__regex_compile(pattern), subject, replacement, limit);
 }
 
 // Replaces matches of `pattern` in `subject` with what `callback` returns

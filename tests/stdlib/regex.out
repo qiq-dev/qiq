@@ -39,3 +39,6 @@ error: group 2 doesn't exist: the pattern has 1 group(s)
 error: the pattern has no group named 'x'
 error: offset 9 is past the end of the subject
 5000
+-é-a-界- →é→→a→ a[b]a[b]
+k-k-a-j-j <> <x>
+caf$1 é→e $1 é→e abcb aBcb

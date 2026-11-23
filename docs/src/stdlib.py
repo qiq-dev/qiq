@@ -2319,7 +2319,7 @@ REGEX = {
 <li>A group that took no part in a match is <code>null</code>, not an empty string.</li>
 <li><code>preg_match</code> and <code>preg_match_all</code> return matches; <code>preg_test</code> answers whether there is one.</li>
 </ul>
-<p>Compiled patterns are cached, as in PHP, so a pattern used in a loop is compiled only once.</p>""",
+<p>Compiled patterns are cached, as in PHP, so a pattern used in a loop is compiled only once. As in PHP, each is also compiled to machine code by PCRE2's JIT, which makes matching several times faster; on a system that forbids memory that is both written and run, patterns are matched by PCRE2's interpreter instead, with the same results.</p>""",
     "functions": [
         {
             "name": "preg_match",

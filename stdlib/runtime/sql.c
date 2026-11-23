@@ -121,11 +121,16 @@ void qiq_bind_values(const char *types, const uint64_t *payloads, int64_t count)
 
 static int64_t *qiq_sql_kinds, *qiq_sql_values, *qiq_sql_blob_starts;
 static double *qiq_sql_doubles;
-static char **qiq_sql_texts;
+// Text cells' bytes, one after another, and where each starts: a cell
+// becomes a qiq string only when the qiq side reads it (__sql_text), so a
+// column the program never reads costs no allocation.
+static char *qiq_sql_text_bytes;
+static int64_t *qiq_sql_text_starts;
+static size_t qiq_sql_text_length, qiq_sql_text_bytes_capacity, qiq_sql_text_starts_capacity;
 static unsigned char *qiq_sql_blobs;
 static size_t qiq_sql_cells, qiq_sql_kinds_capacity, qiq_sql_values_capacity;
 static size_t qiq_sql_double_count, qiq_sql_doubles_capacity;
-static size_t qiq_sql_text_count, qiq_sql_texts_capacity;
+static size_t qiq_sql_text_count;
 static size_t qiq_sql_blob_count, qiq_sql_blob_starts_capacity;
 static size_t qiq_sql_blob_length, qiq_sql_blobs_capacity;
 static char **qiq_sql_columns;
@@ -135,11 +140,10 @@ static size_t qiq_sql_column_count, qiq_sql_columns_capacity;
 static void *qiq_sql_columns_array;
 
 void qiq_sql_clear_results(void) {
-    for (size_t index = 0; index < qiq_sql_text_count; index++) qiq_release(qiq_sql_texts[index]);
     for (size_t index = 0; index < qiq_sql_column_count; index++) qiq_release(qiq_sql_columns[index]);
     if (qiq_sql_columns_array != NULL) qiq_release(qiq_sql_columns_array);
     qiq_sql_columns_array = NULL;
-    qiq_sql_cells = qiq_sql_double_count = qiq_sql_text_count = 0;
+    qiq_sql_cells = qiq_sql_double_count = qiq_sql_text_count = qiq_sql_text_length = 0;
     qiq_sql_blob_count = qiq_sql_blob_length = qiq_sql_column_count = 0;
 }
 
@@ -173,8 +177,11 @@ void qiq_sql_add_text(const char *text, size_t length, int64_t kind) {
         qiq_sql_add_bytes(text, text == NULL ? 0 : length);
         return;
     }
-    qiq_sql_texts = qiq_sql_grow(qiq_sql_texts, &qiq_sql_texts_capacity, qiq_sql_text_count + 1, sizeof(char *));
-    qiq_sql_texts[qiq_sql_text_count] = qiq_string_from(text, length);
+    qiq_sql_text_starts = qiq_sql_grow(qiq_sql_text_starts, &qiq_sql_text_starts_capacity, qiq_sql_text_count + 2, sizeof(int64_t));
+    qiq_sql_text_bytes = qiq_sql_grow(qiq_sql_text_bytes, &qiq_sql_text_bytes_capacity, qiq_sql_text_length + length, 1);
+    if (length > 0) memcpy(qiq_sql_text_bytes + qiq_sql_text_length, text, length);
+    qiq_sql_text_starts[qiq_sql_text_count] = (int64_t)qiq_sql_text_length;
+    qiq_sql_text_length += length;
     qiq_sql_add_cell(kind, (int64_t)qiq_sql_text_count++);
 }
 
@@ -1036,12 +1043,25 @@ void *qiq_stdlib___sql_doubles(void) {
     return array;
 }
 
-void *qiq_stdlib___sql_texts(void) {
+// The text cells' bytes (checked as UTF-8 text when collected).
+void *qiq_stdlib___sql_text_bytes(void) {
     if (qiq_sql_text_count == 0) return NULL;
-    void *array = qiq_array_create((int64_t)qiq_sql_text_count, 8, 1);
-    if (qiq_sql_text_count > 0) memcpy(QIQ_ARRAY_DATA(array), qiq_sql_texts, qiq_sql_text_count * sizeof(char *));
-    qiq_sql_text_count = 0;
+    void *array = qiq_array_create((int64_t)qiq_sql_text_length, 1, 0);
+    if (qiq_sql_text_length > 0) memcpy(QIQ_ARRAY_DATA(array), qiq_sql_text_bytes, qiq_sql_text_length);
     return array;
+}
+
+// Where each text cell starts in __sql_text_bytes, then where the last ends.
+void *qiq_stdlib___sql_text_starts(void) {
+    if (qiq_sql_text_count == 0) return NULL;
+    qiq_sql_text_starts[qiq_sql_text_count] = (int64_t)qiq_sql_text_length;
+    return qiq_sql_int_array(qiq_sql_text_starts, qiq_sql_text_count + 1);
+}
+
+// Bytes `start` to `end` of `data` as a string, for a text cell: they were
+// checked to be UTF-8 text when the cell was collected.
+void *qiq_stdlib___sql_text(void *data, int64_t start, int64_t end) {
+    return qiq_string_from((const char *)QIQ_ARRAY_DATA(data) + start, (size_t)(end - start));
 }
 
 void *qiq_stdlib___sql_blobs(void) {

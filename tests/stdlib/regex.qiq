@@ -73,3 +73,10 @@ foreach (range(1, 5000) as n) {
     }
 }
 print(total);
+
+// Replacing, checked against PHP: empty matches between multi-byte
+// characters, \K, two-digit groups, groups that took no part, and text
+// that isn't ASCII.
+print(preg_replace(`//`, "-", "éa界"), preg_replace(`/x*/`, "→", "éxxa"), preg_replace(`/a\Kb/`, "[$0]", "abab"));
+print(preg_replace(`/(a)(b)(c)(d)(e)(f)(g)(h)(i)(j)(k)/`, "$11-${11}-$1-\\10-$10", "abcdefghijk"), preg_replace(`/(x)?y/`, "<$1>", "y xy"));
+print(preg_replace(`/é/u`, "$$1 é→e", "café é"), preg_replace(`/b/`, "B", "abcb", 0), preg_replace(`/b/`, "B", "abcb", 1));

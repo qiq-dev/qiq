@@ -30,6 +30,10 @@ const MUSL: &str = "musl-1.2.5";
 const MBEDTLS: &str = "mbedtls-3.6.8";
 const SQLITE: &str = "sqlite-autoconf-3540100";
 const PCRE2: &str = "pcre2-10.49";
+/// PCRE2's options for the programs qiq builds: UTF-8 with Unicode
+/// properties, and the JIT compiler, which regex.c uses when the system
+/// allows executable memory.
+const PCRE2_OPTIONS: &[&str] = &["-DHAVE_CONFIG_H", "-DPCRE2_CODE_UNIT_WIDTH=8", "-DPCRE2_STATIC", "-DSUPPORT_UNICODE", "-DSUPPORT_JIT"];
 /// PCRE2's files for 8-bit (UTF-8) strings, from its NON-AUTOTOOLS-BUILD.
 const PCRE2_SOURCES: &[&str] = &[
     "pcre2_auto_possess.c",
@@ -271,19 +275,23 @@ fn build_sqlite(out: &Path, clang: &str, musl: &Path) -> (PathBuf, PathBuf) {
     (archive, source)
 }
 
-/// Builds PCRE2 into `out/libpcre2.a` once, for UTF-8 with Unicode support
-/// and without the JIT, compiled for x86-64 Linux with musl. Returns the
-/// archive and the directory of pcre2.h.
+/// Builds PCRE2 into `out/libpcre2.a` once (again when PCRE2_OPTIONS
+/// change), compiled for x86-64 Linux with musl. Returns the archive and the
+/// directory of pcre2.h.
 fn build_pcre2(out: &Path, clang: &str, musl: &Path) -> (PathBuf, PathBuf) {
     let source = out.join(PCRE2).join("src");
     let archive = out.join("libpcre2.a");
-    if archive.exists() {
+    let stamp = out.join("pcre2-options.txt");
+    let options = PCRE2_OPTIONS.join(" ");
+    if archive.exists() && std::fs::read_to_string(&stamp).ok().as_deref() == Some(options.as_str()) {
         return (archive, source);
     }
-    let tarball = Path::new("vendor").join(format!("{PCRE2}.tar.bz2"));
-    run(Command::new("tar").arg("xjf").arg(&tarball).arg("-C").arg(out));
-    for (from, to) in [("config.h.generic", "config.h"), ("pcre2.h.generic", "pcre2.h"), ("pcre2_chartables.c.dist", "pcre2_chartables.c")] {
-        std::fs::copy(source.join(from), source.join(to)).unwrap();
+    if !source.join("pcre2.h").exists() {
+        let tarball = Path::new("vendor").join(format!("{PCRE2}.tar.bz2"));
+        run(Command::new("tar").arg("xjf").arg(&tarball).arg("-C").arg(out));
+        for (from, to) in [("config.h.generic", "config.h"), ("pcre2.h.generic", "pcre2.h"), ("pcre2_chartables.c.dist", "pcre2_chartables.c")] {
+            std::fs::copy(source.join(from), source.join(to)).unwrap();
+        }
     }
     let objects = out.join("pcre2-objects");
     std::fs::create_dir_all(&objects).unwrap();
@@ -296,7 +304,7 @@ fn build_pcre2(out: &Path, clang: &str, musl: &Path) -> (PathBuf, PathBuf) {
                 for file in files {
                     run(Command::new(clang)
                         .args(["--target=x86_64-unknown-linux-musl", "-O2", "-ffunction-sections", "-fdata-sections"])
-                        .args(["-DHAVE_CONFIG_H", "-DPCRE2_CODE_UNIT_WIDTH=8", "-DPCRE2_STATIC", "-DSUPPORT_UNICODE"])
+                        .args(PCRE2_OPTIONS)
                         .args(["-fno-stack-protector", "-nostdlibinc", "-isystem"])
                         .arg(musl.join("include"))
                         .arg("-I")
@@ -309,12 +317,16 @@ fn build_pcre2(out: &Path, clang: &str, musl: &Path) -> (PathBuf, PathBuf) {
             });
         }
     });
+    if archive.exists() {
+        std::fs::remove_file(&archive).unwrap();
+    }
     let mut command = Command::new(tool("LLVM_AR", "llvm-ar-18"));
     command.arg("rcs").arg(&archive);
     for file in PCRE2_SOURCES {
         command.arg(objects.join(file).with_extension("o"));
     }
     run(&mut command);
+    std::fs::write(&stamp, options).unwrap();
     (archive, source)
 }
 
