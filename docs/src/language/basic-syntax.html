@@ -2,11 +2,13 @@
 <h1>Basic syntax</h1>
 
 <h2>Statements and comments</h2>
-<p>A qiq program is a sequence of declarations and statements. Simple statements end with a semicolon; blocks use braces. Whitespace between tokens, including newlines, is ignored. <code>//</code> starts a comment that runs to the end of the line.</p>
+<p>A qiq program is a sequence of declarations and statements. Simple statements end with a semicolon; blocks use braces. Whitespace between tokens, including newlines, is ignored. <code>//</code> starts a comment that runs to the end of the line. A comment between <code>/*</code> and <code>*/</code> can span several lines or sit inside one. These comments don't nest: the first <code>*/</code> ends the comment.</p>
 
 ```qiq
-// A complete program: statements run from top to bottom.
-int total = 0;
+/*
+ * A complete program: statements run from top to bottom.
+ */
+int total = 0 /* the running sum */;
 foreach ([1, 2, 3] as value) {
     total += value;          // a statement ends with ;
 }

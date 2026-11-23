@@ -472,8 +472,36 @@ pub fn command_get(args: impl Iterator<Item = String>) -> Result<(), String> {
 /// The import paths in a qiq file: the string after `from` in each import.
 fn imports_of(source: &str) -> Vec<String> {
     let mut imports = Vec::new();
+    let mut in_comment = false;
     for line in source.lines() {
-        let line = line.trim();
+        // Skip the parts of the line inside /* */ comments.
+        let mut code = String::new();
+        let mut rest = line;
+        loop {
+            if in_comment {
+                match rest.find("*/") {
+                    Some(end) => {
+                        rest = &rest[end + 2..];
+                        in_comment = false;
+                    }
+                    None => break,
+                }
+            } else {
+                match rest.find("/*") {
+                    Some(start) => {
+                        code.push_str(&rest[..start]);
+                        code.push(' ');
+                        rest = &rest[start + 2..];
+                        in_comment = true;
+                    }
+                    None => {
+                        code.push_str(rest);
+                        break;
+                    }
+                }
+            }
+        }
+        let line = code.trim();
         if !line.starts_with("import ") {
             continue;
         }
@@ -589,6 +617,10 @@ mod tests {
     fn finds_import_paths() {
         let source = "// x\nimport A, B as C from \"github.com/a/b/c\";\nimport D from \"std/file\";\nprint(1);";
         assert_eq!(imports_of(source), vec!["github.com/a/b/c", "std/file"]);
+
+        // Imports inside a block comment don't count.
+        let source = "/*\nimport A from \"github.com/old/a\";\n*/ import B from \"github.com/new/b\";\n/* x */ import C from \"std/json\"; /* y";
+        assert_eq!(imports_of(source), vec!["github.com/new/b", "std/json"]);
     }
 
     #[test]

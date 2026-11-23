@@ -134,6 +134,33 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
             }
             continue;
         }
+        // A block comment, which may span lines. Block comments don't nest:
+        // the first `*/` ends it.
+        if current == '/' && chars.get(cursor + 1) == Some(&'*') {
+            let (start_line, start_column) = (line, column);
+            cursor += 2;
+            column += 2;
+            loop {
+                match chars.get(cursor) {
+                    None => return Err(format!("{start_line}:{start_column}: unterminated comment; add '*/' to end it")),
+                    Some('*') if chars.get(cursor + 1) == Some(&'/') => {
+                        cursor += 2;
+                        column += 2;
+                        break;
+                    }
+                    Some('\n') => {
+                        cursor += 1;
+                        line += 1;
+                        column = 1;
+                    }
+                    Some(_) => {
+                        cursor += 1;
+                        column += 1;
+                    }
+                }
+            }
+            continue;
+        }
 
         let token_line = line;
         let token_column = column;
@@ -11070,6 +11097,23 @@ mod tests {
         assert!(compile_files(&[("main.qiq", "import x from \"github.com/a/b/x\";")])
             .unwrap_err()
             .contains("looks like a module path, but this program has no qiq.mod"));
+    }
+
+    #[test]
+    fn skips_block_comments() {
+        let source = "/* a\n   block comment */ int x = 1 /* inline */ + 2; /** doc */ print(x); /* no nesting: /* */ // done";
+        assert!(compile_source(source).is_ok());
+
+        // Lines and columns after a multi-line comment are still right.
+        let after = compile_source("/*\n\n*/ int x = ;").unwrap_err();
+        assert!(after.starts_with("3:12:"), "{after}");
+
+        let unterminated = compile_source("int x = 1;\n  /* never closed\nprint(x);").unwrap_err();
+        assert!(unterminated.contains("2:3: unterminated comment"), "{unterminated}");
+
+        // `/*` inside a string is not a comment, and `*/` alone is two operators.
+        assert!(compile_source("string s = \"/* not a comment\"; print(s);").is_ok());
+        assert!(compile_source("int x = 2 */ 1;").is_err());
     }
 
     #[test]

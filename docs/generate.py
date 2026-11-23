@@ -73,7 +73,7 @@ KEYWORDS = set(
 TYPES = set("int double bool string char byte void map".split())
 LITERALS = set("true false null".split())
 TOKEN = re.compile(
-    r"(?P<comment>//[^\n]*)"
+    r"(?P<comment>//[^\n]*|/\*.*?(?:\*/|$))"
     r"|(?P<string>\"(?:\\.|[^\"\\])*\")"
     r"|(?P<char>'(?:\\.|[^'\\])')"
     r"|(?P<number>\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b)"
