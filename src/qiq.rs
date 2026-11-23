@@ -1,6 +1,7 @@
 mod compiler;
 mod fetch;
 mod modfile;
+mod regex_check;
 
 use std::env;
 use std::path::{Path, PathBuf};

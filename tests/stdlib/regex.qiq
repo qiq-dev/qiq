@@ -51,14 +51,16 @@ print(preg_split(`//`, "abc", skipEmpty: true));
 print(preg_quote("1.5*2 (x)? #/"), preg_quote("a/b", "/"));
 print(preg_test("/" + preg_quote("$9.99 (sale)") + "/", "now $9.99 (sale)!"));
 
-// Errors.
+// Errors at run time, for patterns that aren't literals (a literal's
+// mistakes are compile errors).
 string[] bad = [`/(\d+/`, `/x/q`, `abc`, `/abc`, ``, `/[z-a]/`];
 foreach (bad as pattern) {
     try { preg_match(pattern, "x"); } catch (RegexException e) { print("error:", e->getMessage()); }
 }
 try { preg_match(`/(a+)+$/`, "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab"); } catch (RegexException e) { print("error:", e->getMessage()); }
-try { preg_replace(`/(a)/`, "$2", "a"); } catch (RegexException e) { print("error:", e->getMessage()); }
-try { preg_replace(`/(a)/`, "${nope}", "a"); } catch (RegexException e) { print("error:", e->getMessage()); }
+string[] replacements = ["$2", "${nope}"];
+try { preg_replace(`/(a)/`, replacements[0], "a"); } catch (RegexException e) { print("error:", e->getMessage()); }
+try { preg_replace(`/(a)/`, replacements[1], "a"); } catch (RegexException e) { print("error:", e->getMessage()); }
 try { preg_match(`/(a)/`, "a")->group(2); } catch (OutOfRangeException e) { print("error:", e->getMessage()); }
 try { preg_match(`/(a)/`, "a")->named("x"); } catch (InvalidArgumentException e) { print("error:", e->getMessage()); }
 try { preg_match(`/a/`, "abc", 9); } catch (InvalidArgumentException e) { print("error:", e->getMessage()); }

@@ -2314,7 +2314,8 @@ REGEX = {
 <ul>
 <li>Every pattern works on characters, as with PHP's <code>u</code> flag: <code>.</code> matches one character, and <code>\w</code>, <code>\d</code>, and <code>\b</code> know letters and digits in every script.</li>
 <li>Positions count characters, as everywhere in qiq, rather than bytes, so they work with <code>substr</code>.</li>
-<li>A malformed pattern throws <code>RegexException</code> instead of returning <code>false</code> with a warning. So does a pattern that needs too much backtracking on its text, such as <code>`/(a+)+$/`</code> on a long run of <code>a</code>s, where PHP returns <code>false</code> and sets <code>preg_last_error()</code>.</li>
+<li>A pattern written as a literal is checked when the program compiles: <code>preg_match(`/(\d+/`, text)</code> is a compile error (<code>invalid regular expression /(\d+/: missing closing parenthesis at offset 4</code>), even on a line that rarely runs, and so is a <code>preg_replace</code> replacement that refers to a group the pattern doesn't have. In VS Code, the qiq extension underlines it as you type.</li>
+<li>A malformed pattern built while the program runs throws <code>RegexException</code> instead of returning <code>false</code> with a warning. So does a pattern that needs too much backtracking on its text, such as <code>`/(a+)+$/`</code> on a long run of <code>a</code>s, where PHP returns <code>false</code> and sets <code>preg_last_error()</code>.</li>
 <li>A group that took no part in a match is <code>null</code>, not an empty string.</li>
 <li><code>preg_match</code> and <code>preg_match_all</code> return matches; <code>preg_test</code> answers whether there is one.</li>
 </ul>

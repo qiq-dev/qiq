@@ -3231,6 +3231,31 @@ struct FinallyContext {
     loop_depth: usize,
 }
 
+/// For a call to a std/regex function: checks a pattern written as a
+/// literal, and a preg_replace replacement written as one, so mistakes are
+/// compile errors rather than a RegexException when the line runs.
+fn check_regex_literals(function: &str, arguments: &[(usize, &Expr)]) -> Result<(), String> {
+    const TAKE_PATTERNS: &[&str] =
+        &["preg_match", "preg_match_all", "preg_test", "preg_replace", "preg_replace_callback", "preg_split"];
+    if !TAKE_PATTERNS.contains(&function) {
+        return Ok(());
+    }
+    let literal = |parameter: usize| {
+        arguments.iter().find(|(index, _)| *index == parameter).and_then(|(_, argument)| match argument {
+            Expr::Text(text) => Some(text.as_str()),
+            _ => None,
+        })
+    };
+    let Some(pattern) = literal(0) else { return Ok(()) };
+    let checked = crate::regex_check::check_pattern(pattern)?;
+    if function == "preg_replace" {
+        if let Some(replacement) = literal(1) {
+            crate::regex_check::check_replacement(replacement, &checked)?;
+        }
+    }
+    Ok(())
+}
+
 /// Exception classes the runtime raises, indexed by QiqExceptionKind in
 /// stdlib/runtime/qiq_runtime.h; keep the two lists in the same order.
 const RUNTIME_EXCEPTION_CLASSES: [&str; 17] = [
@@ -9423,6 +9448,9 @@ impl Emitter {
                 let return_type = signature.return_type;
                 let callee_name = format!("function '{name}'");
                 let resolved = Self::resolve_arguments(&parameters, arguments, &callee_name)?;
+                if let Some(function) = symbol.strip_prefix("qiq.stdlib.regex.") {
+                    check_regex_literals(function, &resolved)?;
+                }
                 let operands = self.emit_arguments(
                     &parameters,
                     &resolved,
@@ -11146,11 +11174,44 @@ mod tests {
             print(len(preg_match_all(`/a/i`, \"Aa\")), preg_test(`/a/`, \"a\"), preg_quote(\"a.b\"));\n\
             print(preg_replace(`/a/`, \"$0$0\", \"a\"), preg_split(`/,/`, \"a,b\", skipEmpty: true));\n\
             print(preg_replace_callback(`/\\w/`, fn(RegexMatch x) => strtoupper(x->text), \"ab\"));\n\
-            try { preg_match(`/(/`, \"\"); } catch (RegexException e) { print(e->getMessage()); }";
+            string open = `/(/`;\n\
+            try { preg_match(open, \"\"); } catch (RegexException e) { print(e->getMessage()); }";
         let ir = compile_source(source).unwrap();
         assert!(ir.contains("@qiq_stdlib___regex_scan"));
         // A pattern without a subject is a type error.
         assert!(compile_source("import preg_match from \"std/regex\"; preg_match(\"a\");").is_err());
+    }
+
+    #[test]
+    fn checks_regex_literals_at_compile_time() {
+        let error = |call: &str| {
+            compile_source(&format!("import preg_match, preg_match_all, preg_test, preg_replace, preg_split from \"std/regex\";\n{call};"))
+                .unwrap_err()
+        };
+        assert_eq!(error("preg_match(`/(\\d+/`, \"x\")"), "2:1: invalid regular expression /(\\d+/: missing closing parenthesis at offset 4");
+        assert_eq!(error("preg_test(`/x/q`, \"x\")"), "2:1: unknown flag 'q' in /x/q; the flags are i, m, s, x, u, U, D, A, n, and J");
+        assert_eq!(error("preg_split(`abc`, \"x\")"), "2:1: the delimiter can't be a letter, digit, or backslash: write the pattern between delimiters, as in \"/abc/\"");
+        assert_eq!(error("preg_match_all(`/abc`, \"x\")"), "2:1: no ending delimiter '/' in /abc");
+        assert_eq!(error("preg_match(``, \"x\")"), "2:1: empty regular expression; write it between delimiters, as in `/\\d+/`");
+        // Offsets count characters, before and in the pattern.
+        assert_eq!(error("preg_match(`/é[z-a]/`, \"x\")"), "2:1: invalid regular expression /é[z-a]/: range out of order in character class at offset 5");
+        // Named arguments, and the replacement of preg_replace.
+        assert_eq!(error("preg_match(subject: \"x\", pattern: `/[/`)").contains("missing terminating ]"), true);
+        assert_eq!(error("preg_replace(`/(a)(b)/`, \"$3\", \"ab\")"), "2:1: the replacement refers to group 3, but the pattern has 2 group(s)");
+        assert_eq!(error("preg_replace(`/(?<x>a)/`, \"${y}\", \"a\")"), "2:1: the replacement refers to a group named 'y', which the pattern doesn't have");
+        assert_eq!(error("preg_replace(`/a/`, \"${0\", \"a\")"), "2:1: the replacement has a '${' without a closing '}'");
+
+        // Valid patterns and replacements, including ones the checks must
+        // not misread.
+        let fine = "import preg_match, preg_replace from \"std/regex\";\n\
+            print(preg_match(`#^/a/(\\d+)$#i`, \"/a/1\"), preg_match(`{a{2}}`, \"aa\"), preg_match(`/\\//`, \"/\"));\n\
+            print(preg_replace(`/(?<x>a)(b)/`, \"$$1 $0 $2 \\\\1 ${2} ${x} $12\", \"ab\"));";
+        let fine = fine.replace("$12", "$1");
+        assert!(compile_source(&fine).is_ok(), "{:?}", compile_source(&fine).err());
+        // Patterns that aren't literals are checked when the program runs;
+        // a function of your own named preg_match isn't checked at all.
+        assert!(compile_source("import preg_match from \"std/regex\";\nstring p = `/(/`; print(preg_match(p, \"x\") == null);").is_ok());
+        assert!(compile_source("function preg_match(string a, string b): bool { return true; } print(preg_match(`/(/`, \"x\"));").is_ok());
     }
 
     #[test]

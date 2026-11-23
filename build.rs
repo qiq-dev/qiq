@@ -318,6 +318,53 @@ fn build_pcre2(out: &Path, clang: &str, musl: &Path) -> (PathBuf, PathBuf) {
     (archive, source)
 }
 
+/// Builds PCRE2 again into `out/libpcre2host.a`, for the machine qiq runs
+/// on rather than the programs it builds: the compiler uses it to check
+/// pattern literals (src/regex_check.rs).
+fn build_pcre2_host(out: &Path, clang: &str) {
+    let source = out.join(PCRE2).join("src");
+    let archive = out.join("libpcre2host.a");
+    if !archive.exists() {
+        if !source.join("pcre2.h").exists() {
+            let tarball = Path::new("vendor").join(format!("{PCRE2}.tar.bz2"));
+            run(Command::new("tar").arg("xjf").arg(&tarball).arg("-C").arg(out));
+            for (from, to) in [("config.h.generic", "config.h"), ("pcre2.h.generic", "pcre2.h"), ("pcre2_chartables.c.dist", "pcre2_chartables.c")] {
+                std::fs::copy(source.join(from), source.join(to)).unwrap();
+            }
+        }
+        let objects = out.join("pcre2-host-objects");
+        std::fs::create_dir_all(&objects).unwrap();
+        let jobs: usize = env::var("NUM_JOBS").ok().and_then(|jobs| jobs.parse().ok()).unwrap_or(4).max(1);
+        let chunk = PCRE2_SOURCES.len().div_ceil(jobs).max(1);
+        std::thread::scope(|scope| {
+            for files in PCRE2_SOURCES.chunks(chunk) {
+                let (objects, source) = (&objects, &source);
+                scope.spawn(move || {
+                    for file in files {
+                        run(Command::new(clang)
+                            .args(["-O2", "-fPIC", "-ffunction-sections", "-fdata-sections"])
+                            .args(["-DHAVE_CONFIG_H", "-DPCRE2_CODE_UNIT_WIDTH=8", "-DPCRE2_STATIC", "-DSUPPORT_UNICODE"])
+                            .arg("-I")
+                            .arg(source)
+                            .arg("-c")
+                            .arg(source.join(file))
+                            .arg("-o")
+                            .arg(objects.join(file).with_extension("o")));
+                    }
+                });
+            }
+        });
+        let mut command = Command::new(tool("LLVM_AR", "llvm-ar-18"));
+        command.arg("rcs").arg(&archive);
+        for file in PCRE2_SOURCES {
+            command.arg(objects.join(file).with_extension("o"));
+        }
+        run(&mut command);
+    }
+    println!("cargo:rustc-link-search=native={}", out.display());
+    println!("cargo:rustc-link-lib=static=pcre2host");
+}
+
 fn main() {
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let clang = tool("CLANG", "clang");
@@ -339,6 +386,7 @@ fn main() {
     let (sqlite, sqlite_include) = build_sqlite(&out, &clang, &musl);
     // PCRE2 for std/regex.
     let (pcre2, pcre2_include) = build_pcre2(&out, &clang, &musl);
+    build_pcre2_host(&out, &clang);
 
     // The C runtime, as bitcode for x86-64 Linux with musl.
     let runtime_dir = out.join("runtime");
