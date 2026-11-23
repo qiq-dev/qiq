@@ -1,7 +1,7 @@
-1 0 0 1 0
-0 1 0 1 1
-0 1 1 1 1
-0 0
+true false false true false
+false true false true true
+false true true true true
+false false
 big circle, radius 1
 square, side 2
 cube, volume 27
@@ -9,5 +9,5 @@ large circle 3 | not a large circle | not a large circle | not a large circle
 both 2 3
 pick called
 picked a cube 27
-kept 5 1
-1 1
+kept 5 true
+1 true

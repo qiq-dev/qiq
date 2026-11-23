@@ -11,7 +11,7 @@
 Square
 [Square, Shape]
 Ada 36
-age: 36 adult: 1
+age: 36 adult: true
 scores [9, 7] {"best" => 9}
 
 done

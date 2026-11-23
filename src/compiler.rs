@@ -3847,7 +3847,9 @@ impl Emitter {
 
         let mut ir = String::from(
             "@.fmt.int = private unnamed_addr constant [6 x i8] c\"%lld\\0A\\00\", align 1\n\
-             @.fmt.bool = private unnamed_addr constant [4 x i8] c\"%d\\0A\\00\", align 1\n\
+             @.fmt.bool = private unnamed_addr constant [4 x i8] c\"%s\\0A\\00\", align 1\n\
+             @.str.true = private unnamed_addr constant [5 x i8] c\"true\\00\", align 1\n\
+             @.str.false = private unnamed_addr constant [6 x i8] c\"false\\00\", align 1\n\
              @.fmt.double = private unnamed_addr constant [4 x i8] c\"%g\\0A\\00\", align 1\n\
              @.fmt.string = private unnamed_addr constant [4 x i8] c\"%s\\0A\\00\", align 1\n\
              @.str.null = private unnamed_addr constant [5 x i8] c\"null\\00\", align 1\n",
@@ -8155,7 +8157,7 @@ impl Emitter {
             ValueType::Bool => {
                 let register = self.new_register();
                 body.push_str(&format!(
-                    "  {register} = zext i1 {} to i32\n  call i32 (ptr, ...) @printf(ptr @.fmt.bool, i32 {register})\n",
+                    "  {register} = select i1 {}, ptr @.str.true, ptr @.str.false\n  call i32 (ptr, ...) @printf(ptr @.fmt.bool, ptr {register})\n",
                     value.operand
                 ));
             }

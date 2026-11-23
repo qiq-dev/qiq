@@ -1,7 +1,7 @@
-1
+true
 two
 unset
-1 1
+true true
 Asia/Tokyo JST
 America/New_York EST
 error: setenv: "" isn't a variable name (it's empty or contains =)

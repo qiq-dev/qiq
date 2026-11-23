@@ -1,5 +1,5 @@
 {"pears" => 3, "apples" => 5, "plums" => 0, "kiwis" => 7}
-1 0 1 0
+true false true false
 ["pears", "apples", "plums", "kiwis"] [3, 5, 0, 7]
 0 7
 {"pears" => 3, "plums" => 0, "kiwis" => 7, "apples" => 1}

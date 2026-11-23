@@ -1,15 +1,15 @@
 2026-11 2026-11 2026 2026 11 4 11
 9 11 ["2026-11", "2026", "11"] {"year" => "2026"}
-1
+true
 5 8 bbb
 crème
-1 b -1
-1 0
+true b -1
+true false
 3
-1 1
+true true
 px
 a bin a
-Ünïcödé 1 1
+Ünïcödé 1 true
 qiq 0
 php 9
 c 15
@@ -25,7 +25,7 @@ The Quick Fox
 ["a", "b"] ["a", "b,c,d"]
 ["a", "b", "c"]
 1\.5\*2 \(x\)\? \#/ a\/b
-1
+true
 error: invalid regular expression /(\d+/: missing closing parenthesis at offset 4
 error: unknown flag 'q' in /x/q; the flags are i, m, s, x, u, U, D, A, n, and J
 error: the delimiter can't be a letter, digit, or backslash: write the pattern between delimiters, as in "/abc/"

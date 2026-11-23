@@ -30,7 +30,7 @@ map[string, int] ages = {"ada" => 36};
 print(count, ratio, ready, flags, name, initial, scores, ages);
 ```
 ```output
-3 0.75 1 255 Ada A [90, 85] {"ada" => 36}
+3 0.75 true 255 Ada A [90, 85] {"ada" => 36}
 ```
 
 <h2>int</h2>
@@ -40,7 +40,7 @@ print(count, ratio, ready, flags, name, initial, scores, ages);
 <p>A <code>double</code> literal has a decimal point, an exponent, or both: <code>2.5</code>, <code>1e5</code>, <code>2.5E-3</code>. A literal with an exponent is always a double, so <code>int n = 1e5;</code> is an error. Double arithmetic follows IEEE 754: <code>1.0 / 0.0</code> is <code>inf</code>.</p>
 
 <h2>bool</h2>
-<p>Conditions in <code>if</code>, <code>while</code>, <code>&amp;&amp;</code>, <code>||</code>, and <code>!</code> must be <code>bool</code>; qiq has no "truthy" values, so <code>if (count)</code> is an error. <code>print(true)</code> prints <code>1</code>.</p>
+<p>Conditions in <code>if</code>, <code>while</code>, <code>&amp;&amp;</code>, <code>||</code>, and <code>!</code> must be <code>bool</code>; qiq has no "truthy" values, so <code>if (count)</code> is an error. <code>print(true)</code> prints <code>true</code>.</p>
 
 <h2>byte</h2>
 <p>A <code>byte</code> holds 0 to 255 and is meant for binary data, such as the contents of <code>file_get_bytes</code>. An int literal becomes a byte wherever a byte is expected, and out-of-range literals are compile errors. Bytes can be compared (as unsigned values) and printed, but not used in arithmetic: convert with <code>to_int</code> first.</p>

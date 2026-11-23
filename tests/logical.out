@@ -6,7 +6,7 @@ grouped condition
 checking left
 checking left
 or matched
-1
-0
+true
+false
 adult
-1
+true

@@ -104,7 +104,7 @@ STRINGS = {
                 {
                     "title": "Basic use",
                     "code": 'string text = "héllo wörld";\nif (str_contains(text, "wö")) {\n    print("found");\n}\nprint(str_contains(text, "W"));',
-                    "output": "found\n0",
+                    "output": "found\nfalse",
                 }
             ],
             "see_also": ["str_starts_with", "str_ends_with", "strpos"],
@@ -121,7 +121,7 @@ STRINGS = {
                 {
                     "title": "Checking a prefix",
                     "code": 'string url = "https://example.com";\nif (str_starts_with(url, "https://")) {\n    print("secure");\n}\nprint(str_starts_with(url, "http:"));',
-                    "output": "secure\n0",
+                    "output": "secure\nfalse",
                 }
             ],
             "notes": ["This function is written in qiq on top of <code>substr</code> and <code>len</code>; see <code>stdlib/string.qiq</code>."],
@@ -252,7 +252,7 @@ STRINGS = {
                 {
                     "title": "Drawing a line",
                     "code": 'print(str_repeat("=-", 5));\nprint(str_repeat("ab", 0) == "");',
-                    "output": "=-=-=-=-=-\n1",
+                    "output": "=-=-=-=-=-\ntrue",
                 }
             ],
             "see_also": ["implode"],
@@ -522,7 +522,7 @@ no config file, using defaults
                 {
                     "title": "Files and directories",
                     "code": 'int written = file_put_contents("data.txt", "x");\nprint(is_file("data.txt"), is_file("."), is_file("missing.txt"));',
-                    "output": "1 0 0",
+                    "output": "true false false",
                 }
             ],
             "see_also": ["is_dir", "file_exists"],
@@ -535,7 +535,7 @@ no config file, using defaults
             "description": "Checks whether <code>path</code> exists and is a directory.",
             "return_description": "<code>true</code> for a directory; <code>false</code> for a file or a missing path.",
             "errors": ["<code>RuntimeException</code> if <code>path</code> is <code>null</code>."],
-            "examples": [{"title": "Basic use", "code": 'print(is_dir("."), is_dir("missing"));', "output": "1 0"}],
+            "examples": [{"title": "Basic use", "code": 'print(is_dir("."), is_dir("missing"));', "output": "true false"}],
             "see_also": ["is_file", "scandir"],
         },
         {
@@ -677,7 +677,7 @@ CONVERSIONS = {
                     "output": "count: 42, ratio: 0.5, ok: true",
                 }
             ],
-            "notes": ["<code>to_string(true)</code> is <code>\"true\"</code>, while <code>print(true)</code> prints <code>1</code>."],
+            "notes": ["<code>to_string(true)</code> is <code>\"true\"</code>, as <code>print(true)</code> prints it."],
             "see_also": ["to_int", "to_double", "print"],
         },
     ],
@@ -700,11 +700,11 @@ OUTPUT = {
                 {
                     "title": "Scalars, containers, and objects",
                     "code": 'class Square {}\nprint("age:", 36, 2.5, true);\nprint([1, 2, 3], ["a", "b,c"]);\nprint({"ada" => [true, false]});\nprint(new Square());\nprint();\nprint("done");',
-                    "output": 'age: 36 2.5 1\n[1, 2, 3] ["a", "b,c"]\n{"ada" => [true, false]}\nSquare\n\ndone',
+                    "output": "age: 36 2.5 true\n[1, 2, 3] [\"a\", \"b,c\"]\n{\"ada\" => [true, false]}\nSquare\n\ndone",
                 }
             ],
             "notes": [
-                "At the top level, booleans print as <code>1</code> and <code>0</code>; inside arrays and maps they print as <code>true</code> and <code>false</code>, and strings and chars are quoted, so the output reads like a qiq literal.",
+                "Booleans print as <code>true</code> and <code>false</code>. Inside arrays and maps, strings and chars are quoted, so the output reads like a qiq literal.",
             ],
             "see_also": ["to_string"],
         }
@@ -868,7 +868,7 @@ DATES = {
                 {
                     "title": "Comparing with time",
                     "code": 'double now = microtime();\nprint(to_int(now) >= time() - 1);',
-                    "output": "1",
+                    "output": "true",
                 }
             ],
             "notes": ["To measure how long something takes, use <code>hrtime</code>, which isn't affected by changes to the system clock."],
@@ -886,7 +886,7 @@ DATES = {
                 {
                     "title": "Timing code",
                     "code": 'int start = hrtime();\nusleep(20000);\nint elapsed = hrtime() - start;\nprint(elapsed >= 20000000);',
-                    "output": "1",
+                    "output": "true",
                 }
             ],
             "notes": ["PHP's <code>hrtime(true)</code> returns the same thing."],
@@ -991,7 +991,7 @@ DATES = {
                 {
                     "title": "Leap years",
                     "code": 'print(checkdate(2, 29, 2028), checkdate(2, 29, 2026), checkdate(2, 29, 2100), checkdate(4, 31, 2026));',
-                    "output": "1 0 0 0",
+                    "output": "true false false false",
                 }
             ],
             "see_also": ["mktime"],
@@ -1084,7 +1084,7 @@ DATES = {
                 {
                     "title": "A short pause",
                     "code": 'int start = hrtime();\nusleep(50000);\nprint((hrtime() - start) / 1000000 >= 50);',
-                    "output": "1",
+                    "output": "true",
                 }
             ],
             "see_also": ["sleep", "hrtime"],
@@ -1206,7 +1206,7 @@ MAPS = {
                 {
                     "title": "Before reading a key",
                     "code": 'map[string, int] ages = {"ada" => 36};\nif (map_key_exists("ada", ages)) {\n    print(ages["ada"]);\n}\nprint(map_key_exists("bob", ages));',
-                    "output": "36\n0",
+                    "output": "36\nfalse",
                 }
             ],
             "notes": ["To read a key or fall back to a default in one step, use <code>ages[\"bob\"] ?? 0</code>. PHP calls this function <code>array_key_exists</code>; the argument order is the same."],
@@ -1258,7 +1258,7 @@ MAPS = {
                 {
                     "title": "Looking for a value",
                     "code": 'map[string, string] capitals = {"France" => "Paris", "Japan" => "Tokyo"};\nprint(in_map("Tokyo", capitals), in_map("Rome", capitals));',
-                    "output": "1 0",
+                    "output": "true false",
                 }
             ],
             "notes": ["This checks every entry, so it takes time proportional to the size of the map. PHP's equivalent is <code>in_array</code>."],
@@ -1506,7 +1506,7 @@ hello, Ada</pre>""",
                 {
                     "title": "With a default",
                     "code": 'string level = getenv("QIQ_EXAMPLE_LOG_LEVEL") ?? "info";\nbool hasPath = getenv("PATH") != null;\nprint(level, hasPath);',
-                    "output": "info 1",
+                    "output": "info true",
                 }
             ],
             "notes": ["PHP's <code>getenv</code> returns <code>false</code> for a variable that isn't set; qiq returns <code>null</code>, so <code>??</code> gives a default."],
@@ -1545,7 +1545,7 @@ hello, Ada</pre>""",
                 {
                     "title": "Basic use",
                     "code": 'setenv("QIQ_EXAMPLE_TOKEN", "secret");\nunsetenv("QIQ_EXAMPLE_TOKEN");\nprint(getenv("QIQ_EXAMPLE_TOKEN") == null);',
-                    "output": "1",
+                    "output": "true",
                 }
             ],
             "see_also": ["setenv", "getenv"],
@@ -1562,7 +1562,7 @@ hello, Ada</pre>""",
                 {
                     "title": "In a file name",
                     "code": 'string path = "/tmp/report-" + to_string(getpid()) + ".txt";\nprint(getpid() > 0, str_starts_with(path, "/tmp/report-"));',
-                    "output": "1 1",
+                    "output": "true true",
                 }
             ],
             "see_also": ["argv"],
@@ -1604,7 +1604,7 @@ hello, Ada</pre>""",
                 {
                     "title": "Failure",
                     "code": 'ProcessResult result = exec(["ls", "/no/such/dir"]);\nprint(result->ok(), result->exitCode > 0);\ntry {\n    exec(["no-such-program"]);\n} catch (ProcessException e) {\n    print(e->getMessage());\n}',
-                    "output": "0 1\ncommand not found: no-such-program",
+                    "output": "false true\ncommand not found: no-such-program",
                 },
             ],
             "notes": [
@@ -2246,7 +2246,7 @@ CRYPTO = {
                 {
                     "title": "Storing and checking a password",
                     "code": 'string stored = bcrypt_hash("correct horse battery staple");\nprint(len(stored), substr(stored, 0, 7));\nprint(bcrypt_verify("correct horse battery staple", stored), bcrypt_verify("Correct horse battery staple", stored));',
-                    "output": "60 $2y$12$\n1 0",
+                    "output": "60 $2y$12$\ntrue false",
                 }
             ],
             "notes": [
@@ -2271,7 +2271,7 @@ CRYPTO = {
                 {
                     "title": "Checking a hash made by PHP",
                     "code": 'string hash = "$2y$05$maMq.WEGV.pFV8IwOFggee/pF6YMCR8YqltautITTO9oL9/6v3xhu";\nprint(bcrypt_verify("password", hash), bcrypt_verify("passw0rd", hash), bcrypt_verify("password", "not a hash"));',
-                    "output": "1 0 0",
+                    "output": "true false false",
                 }
             ],
             "notes": [
@@ -2403,7 +2403,7 @@ print(version);""",
                     "code": r"""foreach (["ada_99", "no spaces!", "ok"] as name) {
     print(name, preg_test(`/^\w{3,16}$/`, name));
 }""",
-                    "output": "ada_99 1\nno spaces! 0\nok 0",
+                    "output": "ada_99 true\nno spaces! false\nok false",
                 }
             ],
             "see_also": ["preg_match"],
@@ -2506,7 +2506,7 @@ print(preg_split(`/=/`, "key=value=more", 2));""",
                     "code": r"""string search = "$9.99 (sale)";
 print(preg_quote(search));
 print(preg_test("/" + preg_quote(search, "/") + "/i", "Now $9.99 (SALE)!"));""",
-                    "output": "\\$9\\.99 \\(sale\\)\n1",
+                    "output": "\\$9\\.99 \\(sale\\)\ntrue",
                 }
             ],
             "see_also": ["preg_match"],
@@ -2843,9 +2843,9 @@ User lin = db->queryOneAs("select id, name from users where name = ?", "Lin");
 print(lin->name, lin->email == "");
 ```
 ```output
-1 Ada ada@example.com 1
-2 Lin  0
-Lin 1
+1 Ada ada@example.com true
+2 Lin  false
+Lin true
 ```
 <ul>
 <li>When the class has a constructor, it's called with each parameter set from the column of the same name, read with the getter for the parameter's type (<code>getInt</code> for an <code>int</code>, and so on), so constructor promotion makes a short record class. A parameter with a default gets it when its column is NULL or missing; one without a default needs the column, or the query throws <code>DatabaseException</code>, as does a value of another type.</li>
@@ -2907,7 +2907,7 @@ db->transaction(function(): void {
 print(db->queryOne("select count(*) as n from orders")->getInt("n"));
 ```
 ```output
-1 1 0
+true true false
 2
 ```
 <p>The savepoints work the same way in SQLite, PostgreSQL, and MySQL. In PostgreSQL, rolling back to a savepoint is also how a transaction recovers from a failed statement, which otherwise blocks every statement after it until <code>rollback()</code>.</p>
@@ -3077,8 +3077,8 @@ try {
 }
 ```
 ```output
-ink 7.25 0 refill 0
-pen 1.5 10 - 1
+ink 7.25 0 refill false
+pen 1.5 10 - true
 2 8.75 {"n" => "2", "total" => "8.75"}
 column 'stock' is NULL; check with isNull first, or read it with a fallback, as getIntOr("stock", fallback)
 ```

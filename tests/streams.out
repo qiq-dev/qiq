@@ -5,7 +5,7 @@ after append: 5
 [0, 255, 10, 13]
 [128, 0, 255, 10]
 [13, 128]
-at end: 1
+at end: true
 tests/streams_output.txt is closed
 cannot open tests/no-such-file.txt: No such file or directory
 invalid mode "rw" (expected "r", "w", "a", "x", or one of them followed by "+")

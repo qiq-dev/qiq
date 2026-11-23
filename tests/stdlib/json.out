@@ -1,4 +1,4 @@
-Ada 36 1 ["math", "code"] London 2
+Ada 36 true ["math", "code"] London 2
 {"name":"Ada","age":36,"admin":true,"tags":["math","café"],"address":{"city":"London","lines":["12 Main St"]},"scores":{"b":2,"a":1}}
 {
     "city": "London",

@@ -6,20 +6,20 @@ Wed, 19 Nov 2025 Wednesday 19th November
 Today is Wednesday
 UTC GMT +0000 +00:00 Z 0
 1st 2nd 3rd 11th
-1
+true
 2026-01-01
 2024-02-29
-1 0 0
-1
-1
-1
-1
+true false false
+true
+true
+true
+true
 "next monday" is not an ISO 8601 date
 UTC 2025-11-19 14:00 UTC
-1
+true
 America/New_York 2025-11-19 09:00 EST -05:00 0
 08:00 EDT 1
-1
+true
 unknown timezone "Mars/Olympus"
-1 1
-1
+true true
+true

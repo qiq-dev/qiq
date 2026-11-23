@@ -26,34 +26,34 @@ sha224 1d37882a66d067f5c1b6d52d504346a4d90823df709127a22b2795cd
 sha256 70ae2ece456bfbb4bf3908eebd42d8a4f771eda1376191cb71f72cc18e6ee3a2
 sha384 5f97de96a1d9281b1ee4befd52ce1219a3bd703149fbbabac67265c6fbafeac8b3fb784e29e9c6bd765f76e205f4c886
 sha512 10c663e1006a6c7285b0711ee8fc493fc6af055e112d9f7f474591f5ce2d67844e83ed752aa24fda3ec626e5cbfcda9e16d8daf6f0c631dac908ef503fbb936d
-1
+true
 5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843
 d5d1ed05121417247616cfc8378f360a39da7cfa 63530468a04e386459855da0063b6596
 40aff2e9d2d8922e47afd4648e6967497158785fbd1da870e7110266bf944880 64 16
-1
+true
  00010f10abff
- 1
-MA== 1
-MDE= 1
-MDEy 1
-MDEyMw== 1
-MDEyMzQ= 1
-MDEyMzQ1 1
-MDEyMzQ1Ng== 1
-MDEyMzQ1Njc= 1
-MDEyMzQ1Njc4 1
+ true
+MA== true
+MDE= true
+MDEy true
+MDEyMw== true
+MDEyMzQ= true
+MDEyMzQ1 true
+MDEyMzQ1Ng== true
+MDEyMzQ1Njc= true
+MDEyMzQ1Njc4 true
 aMOpbGxvLCDkuJbnlYwg8J+YgA== héllo, 世界 😀
 AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dbX2Nna29zd3t/g4eLj5OXm5+jp6uvs7e7v8PHy8/T19vf4+fr7/P3+/w==
-0  1
-1 AA== 1
-2 AAE= 1
-3 AAEC 1
-4 AAECAw== 1
-5 AAECAwQ= 1
-6 AAECAwQF 1
-7 AAECAwQFBg== 1
-1
-1 1 fbff
+0  true
+1 AA== true
+2 AAE= true
+3 AAEC true
+4 AAECAw== true
+5 AAECAwQ= true
+6 AAECAwQF true
+7 AAECAwQFBg== true
+true
+true true fbff
 hi hi  0
 base64_decode_bytes: the text ends partway through a byte
 base64_decode_bytes: wrong '=' padding at the end
@@ -64,31 +64,31 @@ base64_decode_bytes: a character that isn't base64 at position 3
 base64_decode_bytes: a non-ASCII character at position 3
 base64_decode_bytes: wrong '=' padding at the end
 base64_decode: the decoded bytes aren't UTF-8 text; use base64_decode_bytes for binary data
-1 0
-1 0
-1 0
-1 0
-1 0
-1 0
-1 0
-1 0
-1 0
-1 0
-1 0
-1 0
-1 0
-1
-60 $2y$04$ 1 1 1 0
+true false
+true false
+true false
+true false
+true false
+true false
+true false
+true false
+true false
+true false
+true false
+true false
+true false
+true
+60 $2y$04$ true true true false
 $2y$12$
-0
-0
-0
-0
-0
-0
-0
-0
-0
+false
+false
+false
+false
+false
+false
+false
+false
+false
 bcrypt_hash: the cost must be 4 to 31, found 3
 bcrypt_hash: the cost must be 4 to 31, found 32
 bcrypt_hash: bcrypt only uses the first 72 bytes of a password, and this one is longer

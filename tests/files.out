@@ -3,10 +3,10 @@
 12
 héllo
 wörld
-1
-1
-1
-0
+true
+true
+true
+false
 FileNotFoundException: cannot read tests/no-such-file.txt: No such file or directory
 IOException: cannot read tests: Is a directory
 IOException: cannot write tests/no-such-dir/out.txt: No such file or directory

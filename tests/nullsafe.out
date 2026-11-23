@@ -1,6 +1,6 @@
-Ada London 1 1
-London #3 1
-1 no city
+Ada London true true
+London #3 true
+true no city
 3 -1 0
 Ada
 fallback evaluated

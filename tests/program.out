@@ -1,5 +1,5 @@
 program: tests/program.qiq arguments: 2
 1 Ada
 2 Grace Hopper
-home set: 1 verbose: 0 unset
+home set: true verbose: false unset
 buffered line

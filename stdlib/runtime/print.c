@@ -86,8 +86,7 @@ static void qiq_write_value(const char *descriptor, uint64_t bits, int nested) {
         printf("%u", (unsigned)(uint8_t)bits);
         return;
     case 'b':
-        if (nested) fputs(bits ? "true" : "false", stdout);
-        else putchar(bits ? '1' : '0');
+        fputs(bits ? "true" : "false", stdout);
         return;
     case 'n':
         fputs("null", stdout);

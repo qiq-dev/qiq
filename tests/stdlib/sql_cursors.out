@@ -1,11 +1,11 @@
 10 n10
 3 11 13
-986 499409 1 0
+986 499409 true 0
 600 400 0
 0
-after close: 1
+after close: true
 db usable: 1000
-update cursor: 1 x
+update cursor: true x
 error: cursor: the SQL has 1 placeholder (?), but 0 values were given
 error: no such table: nope
 during: 7
