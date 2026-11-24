@@ -1,0 +1,54 @@
+// array_filter, array_map, array_reduce, array_find, array_find_index,
+// array_any, array_all, map_filter, and map_map.
+class Product {
+    function __construct(public string name, public double price, public int stock) {}
+}
+Product[] products = [new Product("Tea", 3.5, 12), new Product("Cake", 12.0, 0), new Product("Jam", 4.25, 3)];
+int[] numbers = [5, -2, 8, 0, -7, 3];
+
+// Filtering keeps the elements in order; the input isn't changed.
+print(array_filter(numbers, fn(n) => n > 0), numbers);
+Product[] inStock = array_filter(products, fn(p) => p->stock > 0);
+print(len(inStock), inStock[1]->name);
+
+// Mapping: the result's type is the callback's.
+string[] labels = array_map(numbers, fn(n) => f"#{n}");
+double[] prices = array_map(products, fn(p) => p->price);
+print(labels, prices, array_map([1, 2, 3], fn(n) => [n, n * n]));
+
+// Reducing: the accumulator's type is the initial value's.
+print(array_reduce(numbers, fn(total, n) => total + n, 0));
+print(array_reduce(products, fn(names, p) => names + p->name + ";", ""));
+map[string, int] counts = array_reduce(["a", "b", "a"], fn(seen, word) => map_merge(seen, {word => (seen[word] ?? 0) + 1}), {});
+print(counts);
+
+// Finding: the first match only.
+Product cheap = array_find(products, fn(p) => p->price < 5.0);
+Product none = array_find(products, fn(p) => p->price > 100.0);
+print(cheap->name, none == null, array_find(["x", "yy", "zz"], fn(s) => len(s) == 2));
+print(array_find_index(numbers, fn(n) => n < 0), array_find_index(numbers, fn(n) => n > 100));
+print(array_any(numbers, fn(n) => n == 0), array_all(numbers, fn(n) => n > -10), array_all(numbers, fn(n) => n > 0));
+int[] empty = [];
+print(array_any(empty, fn(n) => true), array_all(empty, fn(n) => false), array_reduce(empty, fn(a, n) => a + n, 42));
+
+// Maps: filter by key and value, map the values.
+map[string, int] stock = {"tea" => 12, "cake" => 0, "jam" => 3};
+print(map_filter(stock, fn(item, count) => count > 0), map_filter(stock, fn(item, count) => str_starts_with(item, "t")));
+print(map_map(stock, fn(count) => count * 2), map_map(stock, fn(count) => count > 0));
+
+// Named functions and function values as callbacks, and captured variables.
+function isEven(int n): bool {
+    return n % 2 == 0;
+}
+function(int): int square = fn(n) => n * n;
+int limit = 4;
+print(array_filter(numbers, isEven), array_map(numbers, square), array_filter(numbers, fn(n) => n > limit));
+// Nested, and typed parameters too.
+print(array_map(array_filter(numbers, fn(n) => n > 0), fn(int n) => n * 10));
+
+// An exception from a callback stops the call.
+try {
+    print(array_map(numbers, fn(n) => 10 / n));
+} catch (DivisionByZeroException e) {
+    print("error:", e->getMessage());
+}

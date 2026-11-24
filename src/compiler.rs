@@ -3634,7 +3634,7 @@ struct Emitter {
 /// Built-in conversion functions (see Emitter::emit_conversion).
 /// Functions built into the compiler rather than declared in the standard
 /// library, because each accepts several types.
-const CONVERSION_FUNCTIONS: [&str; 26] = [
+const CONVERSION_FUNCTIONS: [&str; 35] = [
     // An f-string's expression (see lex_fstring).
     "__interpolate",
     "to_int",
@@ -3656,6 +3656,15 @@ const CONVERSION_FUNCTIONS: [&str; 26] = [
     "map_diff",
     "map_intersect",
     "map_flip",
+    "array_filter",
+    "array_map",
+    "array_reduce",
+    "array_find",
+    "array_find_index",
+    "array_any",
+    "array_all",
+    "map_filter",
+    "map_map",
     "array_push",
     "array_pop",
     "array_shift",
@@ -6955,6 +6964,12 @@ impl Emitter {
         if matches!(name, "map_merge" | "map_diff_keys" | "map_intersect_keys" | "map_diff" | "map_intersect" | "map_flip") {
             return self.emit_map_combination(name, arguments, variables, body);
         }
+        if matches!(
+            name,
+            "array_filter" | "array_map" | "array_reduce" | "array_find" | "array_find_index" | "array_any" | "array_all" | "map_filter" | "map_map"
+        ) {
+            return self.emit_with_callback(name, arguments, None, variables, body);
+        }
         if name == "json_decode" {
             return Err(
                 "json_decode needs to know the type to decode into: use it where the type is known, such as `User user = json_decode(text);` or `int[] ids = json_decode(text);`"
@@ -8142,6 +8157,211 @@ impl Emitter {
     /// The map functions: `map_key_exists(key, map)`, `map_keys(map)`,
     /// `map_values(map)`, `in_map(value, map)`, and `unset(map[key])`. Built
     /// in because they work with any key and value types.
+    /// A callback for array_filter and the rest: an anonymous function whose
+    /// untyped parameters get `parameters` (its return type is inferred
+    /// unless `returns` gives it), or any other expression whose type must be
+    /// a function taking `parameters`.
+    fn emit_callback(
+        &mut self,
+        function: &str,
+        expression: &Expr,
+        parameters: &[ValueType],
+        returns: Option<ValueType>,
+        variables: &HashMap<String, Value>,
+        body: &mut String,
+    ) -> Result<Value, String> {
+        let shown = |this: &Self| {
+            let names: Vec<String> = parameters.iter().map(|parameter| this.type_name(*parameter)).collect();
+            format!("({})", names.join(", "))
+        };
+        if let Expr::Closure(closure) = expression {
+            if closure.parameters.len() != parameters.len() {
+                return Err(format!(
+                    "{function}'s callback takes {} parameter{} {}, but this function has {}",
+                    parameters.len(),
+                    if parameters.len() == 1 { "" } else { "s" },
+                    shown(self),
+                    closure.parameters.len()
+                ));
+            }
+            let mut filled = (**closure).clone();
+            for (parameter, value_type) in filled.parameters.iter_mut().zip(parameters) {
+                if parameter.value_type == ValueType::Void {
+                    parameter.value_type = *value_type;
+                }
+            }
+            let expected = returns.map(|return_type| function_type_of(&mut self.function_types, FunctionType { parameters: parameters.to_vec(), return_type }));
+            let value = self.emit_closure(&filled, expected, variables, body)?;
+            return self.check_callback(function, value, parameters, returns);
+        }
+        let value = self.emit_expression(expression, variables, body)?;
+        self.check_callback(function, value, parameters, returns)
+    }
+
+    fn check_callback(&self, function: &str, value: Value, parameters: &[ValueType], returns: Option<ValueType>) -> Result<Value, String> {
+        let ValueType::Function(type_id) = value.value_type else {
+            return Err(format!("{function} expects a function as its callback, found {}", self.type_name(value.value_type)));
+        };
+        let function_type = &self.function_types[type_id as usize];
+        let wanted = format!(
+            "function({}): {}",
+            parameters.iter().map(|parameter| self.type_name(*parameter)).collect::<Vec<_>>().join(", "),
+            self.type_name(returns.unwrap_or(function_type.return_type))
+        );
+        if function_type.parameters != parameters || returns.is_some_and(|returns| function_type.return_type != returns) {
+            return Err(format!("{function} expects a callback of type {wanted}, found {}", self.type_name(value.value_type)));
+        }
+        Ok(value)
+    }
+
+    /// array_filter, array_map, array_reduce, array_find, array_find_index,
+    /// array_any, array_all, map_filter, and map_map: each is compiled as a
+    /// foreach loop that calls the callback (typed from the array's elements,
+    /// or the map's keys and values) and keeps its result in a hidden
+    /// variable, so element access, reference counts, exceptions, and a
+    /// callback that changes the array behave as in a loop written by hand.
+    fn emit_with_callback(
+        &mut self,
+        name: &str,
+        arguments: &[Expr],
+        expected: Option<ValueType>,
+        variables: &HashMap<String, Value>,
+        body: &mut String,
+    ) -> Result<Value, String> {
+        if arguments.iter().any(|argument| matches!(argument, Expr::NamedArgument(..))) {
+            return Err(format!("{name} takes no named arguments"));
+        }
+        let count = if name == "array_reduce" { 3 } else { 2 };
+        if arguments.len() != count {
+            let usage = match name {
+                "array_reduce" => "an array, a callback, and the initial value",
+                _ if name.starts_with("map_") => "a map and a callback",
+                _ => "an array and a callback",
+            };
+            return Err(format!("{name} expects {usage}, found {} argument{}", arguments.len(), if arguments.len() == 1 { "" } else { "s" }));
+        }
+        let collection = self.emit_expression(&arguments[0], variables, body)?;
+        let is_map = name.starts_with("map_");
+        let (key_type, element_type) = if is_map {
+            match collection.value_type {
+                ValueType::Map(id) => (Some(self.map_types[id as usize].key_type), self.map_types[id as usize].value_type),
+                other => return Err(format!("{name} expects a map, found {}", self.type_name(other))),
+            }
+        } else {
+            match self.element_of(collection.value_type) {
+                Some(element) => (None, element),
+                None => return Err(format!("{name} expects an array, found {}", self.type_name(collection.value_type))),
+            }
+        };
+        // The initial value of array_reduce, evaluated before the callback.
+        let initial = if name == "array_reduce" {
+            // An empty [] or {} takes the type the result is used as.
+            let value = self.emit_expecting(&arguments[2], expected, variables, body)?;
+            if matches!(value.value_type, ValueType::Null | ValueType::Void) {
+                return Err("array_reduce needs an initial value whose type it can tell: write a typed value, or a variable, rather than null".to_string());
+            }
+            Some(value)
+        } else {
+            None
+        };
+        let (parameters, returns): (Vec<ValueType>, Option<ValueType>) = match name {
+            "array_map" => (vec![element_type], None),
+            "map_map" => (vec![element_type], None),
+            "array_reduce" => {
+                let accumulator = initial.as_ref().expect("evaluated above").value_type;
+                (vec![accumulator, element_type], Some(accumulator))
+            }
+            "map_filter" => (vec![key_type.expect("a map"), element_type], Some(ValueType::Bool)),
+            _ => (vec![element_type], Some(ValueType::Bool)),
+        };
+        let callback = self.emit_callback(name, &arguments[1], &parameters, returns, variables, body)?;
+        let callback_returns = match callback.value_type {
+            ValueType::Function(id) => self.function_types[id as usize].return_type,
+            _ => unreachable!("checked by emit_callback"),
+        };
+        if matches!(name, "array_map" | "map_map") && callback_returns == ValueType::Void {
+            return Err(format!("{name}'s callback must return a value, which becomes the new {}", if is_map { "map's value" } else { "array's element" }));
+        }
+        if name == "array_find" && !is_reference(element_type) {
+            let type_name = self.type_name(element_type);
+            let article = if type_name.starts_with(['a', 'e', 'i', 'o', 'u']) { "an" } else { "a" };
+            return Err(format!(
+                "array_find returns null when nothing matches, which {article} {type_name} can't be; use array_find_index, which returns the index or -1"
+            ));
+        }
+        // The result: its type, and its starting value.
+        let result_type = match name {
+            "array_filter" | "map_filter" => collection.value_type,
+            "array_map" => self.array_of(callback_returns),
+            "map_map" => ValueType::Map(self.map_type_id(MapType { key_type: key_type.expect("a map"), value_type: callback_returns })),
+            "array_reduce" => initial.as_ref().expect("evaluated above").value_type,
+            "array_find" => element_type,
+            "array_find_index" => ValueType::Int,
+            _ => ValueType::Bool,
+        };
+        let start = match name {
+            "array_filter" | "array_map" => self.emit_expecting(&Expr::ArrayLiteral(Vec::new()), Some(result_type), variables, body)?,
+            "map_filter" | "map_map" => self.emit_expecting(&Expr::MapLiteral(Vec::new()), Some(result_type), variables, body)?,
+            "array_reduce" => initial.expect("evaluated above"),
+            "array_find" => self.emit_expecting(&Expr::Null, Some(result_type), variables, body)?,
+            "array_find_index" => self.emit_expression(&Expr::Number(-1), variables, body)?,
+            "array_any" => self.emit_expression(&Expr::Boolean(false), variables, body)?,
+            _ => self.emit_expression(&Expr::Boolean(true), variables, body)?,
+        };
+        let result = self.bind_variable(Value { value_type: result_type, ..start }, body);
+        let mut scope = variables.clone();
+        scope.insert("#fn.collection".to_string(), Value { slot: None, ..collection });
+        scope.insert("#fn.callback".to_string(), Value { slot: None, ..callback });
+        scope.insert("#fn.result".to_string(), result.clone());
+        // The loop.
+        let (line, column) = self.position.unwrap_or((0, 0));
+        let statement = |kind: StatementKind| Statement { kind, line, column };
+        let variable = |name: &str| Expr::Variable(name.to_string());
+        let call = |arguments: Vec<Expr>| Expr::Call("#fn.callback".to_string(), arguments);
+        let item = variable("#fn.item");
+        let body_statements = match name {
+            "array_filter" => vec![statement(StatementKind::If {
+                condition: call(vec![item.clone()]),
+                then_body: vec![statement(StatementKind::Expression(Expr::Call("array_push".to_string(), vec![variable("#fn.result"), item.clone()])))],
+                else_body: Vec::new(),
+            })],
+            "array_map" => vec![statement(StatementKind::Expression(Expr::Call("array_push".to_string(), vec![variable("#fn.result"), call(vec![item.clone()])])))],
+            "array_reduce" => vec![statement(StatementKind::Assign("#fn.result".to_string(), call(vec![variable("#fn.result"), item.clone()])))],
+            "array_find" | "array_find_index" | "array_any" | "array_all" => {
+                let found = match name {
+                    "array_find" => item.clone(),
+                    "array_find_index" => variable("#fn.index"),
+                    "array_any" => Expr::Boolean(true),
+                    _ => Expr::Boolean(false),
+                };
+                let condition = if name == "array_all" { Expr::Not(Box::new(call(vec![item.clone()]))) } else { call(vec![item.clone()]) };
+                vec![statement(StatementKind::If {
+                    condition,
+                    then_body: vec![statement(StatementKind::Assign("#fn.result".to_string(), found)), statement(StatementKind::Break)],
+                    else_body: Vec::new(),
+                })]
+            }
+            "map_filter" => vec![statement(StatementKind::If {
+                condition: call(vec![variable("#fn.key"), item.clone()]),
+                then_body: vec![statement(StatementKind::AssignIndex(variable("#fn.result"), variable("#fn.key"), item.clone()))],
+                else_body: Vec::new(),
+            })],
+            _ => vec![statement(StatementKind::AssignIndex(variable("#fn.result"), variable("#fn.key"), call(vec![item.clone()])))],
+        };
+        let key_name = if is_map { Some("#fn.key".to_string()) } else if name == "array_find_index" { Some("#fn.index".to_string()) } else { None };
+        let loop_statement = statement(StatementKind::Foreach {
+            iterable: variable("#fn.collection"),
+            key_name,
+            value_name: "#fn.item".to_string(),
+            body: body_statements,
+        });
+        let (ir, _) = self.emit_block(&[loop_statement], &scope, ValueType::Void, false)?;
+        body.push_str(&ir);
+        // The result, read from its hidden variable.
+        let value = self.emit_expression(&variable("#fn.result"), &scope, body)?;
+        Ok(value)
+    }
+
     /// map_merge, map_diff_keys, map_intersect_keys, map_diff, map_intersect,
     /// and map_flip: each makes a new map from maps whose types fit (see
     /// map.c). map_merge and map_diff and map_intersect need maps of the same
@@ -8767,6 +8987,16 @@ impl Emitter {
             // json_decode decodes into the type its result is used as.
             Expr::Call(name, arguments) if name == "json_decode" && expected.is_some_and(|expected| !matches!(expected, ValueType::Void | ValueType::Null)) => {
                 self.emit_json_decode(arguments, expected.expect("checked above"), variables, body)
+            }
+            // array_reduce's initial value can take the type the result is
+            // used as, for an empty [] or {}.
+            Expr::Call(name, arguments)
+                if name == "array_reduce"
+                    && !self.module_functions[self.current_module].contains_key(name)
+                    && !variables.contains_key(name)
+                    && expected.is_some_and(|expected| !matches!(expected, ValueType::Void | ValueType::Null)) =>
+            {
+                self.emit_with_callback(name, arguments, expected, variables, body)
             }
             // So does std/csv's csv_decode.
             Expr::Call(name, arguments)
@@ -12241,6 +12471,20 @@ mod tests {
         assert!(ir.contains("@qiq_stdlib___regex_scan"));
         // A pattern without a subject is a type error.
         assert!(compile_source("import preg_match from \"std/regex\"; preg_match(\"a\");").is_err());
+    }
+
+    #[test]
+    fn callback_functions_check_their_types() {
+        let error = |source: &str| compile_source(source).unwrap_err();
+        // Result types come from the callback, or array_reduce's initial value.
+        assert!(compile_source("string[] s = array_map([1, 2], fn(n) => to_string(n)); int t = array_reduce([1], fn(a, n) => a + n, 0); map[string, bool] m = map_map({\"a\" => 1}, fn(v) => v > 0);").is_ok());
+        assert!(compile_source("map[string, int] counts = array_reduce([\"a\"], fn(seen, w) => seen, {});").is_ok());
+        assert!(error("int[] wrong = array_map([1], fn(n) => to_string(n));").contains("string[]"));
+        assert!(error("print(array_filter([1, 2], fn(a, b) => true));").contains("array_filter's callback takes 1 parameter (int), but this function has 2"));
+        assert!(error("print(array_find([1, 2], fn(n) => n > 1));").contains("which an int can't be; use array_find_index"));
+        assert!(error("print(map_filter({\"a\" => 1}, fn(v) => true));").contains("map_filter's callback takes 2 parameters (string, int)"));
+        assert!(error("function(string): bool f = fn(s) => true; print(array_filter([1], f));").contains("expects a callback of type function(int): bool, found function(string): bool"));
+        assert!(error("print(array_reduce([1], fn(a, n) => a, null));").contains("array_reduce needs an initial value whose type it can tell"));
     }
 
     #[test]
