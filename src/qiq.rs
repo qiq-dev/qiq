@@ -27,6 +27,7 @@ Usage:
   qiq run <file.qiq> [arguments...]          compile and run a program
   qiq build <file.qiq> [-o <output>] [--emit-llvm]
                                              compile a program to an executable
+  qiq test [paths...] [-run <text>] [-v]     run the test_ functions in files or directories
   qiq check <file.qiq> [--stdin]             report compile errors without building
                                              (--stdin: read the file's text from stdin)
   qiq serve [directory] [--host <host>] [--port <port>] [--workers <n>]
@@ -41,6 +42,11 @@ Usage:
 runs on any x86-64 Linux machine without qiq or any libraries installed. qiq
 needs no other tools: LLVM, the runtime, libc, and the linker are built in.
 --emit-llvm also writes the generated LLVM IR next to the output (<output>.ll).
+
+`qiq test` runs each top-level function named test_... that takes a T from
+std/testing, in the files given, or in every .qiq file below the current
+directory that has one. A file's own top-level code doesn't run. -run runs only
+the tests whose names contain <text>; -v lists every test, not just failures.
 
 `qiq serve` serves the current directory (or the one given) at
 http://127.0.0.1:8000/, logging each request. --host 0.0.0.0 makes it
@@ -271,6 +277,121 @@ fn run_executable(executable: &Path, name: &str, args: impl Iterator<Item = Stri
     Ok(status.code().unwrap_or_else(|| 128 + status.signal().unwrap_or(0)))
 }
 
+/// `qiq test [paths...] [-run <text>] [-v]`: builds each file with tests in
+/// test mode (see compiler::compile_tests) and runs it in the file's own
+/// directory, as Go does, reporting each file as ok or FAIL. Exits with 1 if
+/// any test failed or a file didn't compile.
+fn command_test(mut args: impl Iterator<Item = String>) -> Result<i32, String> {
+    let mut paths = Vec::new();
+    let mut filter = None;
+    let mut verbose = false;
+    while let Some(argument) = args.next() {
+        match argument.as_str() {
+            "-run" | "--run" => filter = Some(args.next().ok_or("missing text after -run")?),
+            "-v" | "--verbose" => verbose = true,
+            _ if argument.starts_with('-') => return Err(format!("unknown option '{argument}'\n\n{USAGE}")),
+            _ => paths.push(argument),
+        }
+    }
+    let explicit = !paths.is_empty();
+    if paths.is_empty() {
+        paths.push(".".to_string());
+    }
+    // Files named on the command line, and those found in directories that
+    // declare a test function.
+    let mut files = Vec::new();
+    for path in &paths {
+        let path = Path::new(path);
+        if path.is_dir() {
+            find_test_files(path, &mut files)?;
+        } else if path.is_file() {
+            files.push(path.to_path_buf());
+        } else {
+            return Err(format!("{} doesn't exist", path.display()));
+        }
+    }
+    if files.is_empty() {
+        println!("qiq: no test files found (a test is a function named test_... that takes a T from std/testing)");
+        return Ok(0);
+    }
+    let work = TempDir::new("test")?;
+    let mut failed = false;
+    for (index, file) in files.iter().enumerate() {
+        let shown = file.strip_prefix("./").unwrap_or(file).display().to_string();
+        let start = std::time::Instant::now();
+        let program = match compiler::compile_tests(&file.display().to_string(), filter.as_deref(), verbose) {
+            Ok(Some(program)) => program,
+            Ok(None) => {
+                if explicit {
+                    println!("?   \t{shown}\t[no tests]");
+                }
+                continue;
+            }
+            Err(error) => {
+                eprintln!("qiq: {error}");
+                println!("FAIL\t{shown}\t[build failed]");
+                failed = true;
+                continue;
+            }
+        };
+        if program.tests.is_empty() {
+            println!("ok  \t{shown}\t[no tests match -run]");
+            continue;
+        }
+        let executable = work.0.join(format!("test{index}"));
+        if let Err(error) = build_ir(&program.ir, &executable, None) {
+            eprintln!("qiq: {error}");
+            println!("FAIL\t{shown}\t[build failed]");
+            failed = true;
+            continue;
+        }
+        let directory = file.parent().filter(|parent| !parent.as_os_str().is_empty()).unwrap_or(Path::new("."));
+        use std::os::unix::process::CommandExt;
+        let status = process::Command::new(&executable)
+            .arg0(file.file_name().unwrap_or_default())
+            .current_dir(directory)
+            .status()
+            .map_err(|error| format!("could not run the tests of {shown}: {error}"))?;
+        let seconds = start.elapsed().as_secs_f64();
+        if status.success() {
+            println!("ok  \t{shown}\t{seconds:.2}s");
+        } else {
+            println!("FAIL\t{shown}\t{seconds:.2}s");
+            failed = true;
+        }
+    }
+    Ok(if failed { 1 } else { 0 })
+}
+
+/// The .qiq files below `directory` that declare a test function, in order,
+/// skipping hidden directories and build output.
+fn find_test_files(directory: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(directory)
+        .map_err(|error| format!("could not read {}: {error}", directory.display()))?
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .collect();
+    entries.sort();
+    for path in entries {
+        let name = path.file_name().unwrap_or_default().to_string_lossy().to_string();
+        if path.is_dir() {
+            if !name.starts_with('.') && name != "target" && name != "node_modules" {
+                find_test_files(&path, files)?;
+            }
+        } else if name.ends_with(".qiq") {
+            let declares_test = std::fs::read_to_string(&path).is_ok_and(|source| {
+                source.lines().any(|line| {
+                    let line = line.trim_start();
+                    line.starts_with("function test_") || line.starts_with("private function test_")
+                })
+            });
+            if declares_test {
+                files.push(path);
+            }
+        }
+    }
+    Ok(())
+}
+
 /// The program behind `qiq serve`; its arguments are the directory, host,
 /// port, and number of workers.
 const SERVE_PROGRAM: &str = r#"
@@ -374,6 +495,7 @@ fn run() -> Result<i32, String> {
         "run" => command_run(args),
         "build" => command_build(args).map(|()| 0),
         "check" => command_check(args).map(|()| 0),
+        "test" => command_test(args),
         "serve" | "server" => command_serve(args),
         "mod" => command_mod(args).map(|()| 0),
         "get" => fetch::command_get(args).map(|()| 0),

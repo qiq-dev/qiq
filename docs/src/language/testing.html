@@ -1,0 +1,86 @@
+<!-- title: Testing -->
+<h1>Testing</h1>
+<p>A test is a top-level function whose name starts with <code>test_</code> and which takes a <code>T</code> from <code>std/testing</code>. <code>qiq test</code> finds the tests, runs each one, and reports the ones that fail, like Go's <code>go test</code>.</p>
+
+```qiq
+import T from "std/testing";
+import argv from "std/os";
+
+function slug(string title): string {
+    return str_replace(" ", "-", strtolower(trim(title)));
+}
+
+print(slug(argv()[1]));
+
+function test_slug(T t): void {
+    t->equal(slug("Hello World"), "hello-world");
+    t->equal(slug("  Trim Me "), "trim-me");
+}
+```
+
+```sh
+qiq run slug.qiq "My First Post"   # runs the program: the test is just an unused function
+qiq test slug.qiq                  # runs the test instead of the program
+```
+
+<p>Tests can sit in the program they test, as here, which suits a script of a single file. A program of several files can keep them in separate files, such as <code>money_test.qiq</code> next to <code>money.qiq</code>, which import what they test. <code>qiq build</code> and <code>qiq run</code> ignore test functions, and the optimizer drops them, so they add nothing to an executable.</p>
+
+<h2>Running tests</h2>
+
+```sh
+qiq test                       # every .qiq file with tests, below the current directory
+qiq test slug.qiq money_test.qiq
+qiq test -run slug             # only tests whose names contain "slug"
+qiq test -v                    # list every test, not just the ones that fail
+```
+
+<ul>
+<li>Each file is compiled as a program of its own, without its top-level code: <code>main</code> calls the file's tests, in the order they're written.</li>
+<li>A test runs in its file's directory, so it can read files kept next to it.</li>
+<li>A failed assertion stops its test, and the next test runs. So does an exception that escapes a test, which fails it.</li>
+<li><code>qiq test</code> exits with status 1 if any test failed or a file didn't compile, for use in scripts and CI.</li>
+</ul>
+
+<p>A failure says where and why. Had <code>test_slug</code> also checked <code>t-&gt;equal(slug("Two  Spaces"), "two-spaces")</code>, which this <code>slug</code> gets wrong, <code>qiq test</code> would report:</p>
+
+```text
+--- FAIL: test_slug (0.00s)
+    slug.qiq:13: expected "two-spaces", found "two--spaces"
+0 passed, 1 failed
+FAIL	slug.qiq	0.74s
+```
+
+<h2>Assertions</h2>
+<p>Each assertion knows the file and line it's called from, which a failure reports.</p>
+<table>
+<thead><tr><th>Method</th><th>Fails when</th></tr></thead>
+<tbody>
+<tr><td><code>t-&gt;equal(actual, expected)</code></td><td>The values differ, as <code>==</code> compares them: arrays and maps by their contents, objects by identity</td></tr>
+<tr><td><code>t-&gt;notEqual(actual, unexpected)</code></td><td>The values are equal</td></tr>
+<tr><td><code>t-&gt;isTrue(condition, message)</code>, <code>t-&gt;isFalse(condition, message)</code></td><td>The condition isn't true (or false); the message is optional</td></tr>
+<tr><td><code>t-&gt;near(actual, expected, tolerance)</code></td><td>Two doubles differ by more than the tolerance (10<sup>-9</sup> by default), for results of arithmetic such as <code>0.1 + 0.2</code></td></tr>
+<tr><td><code>t-&gt;throws(fn() =&gt; ..., "ExceptionClass")</code></td><td>Calling the function doesn't throw an exception of that class, by name (any exception for <code>"Exception"</code>, the default)</td></tr>
+<tr><td><code>t-&gt;fail(message)</code></td><td>Always</td></tr>
+</tbody>
+</table>
+<p><code>equal</code> and <code>notEqual</code> take any two values of the same type, and comparing values of different types, such as <code>t-&gt;equal(count, "3")</code>, is a compile error. A failure shows both values as <code>print</code> writes them inside an array, with strings quoted, so <code>"3"</code> and <code>3</code> look different, and with doubles in full: <code>expected 0.3, found 0.30000000000000004</code>.</p>
+<p>Two more methods don't fail: <code>t-&gt;log(message)</code> notes something, shown if the test fails (or with <code>-v</code>), and <code>t-&gt;skip(reason)</code> stops the test, which counts as skipped. <code>t-&gt;name()</code> is the test's function name.</p>
+
+<h2>Table-driven tests</h2>
+<p>Many cases of one check fit a loop over an array:</p>
+
+```qiq
+import T from "std/testing";
+
+class Case {
+    function __construct(public string input, public string want) {}
+}
+
+function test_slug_cases(T t): void {
+    Case[] cases = [new Case("A B", "a-b"), new Case("x", "x"), new Case("", "")];
+    foreach (cases as c) {
+        t->log(f"input \"{c->input}\"");
+        t->equal(slug(c->input), c->want);
+    }
+}
+```

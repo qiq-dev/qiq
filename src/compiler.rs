@@ -3906,7 +3906,7 @@ impl Emitter {
             ir.push_str(&self.emit_dispatch_table(*owner, method_name, Some(supplied)));
         }
         ir.push_str(
-            "\ndeclare i32 @printf(ptr, ...)\ndeclare i32 @strcmp(ptr, ptr)\ndeclare ptr @calloc(i64, i64)\ndeclare ptr @qiq_map_new(i32, i32)\ndeclare void @qiq_retain(ptr)\ndeclare void @qiq_release(ptr)\ndeclare ptr @qiq_object_new(i64, i64)\ndeclare void @qiq_map_set(ptr, i64, i64)\ndeclare i64 @qiq_map_get(ptr, i64)\ndeclare i64 @qiq_map_iteration_end(ptr)\ndeclare i64 @qiq_map_version(ptr)\ndeclare zeroext i1 @qiq_map_entry_live(ptr, i64, i64)\ndeclare zeroext i1 @qiq_map_find(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_map_has(ptr, i64)\ndeclare void @qiq_map_remove(ptr, i64)\ndeclare ptr @qiq_map_keys(ptr, i64, i32)\ndeclare ptr @qiq_map_values(ptr, i64, i32)\ndeclare zeroext i1 @qiq_map_contains_value(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_values_equal(ptr, ptr, ptr)\ndeclare i64 @qiq_map_key_at(ptr, i64)\ndeclare i64 @qiq_map_value_at(ptr, i64)\ndeclare i64 @qiq_string_len(ptr)\ndeclare ptr @qiq_sprintf(ptr, ptr, ptr, i64)\ndeclare void @qiq_bind_values(ptr, ptr, i64)\ndeclare ptr @qiq_json_encode(ptr, i64, i1 zeroext)\ndeclare i64 @qiq_json_decode(ptr, ptr)\ndeclare i32 @qiq_string_equality(ptr, ptr)\ndeclare i32 @qiq_string_compare(ptr, ptr)\ndeclare ptr @qiq_string_char_at(ptr, i64)\ndeclare ptr @qiq_string_concat(ptr, ptr)\ndeclare i64 @qiq_int_divide(i64, i64)\ndeclare i64 @qiq_int_modulo(i64, i64)\ndeclare i64 @qiq_int_power(i64, i64)\ndeclare i64 @qiq_int_power_unchecked(i64, i64)\ndeclare i64 @qiq_int_shift_left(i64, i64)\ndeclare i64 @qiq_int_shift_right(i64, i64)\ndeclare double @llvm.pow.f64(double, double)\ndeclare double @llvm.fabs.f64(double)\ndeclare i64 @qiq_math_min_int(ptr)\ndeclare i64 @qiq_math_max_int(ptr)\ndeclare double @qiq_math_min_double(ptr)\ndeclare double @qiq_math_max_double(ptr)\ndeclare i64 @qiq_math_clamp_int(i64, i64, i64)\ndeclare double @qiq_math_clamp_double(double, double, double)\ndeclare void @qiq_uncaught(ptr, ptr)\ndeclare ptr @qiq_array_new(i64, i64, i32)\ndeclare void @qiq_set_arguments(i32, ptr)\ndeclare void @qiq_check_callable(ptr)\ndeclare void @qiq_array_push(ptr, i64, i64)\ndeclare i64 @qiq_range_plan(i64, i64, i64, i1 zeroext, ptr)\ndeclare ptr @qiq_range_int(i64, i64, i64, i1 zeroext)\ndeclare ptr @qiq_range_count(i64)\ndeclare ptr @qiq_range_double(double, double, double, i1 zeroext)\ndeclare ptr @qiq_range_char(ptr, ptr, i64, i1 zeroext)\ndeclare i64 @qiq_array_pop(ptr, i64)\ndeclare i64 @qiq_array_shift(ptr, i64)\ndeclare void @qiq_array_insert(ptr, i64, i64, i64)\ndeclare ptr @qiq_array_splice(ptr, i64, i64, i64, i1 zeroext, ptr)\ndeclare i64 @qiq_array_length(ptr)\ndeclare i64 @qiq_len_string(ptr)\ndeclare i64 @qiq_len_array(ptr)\ndeclare i64 @qiq_len_map(ptr)\ndeclare void @qiq_array_check_index(ptr, i64)\ndeclare void @qiq_print_value(ptr, i64)\ndeclare void @qiq_print_space()\ndeclare void @qiq_print_newline()\ndeclare i64 @qiq_double_to_int(double)\ndeclare zeroext i8 @qiq_int_to_byte(i64)\ndeclare i64 @qiq_string_to_int(ptr)\ndeclare double @qiq_string_to_double(ptr)\ndeclare ptr @qiq_int_to_string(i64)\ndeclare ptr @qiq_double_to_string(double)\n",
+            "\ndeclare i32 @printf(ptr, ...)\ndeclare i32 @strcmp(ptr, ptr)\ndeclare ptr @calloc(i64, i64)\ndeclare ptr @qiq_map_new(i32, i32)\ndeclare void @qiq_retain(ptr)\ndeclare void @qiq_release(ptr)\ndeclare ptr @qiq_object_new(i64, i64)\ndeclare void @qiq_map_set(ptr, i64, i64)\ndeclare i64 @qiq_map_get(ptr, i64)\ndeclare i64 @qiq_map_iteration_end(ptr)\ndeclare i64 @qiq_map_version(ptr)\ndeclare zeroext i1 @qiq_map_entry_live(ptr, i64, i64)\ndeclare zeroext i1 @qiq_map_find(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_map_has(ptr, i64)\ndeclare void @qiq_map_remove(ptr, i64)\ndeclare ptr @qiq_map_keys(ptr, i64, i32)\ndeclare ptr @qiq_map_values(ptr, i64, i32)\ndeclare zeroext i1 @qiq_map_contains_value(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_values_equal(ptr, ptr, ptr)\ndeclare i64 @qiq_map_key_at(ptr, i64)\ndeclare i64 @qiq_map_value_at(ptr, i64)\ndeclare i64 @qiq_string_len(ptr)\ndeclare ptr @qiq_sprintf(ptr, ptr, ptr, i64)\ndeclare void @qiq_bind_values(ptr, ptr, i64)\ndeclare ptr @qiq_json_encode(ptr, i64, i1 zeroext)\ndeclare i64 @qiq_json_decode(ptr, ptr)\ndeclare i32 @qiq_string_equality(ptr, ptr)\ndeclare i32 @qiq_string_compare(ptr, ptr)\ndeclare ptr @qiq_string_char_at(ptr, i64)\ndeclare ptr @qiq_string_concat(ptr, ptr)\ndeclare i64 @qiq_int_divide(i64, i64)\ndeclare i64 @qiq_int_modulo(i64, i64)\ndeclare i64 @qiq_int_power(i64, i64)\ndeclare i64 @qiq_int_power_unchecked(i64, i64)\ndeclare i64 @qiq_int_shift_left(i64, i64)\ndeclare i64 @qiq_int_shift_right(i64, i64)\ndeclare double @llvm.pow.f64(double, double)\ndeclare double @llvm.fabs.f64(double)\ndeclare i64 @qiq_math_min_int(ptr)\ndeclare i64 @qiq_math_max_int(ptr)\ndeclare double @qiq_math_min_double(ptr)\ndeclare double @qiq_math_max_double(ptr)\ndeclare i64 @qiq_math_clamp_int(i64, i64, i64)\ndeclare double @qiq_math_clamp_double(double, double, double)\ndeclare void @qiq_uncaught(ptr, ptr)\ndeclare ptr @qiq_array_new(i64, i64, i32)\ndeclare void @qiq_set_arguments(i32, ptr)\ndeclare void @qiq_check_callable(ptr)\ndeclare void @qiq_array_push(ptr, i64, i64)\ndeclare i64 @qiq_range_plan(i64, i64, i64, i1 zeroext, ptr)\ndeclare ptr @qiq_range_int(i64, i64, i64, i1 zeroext)\ndeclare ptr @qiq_range_count(i64)\ndeclare ptr @qiq_range_double(double, double, double, i1 zeroext)\ndeclare ptr @qiq_range_char(ptr, ptr, i64, i1 zeroext)\ndeclare i64 @qiq_array_pop(ptr, i64)\ndeclare i64 @qiq_array_shift(ptr, i64)\ndeclare void @qiq_array_insert(ptr, i64, i64, i64)\ndeclare ptr @qiq_array_splice(ptr, i64, i64, i64, i1 zeroext, ptr)\ndeclare i64 @qiq_array_length(ptr)\ndeclare i64 @qiq_len_string(ptr)\ndeclare i64 @qiq_len_array(ptr)\ndeclare i64 @qiq_len_map(ptr)\ndeclare void @qiq_array_check_index(ptr, i64)\ndeclare void @qiq_print_value(ptr, i64)\ndeclare ptr @qiq_describe_value(ptr, i64)\ndeclare void @qiq_print_space()\ndeclare void @qiq_print_newline()\ndeclare i64 @qiq_double_to_int(double)\ndeclare zeroext i8 @qiq_int_to_byte(i64)\ndeclare i64 @qiq_string_to_int(ptr)\ndeclare double @qiq_string_to_double(ptr)\ndeclare ptr @qiq_int_to_string(i64)\ndeclare ptr @qiq_double_to_string(double)\n",
         );
         ir.push_str(&extern_declarations);
         ir.push('\n');
@@ -6612,6 +6612,88 @@ impl Emitter {
 
     /// `to_int`, `to_double`, `to_byte`, and `to_string`: built in rather than
     /// declared in the standard library because each accepts several types.
+    /// A call to one of std/testing's T assertions. Each gets an `at`
+    /// argument with the caller's file:line, unless it was given one. equal
+    /// and notEqual compare their values with == (so the types must match,
+    /// and arrays and maps compare by contents), describe both as print
+    /// would inside an array, and pass the result to T::__check. Returns
+    /// None to let the call through as written (once it has its `at`).
+    fn emit_test_assertion(
+        &mut self,
+        object: &Value,
+        method: &str,
+        arguments: &[Expr],
+        variables: &HashMap<String, Value>,
+        body: &mut String,
+    ) -> Result<Option<Value>, String> {
+        const ASSERTIONS: &[&str] = &["equal", "notEqual", "isTrue", "isFalse", "near", "throws", "fail", "skip", "log"];
+        if !ASSERTIONS.contains(&method) {
+            return Ok(None);
+        }
+        let given_at = arguments.iter().find_map(|argument| match argument {
+            Expr::NamedArgument(name, value) if name == "at" => Some((**value).clone()),
+            _ => None,
+        });
+        if given_at.is_some() && !matches!(method, "equal" | "notEqual") {
+            return Ok(None);
+        }
+        let at = given_at.unwrap_or_else(|| {
+            let path = self.module_paths.get(self.current_module).cloned().unwrap_or_default();
+            let line = self.position.map(|(line, _)| line).unwrap_or(0);
+            Expr::Text(if path.is_empty() { format!("line {line}") } else { format!("{path}:{line}") })
+        });
+        let mut scope = variables.clone();
+        scope.insert("#test.t".to_string(), Value { slot: None, ..object.clone() });
+        let receiver = || Box::new(Expr::Variable("#test.t".to_string()));
+        if !matches!(method, "equal" | "notEqual") {
+            let mut located = arguments.to_vec();
+            located.push(Expr::NamedArgument("at".to_string(), Box::new(at)));
+            return self.emit_expression(&Expr::MethodCall(receiver(), method.to_string(), located), &scope, body).map(Some);
+        }
+        let values: Vec<&Expr> = arguments.iter().filter(|argument| !matches!(argument, Expr::NamedArgument(..))).collect();
+        if values.len() != 2 || arguments.len() - values.len() > 1 {
+            return Err(format!("t->{method} takes 2 values, the value to check and the {} one, found {}", if method == "equal" { "expected" } else { "unexpected" }, values.len()));
+        }
+        let actual = self.emit_expression(values[0], variables, body)?;
+        let expected = self.emit_expression(values[1], variables, body)?;
+        for value in [&actual, &expected] {
+            if matches!(value.value_type, ValueType::Void | ValueType::Function(_)) {
+                return Err(format!("t->{method} can't compare a {}", self.type_name(value.value_type)));
+            }
+        }
+        let same = self
+            .emit_comparison(actual.clone(), CompareOp::Equal, expected.clone(), body)
+            .map_err(|error| format!("t->{method}: {error}"))?;
+        let actual_text = self.emit_described(&actual, body)?;
+        let expected_text = self.emit_described(&expected, body)?;
+        for (name, value) in [("#test.same", same), ("#test.actual", actual_text), ("#test.expected", expected_text)] {
+            scope.insert(name.to_string(), Value { slot: None, ..value });
+        }
+        let check = Expr::MethodCall(
+            receiver(),
+            "__check".to_string(),
+            vec![
+                Expr::Variable("#test.same".to_string()),
+                Expr::Variable("#test.actual".to_string()),
+                Expr::Variable("#test.expected".to_string()),
+                Expr::Boolean(method == "equal"),
+                at,
+            ],
+        );
+        self.emit_expression(&check, &scope, body).map(Some)
+    }
+
+    /// `value` as text, as print writes it inside an array (strings quoted),
+    /// with doubles in full: for test failure messages.
+    fn emit_described(&mut self, value: &Value, body: &mut String) -> Result<Value, String> {
+        let descriptor = self.type_descriptor(value.value_type);
+        let descriptor = self.emit_expression(&Expr::Text(descriptor), &HashMap::new(), body)?;
+        let bits = if value.value_type == ValueType::Null { "0".to_string() } else { self.encode_payload(value, body)? };
+        let register = self.new_register();
+        body.push_str(&format!("  {register} = call ptr @qiq_describe_value(ptr {}, i64 {bits})\n", descriptor.operand));
+        Ok(self.own(Value { value_type: ValueType::String, operand: register, slot: None }))
+    }
+
     /// A call to std/math's abs, min, max, clamp, or number_format, which
     /// take ints or doubles (qiq has no overloading, so the compiler does
     /// this, as it does for len). abs, min, max, and clamp are inline: one or
@@ -9417,6 +9499,13 @@ impl Emitter {
                     _ => return Err("method call requires a class instance".to_string()),
                 };
                 self.emit_null_check(&object, object_expression, &format!("cannot call method '{method_name}' on null"), body);
+                // std/testing's assertions: given their caller's file:line,
+                // and equal and notEqual compiled for the types given.
+                if self.stdlib_class("T") == Some(class_id) {
+                    if let Some(value) = self.emit_test_assertion(&object, method_name, arguments, variables, body)? {
+                        return Ok(value);
+                    }
+                }
                 // Rows read into the class the result is used as.
                 if (matches!(method_name.as_str(), "queryAs" | "queryOneAs") && self.stdlib_class("Database") == Some(class_id))
                     || (matches!(method_name.as_str(), "nextAs" | "fetchAs") && self.stdlib_class("Cursor") == Some(class_id))
@@ -11444,6 +11533,7 @@ const STDLIB_MODULES: &[(&str, Option<&str>, &str)] = &[
     ("sql.qiq", Some("std/sql"), include_str!("../stdlib/sql.qiq")),
     ("regex.qiq", Some("std/regex"), include_str!("../stdlib/regex.qiq")),
     ("math.qiq", Some("std/math"), include_str!("../stdlib/math.qiq")),
+    ("testing.qiq", Some("std/testing"), include_str!("../stdlib/testing.qiq")),
 ];
 
 /// Standard library modules that have moved, as (old path, new path), so
@@ -11531,12 +11621,93 @@ fn compile_with_reader(
             read(path)
         }
     };
-    let mut loader = Loader::new(&read);
+    emit_llvm(&load_program(entry, &read)?)
+}
+
+/// Reads the program whose entry file is `entry` and every file it imports.
+fn load_program(entry: &Path, read: &dyn Fn(&Path) -> Result<String, String>) -> Result<Program, String> {
+    let mut loader = Loader::new(read);
     // How far up a qiq.mod may be: as far as the file system's root.
     let max_up = std::env::current_dir().map(|cwd| cwd.join(entry).components().count()).unwrap_or(0);
     loader.find_main_module(entry, max_up)?;
     loader.load(normalize_path(entry), None, 0)?;
-    emit_llvm(&loader.into_program())
+    Ok(loader.into_program())
+}
+
+/// The program `qiq test` runs for one file: its test functions, in the order
+/// they're written, as the main program instead of its top-level code.
+#[derive(Debug)]
+pub struct TestProgram {
+    pub ir: String,
+    /// The tests it runs (those whose names contain the filter, if any).
+    pub tests: Vec<String>,
+}
+
+/// Compiles `path` for `qiq test`. A test is a top-level function in the file
+/// whose name starts with `test_`, which must take a T from std/testing and
+/// return void. The file's top-level statements don't run; main calls each
+/// test (whose name contains `filter`, if given) through std/testing's
+/// runner, which reports failures (and passes too when `verbose`) and exits
+/// with status 1 if any failed. Returns None for a file without tests.
+pub fn compile_tests(path: &str, filter: Option<&str>, verbose: bool) -> Result<Option<TestProgram>, String> {
+    let read = |file: &Path| {
+        if file.starts_with(STDLIB_ROOT) {
+            read_stdlib(file)
+        } else {
+            std::fs::read_to_string(file).map_err(|error| format!("could not read {}: {error}", file.display()))
+        }
+    };
+    let mut program = load_program(Path::new(path), &read)?;
+    let entry = program.modules[0].path.clone();
+    let mut tests: Vec<&Function> = program
+        .functions
+        .iter()
+        .filter(|function| function.module == 0 && function.name.starts_with("test_") && program.modules[0].functions.get(&function.name) == Some(&function.symbol))
+        .collect();
+    if tests.is_empty() {
+        return Ok(None);
+    }
+    tests.sort_by_key(|function| (function.line, function.column));
+    let testing = program
+        .modules
+        .iter()
+        .position(|module| module.is_stdlib && module.path.ends_with("testing.qiq"));
+    let t_class = testing.and_then(|testing| {
+        program.classes.iter().position(|class| class.name == "T" && class.module as usize == testing)
+    });
+    for test in &tests {
+        let takes_t = test.parameters.len() == 1 && t_class.is_some_and(|t| test.parameters[0].value_type == ValueType::Class(t as u32));
+        if !takes_t || test.return_type != ValueType::Void {
+            return Err(format!(
+                "{entry}:{}:{}: test function '{}' must take a T and return void: function {}(T t): void, with import T from \"std/testing\";",
+                test.line, test.column, test.name, test.name
+            ));
+        }
+    }
+    let names: Vec<String> = tests
+        .iter()
+        .map(|test| test.name.clone())
+        .filter(|name| filter.is_none_or(|filter| name.contains(filter)))
+        .collect();
+    let lines: HashMap<String, (usize, usize)> = tests.iter().map(|test| (test.name.clone(), (test.line, test.column))).collect();
+    // The runner's functions, callable from the entry file.
+    let testing = testing.expect("a test takes a T, so std/testing is loaded");
+    for runner in ["__testing_start", "__testing_run", "__testing_finish"] {
+        let symbol = program.modules[testing].functions.get(runner).cloned().ok_or("std/testing has no runner")?;
+        program.modules[0].functions.insert(runner.to_string(), symbol);
+    }
+    let call = |name: &str, arguments: Vec<Expr>, (line, column): (usize, usize)| Statement {
+        kind: StatementKind::Expression(Expr::Call(name.to_string(), arguments)),
+        line,
+        column,
+    };
+    let mut statements = vec![call("__testing_start", vec![Expr::Boolean(verbose)], (1, 1))];
+    for name in &names {
+        statements.push(call("__testing_run", vec![Expr::Text(name.clone()), Expr::Variable(name.clone())], lines[name]));
+    }
+    statements.push(call("__testing_finish", Vec::new(), (1, 1)));
+    program.statements = statements;
+    Ok(Some(TestProgram { ir: emit_llvm(&program)?, tests: names }))
 }
 
 /// Compiles a qiq program from its entry file. Errors include the file path.
@@ -11714,6 +11885,34 @@ mod tests {
         assert!(ir.contains("@qiq_stdlib___regex_scan"));
         // A pattern without a subject is a type error.
         assert!(compile_source("import preg_match from \"std/regex\"; preg_match(\"a\");").is_err());
+    }
+
+    #[test]
+    fn compiles_tests() {
+        let directory = std::env::temp_dir().join(format!("qiq-compile-tests-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let file = |name: &str, source: &str| {
+            let path = directory.join(name);
+            std::fs::write(&path, source).unwrap();
+            path.display().to_string()
+        };
+        let tests = file(
+            "tool.qiq",
+            "import T from \"std/testing\";\nprint(\"main\");\nfunction helper(): int { return 1; }\nfunction test_b(T t): void { t->equal(helper(), 1); }\nfunction test_a(T t): void { t->isTrue(true); }\n",
+        );
+        // The test functions, in the order they're written, and the filter.
+        let program = super::compile_tests(&tests, None, false).unwrap().unwrap();
+        assert_eq!(program.tests, ["test_b", "test_a"]);
+        assert!(program.ir.contains("__testing_run"));
+        assert_eq!(super::compile_tests(&tests, Some("_a"), false).unwrap().unwrap().tests, ["test_a"]);
+        // The assertions say where they are.
+        assert!(program.ir.contains("tool.qiq:4"), "{}", program.ir);
+        // No tests: nothing to run.
+        assert!(super::compile_tests(&file("plain.qiq", "print(1);\n"), None, false).unwrap().is_none());
+        // A test_ function that doesn't take a T.
+        let wrong = super::compile_tests(&file("wrong.qiq", "function test_x(int n): void {}\n"), None, false).unwrap_err();
+        assert!(wrong.ends_with("wrong.qiq:1:10: test function 'test_x' must take a T and return void: function test_x(T t): void, with import T from \"std/testing\";"), "{wrong}");
+        let _ = std::fs::remove_dir_all(&directory);
     }
 
     #[test]

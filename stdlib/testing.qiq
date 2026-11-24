@@ -1,0 +1,218 @@
+// Testing, for `qiq test`. A test is a top-level function whose name starts
+// with test_ and which takes a T, in the program itself or in a file of
+// its own:
+//
+//   import T from "std/testing";
+//
+//   function test_add(T t): void {
+//       t->equal(add(2, 3), 5);
+//   }
+//
+// `qiq test file.qiq` compiles the file without running its top-level code
+// and calls each test_ function; `qiq build` and `qiq run` ignore them. A
+// failed assertion stops its test and says where it failed; the other
+// tests still run. Functions whose names start with "__" are internal.
+//
+// The compiler gives each assertion its caller's file:line (the `at`
+// parameter), and compiles equal and notEqual for the types they're given,
+// comparing as == does: arrays and maps by their contents, objects by
+// identity, and values of different types are a compile error.
+
+import Exception from "exceptions";
+import hrtime from "date";
+import exit from "program";
+
+// Thrown to stop a test that failed, or one that was skipped.
+class __TestFailed extends Exception {}
+class __TestSkipped extends Exception {}
+
+// The test being run, for its assertions.
+final class T {
+    private string name;
+    private string[] logs;
+
+    function __construct(string name) {
+        this->name = name;
+        this->logs = [];
+    }
+
+    // The test's function name, such as "test_add".
+    function name(): string {
+        return this->name;
+    }
+
+    // Fails unless `actual` equals `expected` (as == compares them). Either
+    // order works, but the message reads best with the value under test
+    // first: "expected 5, found 4".
+    function equal(string actual, string expected, string at = ""): void {
+        this->__check(actual == expected, "\"" + actual + "\"", "\"" + expected + "\"", true, at);
+    }
+
+    // Fails if `actual` equals `unexpected`.
+    function notEqual(string actual, string unexpected, string at = ""): void {
+        this->__check(actual == unexpected, "\"" + actual + "\"", "\"" + unexpected + "\"", false, at);
+    }
+
+    // Fails unless `condition` is true; `message`, if given, says what was
+    // expected.
+    function isTrue(bool condition, string message = "", string at = ""): void {
+        if (!condition) {
+            this->__fail("expected true" + this->__detail(message), at);
+        }
+    }
+
+    // Fails unless `condition` is false.
+    function isFalse(bool condition, string message = "", string at = ""): void {
+        if (condition) {
+            this->__fail("expected false" + this->__detail(message), at);
+        }
+    }
+
+    // Fails unless `actual` is within `tolerance` of `expected`, for doubles
+    // that arithmetic leaves slightly off: t->near(0.1 + 0.2, 0.3).
+    function near(double actual, double expected, double tolerance = 0.000000001, string at = ""): void {
+        double difference = actual - expected;
+        if (difference < 0.0) {
+            difference = -difference;
+        }
+        if (!(difference <= tolerance)) {
+            this->__fail(f"expected {expected} ± {tolerance}, found {actual}", at);
+        }
+    }
+
+    // Fails unless calling `body` throws an exception of class `exception`
+    // (its own class, by name), or any exception for "Exception".
+    function throws(function(): void body, string exception = "Exception", string at = ""): void {
+        try {
+            body();
+        } catch (__TestFailed failed) {
+            throw failed;
+        } catch (Exception e) {
+            string thrown = e::class;
+            if (exception != "Exception" && thrown != exception) {
+                this->__fail(f"expected {exception} to be thrown, but {thrown} was: {e->getMessage()}", at);
+            }
+            return;
+        }
+        this->__fail(f"expected {exception} to be thrown, but nothing was", at);
+    }
+
+    // Fails the test with `message`.
+    function fail(string message, string at = ""): void {
+        this->__fail(message, at);
+    }
+
+    // Stops the test, which counts as skipped rather than failed.
+    function skip(string reason = "", string at = ""): void {
+        throw new __TestSkipped(this->__located(reason, at));
+    }
+
+    // Notes `message`, shown if the test fails, or with qiq test -v.
+    function log(string message, string at = ""): void {
+        array_push(this->logs, this->__located(message, at));
+    }
+
+    function __logs(): string[] {
+        return this->logs;
+    }
+
+    // An equality check, compiled by the compiler for equal and notEqual:
+    // `same` says whether the values are equal, and the texts show them.
+    function __check(bool same, string actual, string expected, bool wanted, string at): void {
+        if (wanted && !same) {
+            this->__fail(f"expected {expected}, found {actual}", at);
+        }
+        if (!wanted && same) {
+            this->__fail(f"expected a value other than {expected}", at);
+        }
+    }
+
+    function __fail(string message, string at): void {
+        throw new __TestFailed(this->__located(message, at));
+    }
+
+    function __located(string message, string at): string {
+        if (at == "") {
+            return message;
+        }
+        if (message == "") {
+            return at;
+        }
+        return at + ": " + message;
+    }
+
+    function __detail(string message): string {
+        if (message == "") {
+            return "";
+        }
+        return ": " + message;
+    }
+}
+
+// The runner, called by the main function `qiq test` makes.
+final class __Run {
+    public static bool verbose = false;
+    public static int passed = 0;
+    public static int failed = 0;
+    public static int skipped = 0;
+}
+
+function __testing_start(bool verbose): void {
+    __Run::verbose = verbose;
+}
+
+// Runs one test and reports it, as Go's testing package does: failures
+// always, and passes and skips with -v.
+function __testing_run(string name, function(T): void test): void {
+    T t = new T(name);
+    if (__Run::verbose) {
+        println(f"=== RUN   {name}");
+    }
+    int start = hrtime();
+    string status = "PASS";
+    string reason = "";
+    try {
+        test(t);
+    } catch (__TestFailed failed) {
+        status = "FAIL";
+        reason = failed->getMessage();
+    } catch (__TestSkipped skipped) {
+        status = "SKIP";
+        reason = skipped->getMessage();
+    } catch (Exception e) {
+        status = "FAIL";
+        reason = f"uncaught {e::class}: {e->getMessage()}";
+    }
+    string time = sprintf("%.2fs", to_double(hrtime() - start) / 1000000000.0);
+    if (status == "PASS") {
+        __Run::passed++;
+    } else if (status == "FAIL") {
+        __Run::failed++;
+    } else {
+        __Run::skipped++;
+    }
+    if (status == "FAIL" || __Run::verbose) {
+        println(f"--- {status}: {name} ({time})");
+        foreach (t->__logs() as line) {
+            println(f"    {line}");
+        }
+        if (reason != "") {
+            println(f"    {reason}");
+        }
+    }
+}
+
+// Ends the run: a summary line, and exit status 1 if any test failed.
+function __testing_finish(): void {
+    string summary = f"{__Run::passed} passed";
+    if (__Run::failed > 0) {
+        summary = summary + f", {__Run::failed} failed";
+    }
+    if (__Run::skipped > 0) {
+        summary = summary + f", {__Run::skipped} skipped";
+    }
+    println(summary);
+    if (__Run::failed > 0) {
+        exit(1);
+    }
+}

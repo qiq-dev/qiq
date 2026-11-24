@@ -28,6 +28,7 @@ OVERVIEW = (
     "<tr><td><code>std/net/http</code></td><td>The <a href=\"ref.http.html\">HTTP client</a> and URL encoding</td></tr>"
     "<tr><td><code>std/net/http/server</code></td><td>The <a href=\"ref.http-server.html\">HTTP server</a></td></tr>"
     "<tr><td><code>std/crypto</code></td><td><a href=\"ref.crypto.html\">Hashing and encoding</a>: MD5, SHA-1, SHA-2, HMAC, hex, base64, and password hashing</td></tr>"
+    "<tr><td><code>std/testing</code></td><td>The <code>T</code> class that <a href=\"testing.html\">tests</a> take, for <code>qiq test</code></td></tr>"
     "<tr><td><code>std/math</code></td><td><a href=\"ref.math.html\">Math</a>: rounding, roots, logarithms, trigonometry, <code>number_format</code>, and secure random numbers</td></tr>"
     "<tr><td><code>std/regex</code></td><td><a href=\"ref.regex.html\">Regular expressions</a>, with PHP's <code>preg_*</code> functions, and the <a href=\"class.regexmatch.html\">RegexMatch</a> class</td></tr>"
     "<tr><td><code>std/sql</code></td><td>SQL databases (SQLite, PostgreSQL, MySQL, and MariaDB): the <a href=\"class.database.html\">Database</a>, <a href=\"class.row.html\">Row</a>, and <a href=\"class.cursor.html\">Cursor</a> classes</td></tr>"

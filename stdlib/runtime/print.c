@@ -20,6 +20,24 @@
 extern const char *qiq_class_names[];
 
 
+// Where values are written: standard output, or a string being built by
+// qiq_describe_value.
+static FILE *qiq_out;
+// Whether doubles are written in full (the shortest text that reads back as
+// the same double) rather than print's 6 significant digits.
+static int qiq_exact_doubles;
+
+static void qiq_write_exact_double(double value) {
+    char text[40];
+    for (int precision = 1; precision <= 17; precision++) {
+        snprintf(text, sizeof text, "%.*g", precision, value);
+        if (precision == 17 || strtod(text, NULL) == value) break;
+    }
+    // Keep a double recognisable as one: 3.0, not 3.
+    fputs(text, qiq_out);
+    if (strspn(text, "-0123456789") == strlen(text)) fputs(".0", qiq_out);
+}
+
 // The descriptor just past the type that starts at `descriptor`.
 static const char *qiq_skip_type(const char *descriptor) {
     switch (*descriptor) {
@@ -53,19 +71,19 @@ static uint64_t qiq_read_element(const char *data, char type) {
 
 // Writes `text` between `quote` characters, escaping like a qiq literal.
 static void qiq_write_quoted(const char *text, char quote) {
-    putchar(quote);
+    fputc(quote, qiq_out);
     for (const char *cursor = text; *cursor != 0; cursor++) {
         switch (*cursor) {
-        case '\n': fputs("\\n", stdout); break;
-        case '\r': fputs("\\r", stdout); break;
-        case '\t': fputs("\\t", stdout); break;
-        case '\\': fputs("\\\\", stdout); break;
+        case '\n': fputs("\\n", qiq_out); break;
+        case '\r': fputs("\\r", qiq_out); break;
+        case '\t': fputs("\\t", qiq_out); break;
+        case '\\': fputs("\\\\", qiq_out); break;
         default:
-            if (*cursor == quote) putchar('\\');
-            putchar(*cursor);
+            if (*cursor == quote) fputc('\\', qiq_out);
+            fputc(*cursor, qiq_out);
         }
     }
-    putchar(quote);
+    fputc(quote, qiq_out);
 }
 
 // Writes the value of type `descriptor`. Nested values (inside an array or
@@ -74,52 +92,53 @@ static void qiq_write_value(const char *descriptor, uint64_t bits, int nested) {
     void *pointer = (void *)(uintptr_t)bits;
     switch (*descriptor) {
     case 'i':
-        printf("%lld", (long long)(int64_t)bits);
+        fprintf(qiq_out, "%lld", (long long)(int64_t)bits);
         return;
     case 'd': {
         double value;
         memcpy(&value, &bits, sizeof value);
-        printf("%g", value);
+        if (qiq_exact_doubles) qiq_write_exact_double(value);
+        else fprintf(qiq_out, "%g", value);
         return;
     }
     case 'y':
-        printf("%u", (unsigned)(uint8_t)bits);
+        fprintf(qiq_out, "%u", (unsigned)(uint8_t)bits);
         return;
     case 'b':
-        fputs(bits ? "true" : "false", stdout);
+        fputs(bits ? "true" : "false", qiq_out);
         return;
     case 'n':
-        fputs("null", stdout);
+        fputs("null", qiq_out);
         return;
     }
     if (pointer == NULL) {
-        fputs("null", stdout);
+        fputs("null", qiq_out);
         return;
     }
     switch (*descriptor) {
     case 's':
         if (nested) qiq_write_quoted(pointer, '"');
-        else fputs(pointer, stdout);
+        else fputs(pointer, qiq_out);
         return;
     case 'c':
         if (nested) qiq_write_quoted(pointer, '\'');
-        else fputs(pointer, stdout);
+        else fputs(pointer, qiq_out);
         return;
     case 'o':
         // The object's own class, which may be a subclass of its declared type.
-        fputs(qiq_class_names[*(const int64_t *)pointer], stdout);
+        fputs(qiq_class_names[*(const int64_t *)pointer], qiq_out);
         return;
     case 'a': {
         const char *element = descriptor + 1;
         size_t size = qiq_element_size(*element);
         const char *data = QIQ_ARRAY_DATA(pointer);
         int64_t length = QIQ_ARRAY_LENGTH(pointer);
-        putchar('[');
+        fputc('[', qiq_out);
         for (int64_t index = 0; index < length; index++) {
-            if (index > 0) fputs(", ", stdout);
+            if (index > 0) fputs(", ", qiq_out);
             qiq_write_value(element, qiq_read_element(data + index * size, *element), 1);
         }
-        putchar(']');
+        fputc(']', qiq_out);
         return;
     }
     case 'm': {
@@ -130,14 +149,14 @@ static void qiq_write_value(const char *descriptor, uint64_t bits, int nested) {
         uint64_t *values = malloc((length + 1) * sizeof *values);
         if (keys == NULL || values == NULL) qiq_fatal("out of memory");
         qiq_map_collect(pointer, keys, values);
-        putchar('{');
+        fputc('{', qiq_out);
         for (size_t index = 0; index < length; index++) {
-            if (index > 0) fputs(", ", stdout);
+            if (index > 0) fputs(", ", qiq_out);
             qiq_write_value(key, keys[index], 1);
-            fputs(" => ", stdout);
+            fputs(" => ", qiq_out);
             qiq_write_value(value, values[index], 1);
         }
-        putchar('}');
+        fputc('}', qiq_out);
         free(keys);
         free(values);
         return;
@@ -147,7 +166,26 @@ static void qiq_write_value(const char *descriptor, uint64_t bits, int nested) {
 
 // Writes one print argument (without a newline).
 void qiq_print_value(const char *descriptor, uint64_t bits) {
+    qiq_out = stdout;
     qiq_write_value(descriptor, bits, 0);
+}
+
+// A value as print writes it inside an array (strings and chars quoted),
+// with doubles in full, as a new string: for std/testing's messages.
+char *qiq_describe_value(const char *descriptor, uint64_t bits) {
+    char *text = NULL;
+    size_t length = 0;
+    FILE *buffer = open_memstream(&text, &length);
+    if (buffer == NULL) qiq_fatal("out of memory");
+    qiq_out = buffer;
+    qiq_exact_doubles = 1;
+    qiq_write_value(descriptor, bits, 1);
+    qiq_exact_doubles = 0;
+    qiq_out = stdout;
+    fclose(buffer);
+    char *result = qiq_string_from(text, length);
+    free(text);
+    return result;
 }
 
 // Separates print arguments.

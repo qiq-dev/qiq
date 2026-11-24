@@ -1,0 +1,23 @@
+// A small library for tests/testing.qiq to test: imports and declarations only.
+class Money {
+    function __construct(public int cents) {}
+
+    function __toString(): string {
+        return sprintf("$%d.%02d", this->cents / 100, this->cents % 100);
+    }
+}
+
+function add(Money a, Money b): Money {
+    return new Money(a->cents + b->cents);
+}
+
+function parse_money(string text): Money {
+    if (len(text) < 2 || !str_starts_with(text, "$")) {
+        throw new InvalidArgumentException("not an amount: " + text);
+    }
+    return new Money(to_int(round_cents(to_double(substr(text, 1)))));
+}
+
+function round_cents(double dollars): double {
+    return dollars * 100.0;
+}

@@ -50,6 +50,7 @@ qiq run hello.qiq [arguments...]    # compile to a temporary executable and run 
 qiq build hello.qiq                 # write the executable ./hello
 qiq build hello.qiq -o app          # choose the output name
 qiq build hello.qiq --emit-llvm     # also write hello.ll, the generated LLVM IR
+qiq test                            # run the test_ functions in the .qiq files here (see Testing)
 qiq serve public --port 8080        # serve a directory over HTTP, like `php -S`
 qiq mod init github.com/you/app     # make this directory a module (see Packages)
 qiq get github.com/ada/web          # add a module (needs git)

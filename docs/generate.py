@@ -57,6 +57,7 @@ LANGUAGE = [
     ("Language reference", "exceptions", "Exceptions"),
     ("Language reference", "modules", "Modules"),
     ("Language reference", "packages", "Packages"),
+    ("Language reference", "testing", "Testing"),
     ("Language reference", "memory", "Memory management"),
     ("Language reference", "printing", "Printing"),
 ]

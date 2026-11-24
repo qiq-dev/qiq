@@ -1,0 +1,21 @@
+--- FAIL: test_each_failure (0.00s)
+    tests/testing.qiq:38: a note, shown because the test fails
+    tests/testing.qiq:39: expected 0.3, found 0.30000000000000004
+--- FAIL: test_list_failure (0.00s)
+    tests/testing.qiq:43: expected ["a", "c"], found ["a", "b"]
+--- FAIL: test_not_equal_failure (0.00s)
+    tests/testing.qiq:47: expected a value other than 3
+--- FAIL: test_true_failure (0.00s)
+    tests/testing.qiq:51: expected true: one should be more than two
+--- FAIL: test_near_failure (0.00s)
+    tests/testing.qiq:55: expected 1 ± 0.25, found 1.5
+--- FAIL: test_throws_nothing (0.00s)
+    tests/testing.qiq:59: expected InvalidArgumentException to be thrown, but nothing was
+--- FAIL: test_throws_other (0.00s)
+    tests/testing.qiq:63: expected IOException to be thrown, but InvalidArgumentException was: not an amount: x
+--- FAIL: test_fail (0.00s)
+    tests/testing.qiq:67: not written yet
+--- FAIL: test_uncaught (0.00s)
+    uncaught OutOfRangeException: index 1 is out of range for an array of length 0
+2 passed, 9 failed, 1 skipped
+FAIL	tests/testing.qiq	0.00s

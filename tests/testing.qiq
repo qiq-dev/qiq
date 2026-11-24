@@ -1,0 +1,77 @@
+// std/testing and qiq test: passing, failing, skipped, and crashing tests,
+// every assertion, and the program's own code not running.
+// test: qiq-test
+// test: exit 1
+import T from "std/testing";
+import Money, add, parse_money from "./testing/money";
+import file_exists from "std/file";
+
+print("the program's own code: never printed by qiq test");
+
+function test_equal(T t): void {
+    t->equal(add(new Money(150), new Money(275))->cents, 425);
+    t->equal(to_string(new Money(1999)), "$19.99");
+    t->equal([1, 2], [1, 2]);
+    t->equal({"a" => [true]}, {"a" => [true]});
+    string missing = null;
+    t->equal(missing, null);
+    Money one = new Money(1);
+    Money same = one;
+    t->equal(same, one);
+    t->notEqual(new Money(1), new Money(1));
+    t->notEqual("a", "b");
+}
+
+function test_conditions(T t): void {
+    t->isTrue(1 < 2);
+    t->isFalse(2 < 1, "two isn't less than one");
+    t->near(0.1 + 0.2, 0.3);
+    t->near(3.14159, 3.14, 0.01);
+    t->throws(fn() => parse_money("12"), "InvalidArgumentException");
+    t->throws(fn() => parse_money("x"));
+    t->equal(t->name(), "test_conditions");
+    // Tests run in their file's directory.
+    t->isTrue(file_exists("testing/money.qiq"));
+}
+
+function test_each_failure(T t): void {
+    t->log("a note, shown because the test fails");
+    t->equal(0.1 + 0.2, 0.3);
+}
+
+function test_list_failure(T t): void {
+    t->equal(["a", "b"], ["a", "c"]);
+}
+
+function test_not_equal_failure(T t): void {
+    t->notEqual(3, 3);
+}
+
+function test_true_failure(T t): void {
+    t->isTrue(1 > 2, "one should be more than two");
+}
+
+function test_near_failure(T t): void {
+    t->near(1.5, 1.0, 0.25);
+}
+
+function test_throws_nothing(T t): void {
+    t->throws(fn() => parse_money("$1"), "InvalidArgumentException");
+}
+
+function test_throws_other(T t): void {
+    t->throws(fn() => parse_money("x"), "IOException");
+}
+
+function test_fail(T t): void {
+    t->fail("not written yet");
+}
+
+function test_skip(T t): void {
+    t->skip("needs a database");
+}
+
+function test_uncaught(T t): void {
+    int[] empty = [];
+    print(empty[1]);
+}

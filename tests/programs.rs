@@ -12,6 +12,8 @@
 //!
 //!   // test: args Ada "Grace Hopper"   command-line arguments
 //!   // test: exit 2                    the exit status it must end with (0 otherwise)
+//!   // test: qiq-test                  run it with `qiq test` instead of `qiq run`
+//!                                      (its timings are masked: "0.00s")
 //!   // test: needs QIQ_TEST_MYSQL      skipped unless this environment variable is
 //!                                      set; its output isn't compared (it depends
 //!                                      on a server), only its exit status
@@ -33,6 +35,7 @@ struct Directives {
     args: Vec<String>,
     exit: i32,
     needs: Option<String>,
+    qiq_test: bool,
 }
 
 fn directives(source: &str) -> Result<Directives, String> {
@@ -49,7 +52,8 @@ fn directives(source: &str) -> Result<Directives, String> {
             "args" => found.args = split_words(value)?,
             "exit" => found.exit = value.trim().parse().map_err(|_| format!("'test: exit' needs a number, found '{value}'"))?,
             "needs" => found.needs = Some(value.trim().to_string()),
-            _ => return Err(format!("unknown directive 'test: {name}'; the directives are args, exit, and needs")),
+            "qiq-test" => found.qiq_test = true,
+            _ => return Err(format!("unknown directive 'test: {name}'; the directives are args, exit, needs, and qiq-test")),
         }
     }
     Ok(found)
@@ -107,6 +111,29 @@ fn programs(root: &Path) -> Vec<PathBuf> {
     found
 }
 
+/// `qiq test` output with its timings, which vary, written as 0.00s: in
+/// "--- FAIL: test_x (0.01s)" and in "ok  \tfile.qiq\t0.85s".
+fn mask_timings(output: &str) -> String {
+    let mut masked = String::new();
+    for line in output.lines() {
+        let mut line = line.to_string();
+        if line.starts_with("--- ") && line.ends_with("s)") {
+            if let Some(open) = line.rfind('(') {
+                line = format!("{}(0.00s)", &line[..open]);
+            }
+        } else if (line.starts_with("ok  \t") || line.starts_with("FAIL\t")) && line.ends_with('s') {
+            if let Some(tab) = line.rfind('\t') {
+                if line[tab + 1..line.len() - 1].parse::<f64>().is_ok() {
+                    line = format!("{}\t0.00s", &line[..tab]);
+                }
+            }
+        }
+        masked.push_str(&line);
+        masked.push('\n');
+    }
+    masked
+}
+
 /// The first line where `expected` and `actual` differ, with a little
 /// context, for a failure message.
 fn difference(what: &str, expected: &str, actual: &str) -> String {
@@ -140,7 +167,7 @@ fn check(root: &Path, qiq: &Path, program: &Path, update: bool) -> Result<(), St
         }
     }
     let output = Command::new(qiq)
-        .arg("run")
+        .arg(if directives.qiq_test { "test" } else { "run" })
         .arg(program)
         .args(&directives.args)
         .current_dir(root)
@@ -149,7 +176,10 @@ fn check(root: &Path, qiq: &Path, program: &Path, update: bool) -> Result<(), St
         .env_remove("QIQ_UNSET_VAR")
         .output()
         .map_err(|error| format!("could not run {}: {error}", qiq.display()))?;
-    let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    let mut stdout = String::from_utf8_lossy(&output.stdout).into_owned();
+    if directives.qiq_test {
+        stdout = mask_timings(&stdout);
+    }
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
     let status = output.status.code().unwrap_or(-1);
     let mut problems = String::new();

@@ -28,4 +28,5 @@ runtime
 server.qiq
 sql.qiq
 string.qiq
+testing.qiq
 no config.txt, using defaults
