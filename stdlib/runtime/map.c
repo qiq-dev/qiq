@@ -406,6 +406,98 @@ QIQ_GUARDED(bool, qiq_map_contains_value, false, (void *handle, uint64_t value, 
 }
 
 // ---------------------------------------------------------------------------
+// Combining maps: map_merge, map_diff_keys, map_intersect_keys, map_diff,
+// map_intersect, and map_flip. Each makes a new map, leaving its arguments
+// as they were, with its entries in the first map's order. The compiler has
+// checked the maps' types.
+
+// A new, empty map of the same type as `map`.
+static QiqMap *qiq_map_like(QiqMap *map) {
+    uint32_t flags = QIQ_HEADER(map)->flags;
+    return qiq_map_new(map->key_type, (flags & QIQ_VALUES_ARE_REFERENCES ? 1 : 0) | (int32_t)(flags & QIQ_MAY_CYCLE));
+}
+
+// Adds an entry to `map`, which takes references of its own.
+static void qiq_map_add(QiqMap *map, uint64_t key, uint64_t value) {
+    uint32_t flags = QIQ_HEADER(map)->flags;
+    if ((flags & QIQ_KEYS_ARE_REFERENCES) && key != 0) qiq_retain((void *)(uintptr_t)key);
+    if ((flags & QIQ_VALUES_ARE_REFERENCES) && value != 0) qiq_retain((void *)(uintptr_t)value);
+    qiq_map_set(map, key, value);
+}
+
+// map_merge(a, b): a's entries and then b's; for a key in both, b's value,
+// in a's place.
+QIQ_GUARDED(void *, qiq_map_merge, NULL, (void *left, void *right), (left, right)) {
+    QiqMap *a = qiq_require_map(left, "map_merge: a map is null");
+    QiqMap *b = qiq_require_map(right, "map_merge: a map is null");
+    QiqMap *result = qiq_map_like(a);
+    // Twice, a then b (which can be the same map).
+    QiqMap *sources[2] = {a, b};
+    for (int source = 0; source < 2; source++) {
+        QiqMap *from = sources[source];
+        for (size_t position = 0; position < from->used; position++) {
+            QiqEntry *entry = &from->entries[position];
+            if (entry->live) qiq_map_add(result, entry->key, entry->value);
+        }
+    }
+    return result;
+}
+
+// map_diff_keys(a, b) and map_intersect_keys(a, b): a's entries whose key
+// isn't in b (`present` false), or is (true). The values aren't compared,
+// so b's can be of another type.
+QIQ_GUARDED(void *, qiq_map_filter_keys, NULL, (void *left, void *right, bool present), (left, right, present)) {
+    const char *message = present ? "map_intersect_keys: a map is null" : "map_diff_keys: a map is null";
+    QiqMap *a = qiq_require_map(left, message);
+    QiqMap *b = qiq_require_map(right, message);
+    QiqMap *result = qiq_map_like(a);
+    for (size_t position = 0; position < a->used; position++) {
+        QiqEntry *entry = &a->entries[position];
+        if (!entry->live) continue;
+        bool found = qiq_find(b, entry->key, qiq_hash_key(b, entry->key)) != NULL;
+        if (found == present) qiq_map_add(result, entry->key, entry->value);
+    }
+    return result;
+}
+
+// map_diff(a, b) and map_intersect(a, b): a's entries that b doesn't have
+// with the same value (`present` false), or does (true). Values compare as
+// == does, by the value type `descriptor` describes.
+QIQ_GUARDED(void *, qiq_map_filter_entries, NULL, (void *left, void *right, const char *descriptor, bool present),
+            (left, right, descriptor, present)) {
+    const char *message = present ? "map_intersect: a map is null" : "map_diff: a map is null";
+    QiqMap *a = qiq_require_map(left, message);
+    QiqMap *b = qiq_require_map(right, message);
+    QiqMap *result = qiq_map_like(a);
+    for (size_t position = 0; position < a->used; position++) {
+        QiqEntry *entry = &a->entries[position];
+        if (!entry->live) continue;
+        QiqEntry *other = qiq_find(b, entry->key, qiq_hash_key(b, entry->key));
+        bool same = other != NULL && qiq_payloads_equal(descriptor, entry->value, other->value);
+        if (same == present) qiq_map_add(result, entry->key, entry->value);
+    }
+    return result;
+}
+
+// map_flip(m): m's values as keys, and its keys as their values; a value
+// that appears more than once gets the last key it has. `key_type` and
+// `value_flags` describe the new map, as for qiq_map_new.
+QIQ_GUARDED(void *, qiq_map_flip, NULL, (void *handle, uint32_t key_type, int32_t value_flags), (handle, key_type, value_flags)) {
+    QiqMap *map = qiq_require_map(handle, "map_flip: the map is null");
+    QiqMap *result = qiq_map_new(key_type, value_flags);
+    for (size_t position = 0; position < map->used; position++) {
+        QiqEntry *entry = &map->entries[position];
+        if (!entry->live) continue;
+        if ((key_type == 3 || key_type == 4) && entry->value == 0) {
+            qiq_release(result);
+            qiq_throwf(QIQ_RUNTIME_EXCEPTION, "map_flip: a value is null, which can't be a key");
+        }
+        qiq_map_add(result, entry->value, entry->key);
+    }
+    return result;
+}
+
+// ---------------------------------------------------------------------------
 // Used by the rest of the runtime.
 
 void qiq_map_drop(void *handle) {

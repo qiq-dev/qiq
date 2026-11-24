@@ -1,0 +1,36 @@
+// map_merge, map_diff_keys, map_intersect_keys, map_diff, map_intersect, and
+// map_flip: new maps, in the first map's order, with their arguments unchanged.
+map[string, int] defaults = {"port" => 80, "workers" => 4, "debug" => 0};
+map[string, int] config = map_merge(defaults, {"port" => 8080, "timeout" => 30});
+print(config, defaults);
+print(map_merge({"a" => 1}, {"b" => 2}, {"a" => 3, "c" => 4}), map_merge(defaults, defaults) == defaults);
+
+// By key: the values can be of another type.
+map[string, string] form = {"name" => "Ada", "email" => "ada@example.com", "admin" => "1"};
+map[string, bool] allowed = {"email" => true, "name" => true};
+print(map_intersect_keys(form, allowed), map_diff_keys(form, allowed));
+
+// By key and value.
+map[string, int] before = {"tea" => 3, "cake" => 1, "jam" => 2};
+map[string, int] after = {"tea" => 3, "cake" => 5, "bread" => 1};
+print(map_diff(before, after), map_intersect(before, after), map_diff(after, before));
+// Values compare as == does: arrays by contents, objects by identity.
+map[int, int[]] lists = {1 => [1, 2], 2 => [3]};
+print(map_intersect(lists, {1 => [1, 2], 2 => [4]}), len(map_diff(lists, lists)));
+class Box {}
+Box shared = new Box();
+map[string, Box] boxes = {"a" => shared, "b" => new Box()};
+print(map_keys(map_intersect(boxes, {"a" => shared, "b" => new Box()})));
+
+// Flipping: values become keys; a repeated value keeps its last key.
+print(map_flip({"one" => 1, "two" => 2, "uno" => 1}), map_flip({1 => "a", 2 => "b"}), map_flip({'x' => true, 'y' => false}));
+map[int, string] codes = map_flip({"OK" => 200, "Not Found" => 404});
+print(codes[404]);
+
+// Empty maps.
+map[string, int] empty = {};
+print(map_merge(empty, empty), map_diff_keys(empty, defaults), map_intersect(defaults, empty), map_flip(empty));
+
+// A null value can't be a key.
+map[int, string] holes = {1 => null};
+try { print(map_flip(holes)); } catch (RuntimeException e) { print("error:", e->getMessage()); }

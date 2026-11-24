@@ -3629,7 +3629,7 @@ struct Emitter {
 /// Built-in conversion functions (see Emitter::emit_conversion).
 /// Functions built into the compiler rather than declared in the standard
 /// library, because each accepts several types.
-const CONVERSION_FUNCTIONS: [&str; 20] = [
+const CONVERSION_FUNCTIONS: [&str; 26] = [
     // An f-string's expression (see lex_fstring).
     "__interpolate",
     "to_int",
@@ -3645,6 +3645,12 @@ const CONVERSION_FUNCTIONS: [&str; 20] = [
     "map_values",
     "in_map",
     "unset",
+    "map_merge",
+    "map_diff_keys",
+    "map_intersect_keys",
+    "map_diff",
+    "map_intersect",
+    "map_flip",
     "array_push",
     "array_pop",
     "array_shift",
@@ -3919,7 +3925,7 @@ impl Emitter {
             ir.push_str(&self.emit_dispatch_table(*owner, method_name, Some(supplied)));
         }
         ir.push_str(
-            "\ndeclare i32 @printf(ptr, ...)\ndeclare i32 @strcmp(ptr, ptr)\ndeclare ptr @calloc(i64, i64)\ndeclare ptr @qiq_map_new(i32, i32)\ndeclare void @qiq_retain(ptr)\ndeclare void @qiq_release(ptr)\ndeclare ptr @qiq_object_new(i64, i64)\ndeclare void @qiq_map_set(ptr, i64, i64)\ndeclare i64 @qiq_map_get(ptr, i64)\ndeclare i64 @qiq_map_iteration_end(ptr)\ndeclare i64 @qiq_map_version(ptr)\ndeclare zeroext i1 @qiq_map_entry_live(ptr, i64, i64)\ndeclare zeroext i1 @qiq_map_find(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_map_has(ptr, i64)\ndeclare void @qiq_map_remove(ptr, i64)\ndeclare ptr @qiq_map_keys(ptr, i64, i32)\ndeclare ptr @qiq_map_values(ptr, i64, i32)\ndeclare zeroext i1 @qiq_map_contains_value(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_values_equal(ptr, ptr, ptr)\ndeclare i64 @qiq_map_key_at(ptr, i64)\ndeclare i64 @qiq_map_value_at(ptr, i64)\ndeclare i64 @qiq_string_len(ptr)\ndeclare ptr @qiq_sprintf(ptr, ptr, ptr, i64)\ndeclare void @qiq_bind_values(ptr, ptr, i64)\ndeclare ptr @qiq_json_encode(ptr, i64, i1 zeroext)\ndeclare i64 @qiq_json_decode(ptr, ptr)\ndeclare i64 @qiq_csv_decode(ptr, ptr, ptr)\ndeclare ptr @qiq_csv_encode(ptr, ptr, ptr, ptr)\ndeclare i32 @qiq_string_equality(ptr, ptr)\ndeclare i32 @qiq_string_compare(ptr, ptr)\ndeclare ptr @qiq_string_char_at(ptr, i64)\ndeclare ptr @qiq_string_concat(ptr, ptr)\ndeclare i64 @qiq_int_divide(i64, i64)\ndeclare i64 @qiq_int_modulo(i64, i64)\ndeclare i64 @qiq_int_power(i64, i64)\ndeclare i64 @qiq_int_power_unchecked(i64, i64)\ndeclare i64 @qiq_int_shift_left(i64, i64)\ndeclare i64 @qiq_int_shift_right(i64, i64)\ndeclare double @llvm.pow.f64(double, double)\ndeclare double @llvm.fabs.f64(double)\ndeclare i64 @qiq_math_min_int(ptr)\ndeclare i64 @qiq_math_max_int(ptr)\ndeclare double @qiq_math_min_double(ptr)\ndeclare double @qiq_math_max_double(ptr)\ndeclare i64 @qiq_math_clamp_int(i64, i64, i64)\ndeclare double @qiq_math_clamp_double(double, double, double)\ndeclare void @qiq_uncaught(ptr, ptr)\ndeclare ptr @qiq_array_new(i64, i64, i32)\ndeclare void @qiq_set_arguments(i32, ptr)\ndeclare void @qiq_check_callable(ptr)\ndeclare void @qiq_array_push(ptr, i64, i64)\ndeclare i64 @qiq_range_plan(i64, i64, i64, i1 zeroext, ptr)\ndeclare ptr @qiq_range_int(i64, i64, i64, i1 zeroext)\ndeclare ptr @qiq_range_count(i64)\ndeclare ptr @qiq_range_double(double, double, double, i1 zeroext)\ndeclare ptr @qiq_range_char(ptr, ptr, i64, i1 zeroext)\ndeclare i64 @qiq_array_pop(ptr, i64)\ndeclare i64 @qiq_array_shift(ptr, i64)\ndeclare void @qiq_array_insert(ptr, i64, i64, i64)\ndeclare ptr @qiq_array_splice(ptr, i64, i64, i64, i1 zeroext, ptr)\ndeclare i64 @qiq_array_length(ptr)\ndeclare i64 @qiq_len_string(ptr)\ndeclare i64 @qiq_len_array(ptr)\ndeclare i64 @qiq_len_map(ptr)\ndeclare void @qiq_array_check_index(ptr, i64)\ndeclare void @qiq_print_value(ptr, i64)\ndeclare ptr @qiq_describe_value(ptr, i64)\ndeclare void @qiq_print_space()\ndeclare void @qiq_print_newline()\ndeclare i64 @qiq_double_to_int(double)\ndeclare zeroext i8 @qiq_int_to_byte(i64)\ndeclare i64 @qiq_string_to_int(ptr)\ndeclare double @qiq_string_to_double(ptr)\ndeclare ptr @qiq_int_to_string(i64)\ndeclare ptr @qiq_double_to_string(double)\n",
+            "\ndeclare i32 @printf(ptr, ...)\ndeclare i32 @strcmp(ptr, ptr)\ndeclare ptr @calloc(i64, i64)\ndeclare ptr @qiq_map_new(i32, i32)\ndeclare void @qiq_retain(ptr)\ndeclare void @qiq_release(ptr)\ndeclare ptr @qiq_object_new(i64, i64)\ndeclare void @qiq_map_set(ptr, i64, i64)\ndeclare i64 @qiq_map_get(ptr, i64)\ndeclare i64 @qiq_map_iteration_end(ptr)\ndeclare i64 @qiq_map_version(ptr)\ndeclare zeroext i1 @qiq_map_entry_live(ptr, i64, i64)\ndeclare zeroext i1 @qiq_map_find(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_map_has(ptr, i64)\ndeclare void @qiq_map_remove(ptr, i64)\ndeclare ptr @qiq_map_keys(ptr, i64, i32)\ndeclare ptr @qiq_map_values(ptr, i64, i32)\ndeclare zeroext i1 @qiq_map_contains_value(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_values_equal(ptr, ptr, ptr)\ndeclare i64 @qiq_map_key_at(ptr, i64)\ndeclare i64 @qiq_map_value_at(ptr, i64)\ndeclare ptr @qiq_map_merge(ptr, ptr)\ndeclare ptr @qiq_map_filter_keys(ptr, ptr, i1 zeroext)\ndeclare ptr @qiq_map_filter_entries(ptr, ptr, ptr, i1 zeroext)\ndeclare ptr @qiq_map_flip(ptr, i32, i32)\ndeclare i64 @qiq_string_len(ptr)\ndeclare ptr @qiq_sprintf(ptr, ptr, ptr, i64)\ndeclare void @qiq_bind_values(ptr, ptr, i64)\ndeclare ptr @qiq_json_encode(ptr, i64, i1 zeroext)\ndeclare i64 @qiq_json_decode(ptr, ptr)\ndeclare i64 @qiq_csv_decode(ptr, ptr, ptr)\ndeclare ptr @qiq_csv_encode(ptr, ptr, ptr, ptr)\ndeclare i32 @qiq_string_equality(ptr, ptr)\ndeclare i32 @qiq_string_compare(ptr, ptr)\ndeclare ptr @qiq_string_char_at(ptr, i64)\ndeclare ptr @qiq_string_concat(ptr, ptr)\ndeclare i64 @qiq_int_divide(i64, i64)\ndeclare i64 @qiq_int_modulo(i64, i64)\ndeclare i64 @qiq_int_power(i64, i64)\ndeclare i64 @qiq_int_power_unchecked(i64, i64)\ndeclare i64 @qiq_int_shift_left(i64, i64)\ndeclare i64 @qiq_int_shift_right(i64, i64)\ndeclare double @llvm.pow.f64(double, double)\ndeclare double @llvm.fabs.f64(double)\ndeclare i64 @qiq_math_min_int(ptr)\ndeclare i64 @qiq_math_max_int(ptr)\ndeclare double @qiq_math_min_double(ptr)\ndeclare double @qiq_math_max_double(ptr)\ndeclare i64 @qiq_math_clamp_int(i64, i64, i64)\ndeclare double @qiq_math_clamp_double(double, double, double)\ndeclare void @qiq_uncaught(ptr, ptr)\ndeclare ptr @qiq_array_new(i64, i64, i32)\ndeclare void @qiq_set_arguments(i32, ptr)\ndeclare void @qiq_check_callable(ptr)\ndeclare void @qiq_array_push(ptr, i64, i64)\ndeclare i64 @qiq_range_plan(i64, i64, i64, i1 zeroext, ptr)\ndeclare ptr @qiq_range_int(i64, i64, i64, i1 zeroext)\ndeclare ptr @qiq_range_count(i64)\ndeclare ptr @qiq_range_double(double, double, double, i1 zeroext)\ndeclare ptr @qiq_range_char(ptr, ptr, i64, i1 zeroext)\ndeclare i64 @qiq_array_pop(ptr, i64)\ndeclare i64 @qiq_array_shift(ptr, i64)\ndeclare void @qiq_array_insert(ptr, i64, i64, i64)\ndeclare ptr @qiq_array_splice(ptr, i64, i64, i64, i1 zeroext, ptr)\ndeclare i64 @qiq_array_length(ptr)\ndeclare i64 @qiq_len_string(ptr)\ndeclare i64 @qiq_len_array(ptr)\ndeclare i64 @qiq_len_map(ptr)\ndeclare void @qiq_array_check_index(ptr, i64)\ndeclare void @qiq_print_value(ptr, i64)\ndeclare ptr @qiq_describe_value(ptr, i64)\ndeclare void @qiq_print_space()\ndeclare void @qiq_print_newline()\ndeclare i64 @qiq_double_to_int(double)\ndeclare zeroext i8 @qiq_int_to_byte(i64)\ndeclare i64 @qiq_string_to_int(ptr)\ndeclare double @qiq_string_to_double(ptr)\ndeclare ptr @qiq_int_to_string(i64)\ndeclare ptr @qiq_double_to_string(double)\n",
         );
         ir.push_str(&extern_declarations);
         ir.push('\n');
@@ -6941,6 +6947,9 @@ impl Emitter {
         if matches!(name, "map_key_exists" | "map_keys" | "map_values" | "in_map" | "unset") {
             return self.emit_map_function(name, arguments, variables, body);
         }
+        if matches!(name, "map_merge" | "map_diff_keys" | "map_intersect_keys" | "map_diff" | "map_intersect" | "map_flip") {
+            return self.emit_map_combination(name, arguments, variables, body);
+        }
         if name == "json_decode" {
             return Err(
                 "json_decode needs to know the type to decode into: use it where the type is known, such as `User user = json_decode(text);` or `int[] ids = json_decode(text);`"
@@ -8091,6 +8100,116 @@ impl Emitter {
     /// The map functions: `map_key_exists(key, map)`, `map_keys(map)`,
     /// `map_values(map)`, `in_map(value, map)`, and `unset(map[key])`. Built
     /// in because they work with any key and value types.
+    /// map_merge, map_diff_keys, map_intersect_keys, map_diff, map_intersect,
+    /// and map_flip: each makes a new map from maps whose types fit (see
+    /// map.c). map_merge and map_diff and map_intersect need maps of the same
+    /// type; map_diff_keys and map_intersect_keys only compare keys, so they
+    /// need the same key type, and keep the first map's values.
+    fn emit_map_combination(
+        &mut self,
+        name: &str,
+        arguments: &[Expr],
+        variables: &HashMap<String, Value>,
+        body: &mut String,
+    ) -> Result<Value, String> {
+        if arguments.iter().any(|argument| matches!(argument, Expr::NamedArgument(..))) {
+            return Err(format!("{name} takes no named arguments"));
+        }
+        let (count_ok, expected) = match name {
+            "map_merge" => (arguments.len() >= 2, "two or more maps"),
+            "map_flip" => (arguments.len() == 1, "1 map"),
+            _ => (arguments.len() == 2, "2 maps"),
+        };
+        if !count_ok {
+            return Err(format!("{name} expects {expected}, found {} argument{}", arguments.len(), if arguments.len() == 1 { "" } else { "s" }));
+        }
+        let mut maps = Vec::new();
+        for argument in arguments {
+            let map = self.emit_expression(argument, variables, body)?;
+            if !matches!(map.value_type, ValueType::Map(_)) {
+                return Err(format!("{name} expects maps, found {}", self.type_name(map.value_type)));
+            }
+            maps.push(map);
+        }
+        let signature = |this: &Self, map: &Value| match map.value_type {
+            ValueType::Map(id) => this.map_types[id as usize],
+            _ => unreachable!("checked above"),
+        };
+        let first = signature(self, &maps[0]);
+        let result_type = maps[0].value_type;
+        let register = self.new_register();
+        match name {
+            "map_flip" => {
+                if !first.value_type.is_scalar_key() {
+                    return Err(format!(
+                        "map_flip makes the values keys, and keys must be int, double, bool, string, or char, found {}",
+                        self.type_name(first.value_type)
+                    ));
+                }
+                let flipped = MapType { key_type: first.value_type, value_type: first.key_type };
+                let type_id = self.map_type_id(flipped);
+                body.push_str(&format!(
+                    "  {register} = call ptr @qiq_map_flip(ptr {}, i32 {}, i32 {})\n",
+                    maps[0].operand,
+                    first.value_type.runtime_tag()?,
+                    self.contents_flags(first.key_type)
+                ));
+                self.emit_exception_check(body);
+                return Ok(self.own(Value { value_type: ValueType::Map(type_id), operand: register, slot: None }));
+            }
+            "map_diff_keys" | "map_intersect_keys" => {
+                let second = signature(self, &maps[1]);
+                if second.key_type != first.key_type {
+                    return Err(format!(
+                        "{name} compares keys, which must be the same type: found {} and {}",
+                        self.type_name(maps[0].value_type),
+                        self.type_name(maps[1].value_type)
+                    ));
+                }
+                let present = name == "map_intersect_keys";
+                body.push_str(&format!(
+                    "  {register} = call ptr @qiq_map_filter_keys(ptr {}, ptr {}, i1 {present})\n",
+                    maps[0].operand, maps[1].operand
+                ));
+            }
+            _ => {
+                for map in &maps[1..] {
+                    if map.value_type != result_type {
+                        return Err(format!(
+                            "{name} needs maps of the same type, found {} and {}",
+                            self.type_name(result_type),
+                            self.type_name(map.value_type)
+                        ));
+                    }
+                }
+                if name == "map_merge" {
+                    // a, then b, c, ...: each merged into the result so far.
+                    let mut merged = maps[0].operand.clone();
+                    for (index, map) in maps[1..].iter().enumerate() {
+                        let next = if index + 2 == maps.len() { register.clone() } else { self.new_register() };
+                        body.push_str(&format!("  {next} = call ptr @qiq_map_merge(ptr {merged}, ptr {})\n", map.operand));
+                        self.emit_exception_check(body);
+                        if index + 2 < maps.len() {
+                            // An intermediate map: released when the statement ends.
+                            self.own(Value { value_type: result_type, operand: next.clone(), slot: None });
+                        }
+                        merged = next;
+                    }
+                    return Ok(self.own(Value { value_type: result_type, operand: register, slot: None }));
+                }
+                let descriptor = self.type_descriptor(first.value_type);
+                let descriptor = self.string_literal(descriptor.as_bytes());
+                let present = name == "map_intersect";
+                body.push_str(&format!(
+                    "  {register} = call ptr @qiq_map_filter_entries(ptr {}, ptr {}, ptr {descriptor}, i1 {present})\n",
+                    maps[0].operand, maps[1].operand
+                ));
+            }
+        }
+        self.emit_exception_check(body);
+        Ok(self.own(Value { value_type: result_type, operand: register, slot: None }))
+    }
+
     fn emit_map_function(
         &mut self,
         name: &str,
@@ -12080,6 +12199,20 @@ mod tests {
         assert!(ir.contains("@qiq_stdlib___regex_scan"));
         // A pattern without a subject is a type error.
         assert!(compile_source("import preg_match from \"std/regex\"; preg_match(\"a\");").is_err());
+    }
+
+    #[test]
+    fn map_combinations_check_their_types() {
+        let error = |body: &str| compile_source(body).unwrap_err();
+        assert!(error("print(map_merge({\"a\" => 1}, {\"a\" => \"x\"}));").contains("map_merge needs maps of the same type, found map[string, int] and map[string, string]"));
+        assert!(error("print(map_intersect_keys({\"a\" => 1}, {1 => 1}));").contains("map_intersect_keys compares keys, which must be the same type"));
+        assert!(error("print(map_flip({\"a\" => [1]}));").contains("map_flip makes the values keys"));
+        assert!(error("print(map_merge({\"a\" => 1}));").contains("map_merge expects two or more maps, found 1 argument"));
+        // The *_keys functions compare keys only: the values can differ.
+        assert!(compile_source("map[string, int] a = map_diff_keys({\"a\" => 1}, {\"a\" => true});").is_ok());
+        // map_flip's result has the keys and values swapped.
+        assert!(compile_source("map[int, string] codes = map_flip({\"OK\" => 200});").is_ok());
+        assert!(error("map[string, int] wrong = map_flip({\"OK\" => 200});").contains("map[int, string]"));
     }
 
     #[test]

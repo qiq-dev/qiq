@@ -1,0 +1,10 @@
+{"port" => 8080, "workers" => 4, "debug" => 0, "timeout" => 30} {"port" => 80, "workers" => 4, "debug" => 0}
+{"a" => 3, "b" => 2, "c" => 4} true
+{"name" => "Ada", "email" => "ada@example.com"} {"admin" => "1"}
+{"cake" => 1, "jam" => 2} {"tea" => 3} {"cake" => 5, "bread" => 1}
+{1 => [1, 2]} 0
+["a"]
+{1 => "uno", 2 => "two"} {"a" => 1, "b" => 2} {true => 'x', false => 'y'}
+Not Found
+{} {} {} {}
+error: map_flip: a value is null, which can't be a key
