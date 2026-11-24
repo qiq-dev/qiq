@@ -1,0 +1,64 @@
+// The conditional operator: condition ? a : b.
+
+class Animal {
+    function name(): string { return "animal"; }
+}
+class Dog extends Animal {
+    function name(): string { return "dog"; }
+}
+class Cat extends Animal {
+    function name(): string { return "cat"; }
+}
+
+function plural(int n, string word): string {
+    return f"{n} {word}{n == 1 ? "" : "s"}";
+}
+
+function size(int n): string {
+    return n == 0 ? "none" : n < 10 ? "few" : "many";
+}
+
+function loud(string s): string {
+    print("evaluated " + s);
+    return s;
+}
+
+function fail(): string {
+    throw new Exception("not this one");
+}
+
+function run(): void {
+    int x = 5;
+    print(x > 3 ? "big" : "small");
+    print(x % 2 == 0 ? x / 2 : x * 3 + 1);
+    print(plural(1, "apple"), plural(3, "apple"));
+    print(size(0), size(4), size(40));
+
+    // Only the branch chosen runs.
+    print(x > 0 ? loud("yes") : loud("no"));
+    print(x < 0 ? fail() : "safe");
+
+    // null, [], and {} take the other branch's type.
+    string missing = x > 10 ? "found" : null;
+    print(missing ?? "not found");
+    int[] evens = x > 10 ? [x] : [];
+    print(len(evens));
+    map[string, int] counts = x > 1 ? {"x" => x} : {};
+    print(counts);
+
+    // Objects of related classes give the class they share.
+    Animal pet = x > 1 ? new Dog() : new Cat();
+    print(pet->name());
+
+    // Inside expressions, conditions, and f-strings.
+    print("a" + (x > 1 ? "b" : "c") + "d");
+    if (x > 1 ? x < 10 : false) {
+        print("between");
+    }
+    double price = 2.5;
+    print(f"{x > 1 ? price * 2.0 : price:.2f}");
+    function(int): int step = x > 1 ? fn(int v) => v + 1 : fn(int v) => v - 1;
+    print(step(10));
+}
+
+run();

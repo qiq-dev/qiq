@@ -65,6 +65,8 @@ enum TokenKind {
     OrOr,
     /// `??`
     QuestionQuestion,
+    /// `?`, of `condition ? a : b`
+    Question,
     /// `?->`
     NullsafeArrow,
     FatArrow,
@@ -172,6 +174,8 @@ fn lex_fstring(chars: &[char], cursor: &mut usize, line: usize, column: &mut usi
                 let mut expression = String::new();
                 let mut spec: Option<String> = None;
                 let mut depth = 0usize;
+                // `?`s of `a ? b : c` waiting for their ':', which isn't a spec.
+                let mut questions = 0usize;
                 loop {
                     let Some(&c) = chars.get(*cursor) else {
                         return Err(format!("{}: '{{' in an f-string without a closing '}}'", at(open_column)));
@@ -230,6 +234,14 @@ fn lex_fstring(chars: &[char], cursor: &mut usize, line: usize, column: &mut usi
                             *column += 2;
                             continue;
                         }
+                        '?' if depth == 0 && chars.get(*cursor + 1) == Some(&'?') => {
+                            expression.push_str("??");
+                            *cursor += 2;
+                            *column += 2;
+                            continue;
+                        }
+                        '?' if depth == 0 && chars.get(*cursor + 1) != Some(&'-') => questions += 1,
+                        ':' if depth == 0 && questions > 0 => questions -= 1,
                         ':' if depth == 0 => {
                             spec = Some(String::new());
                             *cursor += 1;
@@ -680,6 +692,7 @@ fn lex(source: &str) -> Result<Vec<Token>, String> {
                     column += 1;
                     TokenKind::QuestionQuestion
                 }
+                '?' => TokenKind::Question,
                 // `op=`: compound assignment.
                 '+' | '-' | '*' | '/' | '%' | '&' | '|' | '^' if chars.get(cursor) == Some(&'=') => {
                     cursor += 1;
@@ -1176,6 +1189,9 @@ enum Expr {
     /// `left ?? right`: `left` unless it's a missing map key, an array index
     /// out of range, or null; then `right`, evaluated only in that case.
     Coalesce(Box<Expr>, Box<Expr>),
+    /// `condition ? a : b`: `a` if the bool `condition` is true, else `b`;
+    /// only the one chosen is evaluated.
+    Ternary(Box<Expr>, Box<Expr>, Box<Expr>),
     /// An anonymous function.
     Closure(Box<Closure>),
     /// Calling a function value: `makeAdder(2)(3)`, `(object->callback)(x)`.
@@ -2678,11 +2694,25 @@ impl Parser {
     /// then `**` (right-associative), so `-2 ** 2` is `-4`. Bitwise operators
     /// bind tighter than comparisons (as in Rust and Python, unlike C and PHP),
     /// so `x & 1 == 0` means `(x & 1) == 0`.
+    /// The lowest precedence: `a ? b : c`, which nests to the right, as
+    /// `a ? b : c ? d : e` means `a ? b : (c ? d : e)`.
     fn parse_expression(&mut self) -> Result<Expr, String> {
+        let condition = self.parse_coalesce()?;
+        if matches!(self.current().kind, TokenKind::Question) {
+            self.advance();
+            let then = self.parse_expression()?;
+            self.expect(TokenKind::Colon, "expected ':' and the value for when the condition is false")?;
+            let otherwise = self.parse_expression()?;
+            return Ok(Expr::Ternary(Box::new(condition), Box::new(then), Box::new(otherwise)));
+        }
+        Ok(condition)
+    }
+
+    fn parse_coalesce(&mut self) -> Result<Expr, String> {
         let left = self.parse_or()?;
         if matches!(self.current().kind, TokenKind::QuestionQuestion) {
             self.advance();
-            let right = self.parse_expression()?;
+            let right = self.parse_coalesce()?;
             return Ok(Expr::Coalesce(Box::new(left), Box::new(right)));
         }
         Ok(left)
@@ -7631,6 +7661,92 @@ impl Emitter {
         Ok(self.own(Value { value_type, operand: result, slot: None }))
     }
 
+    /// `condition ? then : otherwise`. Only the branch chosen runs; its
+    /// value goes through a stack slot (holding one reference, for
+    /// reference types), as with `??`. The branches must have the same type,
+    /// except that `null` takes the other's type when it's a reference, and
+    /// objects of related classes take the more general class. `expected`,
+    /// the type the result is used as, types a `null`, `[]`, or `{}` branch.
+    fn emit_ternary(
+        &mut self,
+        condition: &Expr,
+        then: &Expr,
+        otherwise: &Expr,
+        expected: Option<ValueType>,
+        variables: &HashMap<String, Value>,
+        body: &mut String,
+    ) -> Result<Value, String> {
+        let condition = self.emit_expression(condition, variables, body)?;
+        if condition.value_type != ValueType::Bool {
+            return Err(format!("the condition of '?:' must be a bool, found {}", self.type_name(condition.value_type)));
+        }
+        let id = self.next_label;
+        self.next_label += 1;
+        let then_label = format!("ternary.then{id}");
+        let else_label = format!("ternary.else{id}");
+        let end_label = format!("ternary.end{id}");
+        body.push_str(&format!("  br i1 {}, label %{then_label}, label %{else_label}\n", condition.operand));
+        // A branch that needs a type to have one (`null`, `[]`, `{}`) is
+        // emitted second, so it can take the other branch's type.
+        let expected = expected.filter(|expected| !matches!(expected, ValueType::Void | ValueType::Null));
+        let needs_type = |expression: &Expr| match expression {
+            Expr::Null => true,
+            Expr::ArrayLiteral(elements) => elements.is_empty(),
+            Expr::MapLiteral(entries) => entries.is_empty(),
+            _ => false,
+        };
+        let then_first = expected.is_some() || !needs_type(then) || needs_type(otherwise);
+        let order = if then_first { [(then, &then_label), (otherwise, &else_label)] } else { [(otherwise, &else_label), (then, &then_label)] };
+        // Each branch's type and the reference it hands over, and the block
+        // its value is ready in (where the store goes, once the type is known).
+        let mut branches: Vec<(ValueType, String, usize)> = Vec::new();
+        for (expression, label) in order {
+            body.push_str(&format!("{label}:\n"));
+            let hint = expected.or(branches.first().map(|branch| branch.0).filter(|first| *first != ValueType::Null));
+            self.open_scope();
+            let value = self.emit_expecting(expression, hint, variables, body)?;
+            // A call to a void function gives a null value; it's not one.
+            if value.value_type == ValueType::Void || (value.value_type == ValueType::Null && !matches!(expression, Expr::Null | Expr::Ternary(..))) {
+                return Err("a branch of '?:' has no value (it calls a void function)".to_string());
+            }
+            let operand = self.take(&value, body);
+            self.close_scope(body);
+            branches.push((value.value_type, operand, body.len()));
+            // The store and branch to the end are inserted here, below.
+            body.push_str(&format!("  br label %{end_label}\n"));
+        }
+        let (first, second) = (branches[0].0, branches[1].0);
+        let value_type = if first == second {
+            first
+        } else if first == ValueType::Null && is_reference(second) {
+            second
+        } else if second == ValueType::Null && is_reference(first) {
+            first
+        } else if self.is_assignable(first, second) {
+            first
+        } else if self.is_assignable(second, first) {
+            second
+        } else if let Some(expected) = expected.filter(|expected| self.is_assignable(*expected, first) && self.is_assignable(*expected, second)) {
+            expected
+        } else {
+            let (then_type, else_type) = if then_first { (first, second) } else { (second, first) };
+            return Err(format!(
+                "both branches of '?:' must be the same type; found {} and {}",
+                self.type_name(then_type),
+                self.type_name(else_type)
+            ));
+        };
+        let slot = self.new_register();
+        self.entry_allocas.push_str(&format!("  {slot} = alloca {}, align 8\n", value_type.llvm()));
+        // Insert the stores, the later one first so the earlier position stays right.
+        for (_, operand, position) in branches.iter().rev() {
+            body.insert_str(*position, &format!("  store {} {operand}, ptr {slot}, align 8\n", value_type.llvm()));
+        }
+        let result = self.new_register();
+        body.push_str(&format!("{end_label}:\n  {result} = load {}, ptr {slot}, align 8\n", value_type.llvm()));
+        Ok(self.own(Value { value_type, operand: result, slot: None }))
+    }
+
     /// `range(start, end, step)`'s arguments: their element type (int,
     /// double, or char) and their values, ints converted to doubles when
     /// any of them is a double. `range(count)` has one value, an int: it
@@ -9135,6 +9251,7 @@ impl Emitter {
             Expr::ArrayLiteral(elements) => self.emit_array_literal(elements, expected, variables, body),
             Expr::MapLiteral(entries) => self.emit_map_literal(entries, expected, variables, body),
             Expr::Closure(closure) => self.emit_closure(closure, expected, variables, body),
+            Expr::Ternary(condition, then, otherwise) => self.emit_ternary(condition, then, otherwise, expected, variables, body),
             // Database::queryAs reads rows into the type its result is used as.
             Expr::MethodCall(_, name, _) if matches!(name.as_str(), "queryAs" | "queryOneAs" | "nextAs" | "fetchAs") => {
                 self.call_expectation = expected;
@@ -10953,6 +11070,7 @@ impl Emitter {
                 self.emit_comparison(left, *operator, right, body)
             }
             Expr::Coalesce(left, right) => self.emit_coalesce(left, right, variables, body),
+            Expr::Ternary(condition, then, otherwise) => self.emit_ternary(condition, then, otherwise, None, variables, body),
             Expr::Closure(closure) => self.emit_closure(closure, None, variables, body),
             Expr::CallValue(callee, arguments) => {
                 let callee = self.emit_expression(callee, variables, body)?;
@@ -11454,6 +11572,7 @@ fn expression_names(expression: &Expr, used: &mut std::collections::BTreeSet<Str
             used.insert(name.clone());
             each(&arguments.iter().collect::<Vec<_>>(), used, declared);
         }
+        Expr::Ternary(condition, then, otherwise) => each(&[condition, then, otherwise], used, declared),
         Expr::Binary(_, a, b) | Expr::Compare(_, a, b) | Expr::Logical(_, a, b) | Expr::Coalesce(a, b) | Expr::Index(a, b) => {
             each(&[a, b], used, declared)
         }
@@ -12802,6 +12921,11 @@ mod tests {
         assert!(kinds(r#"f"{A::b}""#).contains(&"DoubleColon".to_string()));
         assert!(kinds(r#"f"{g(a: 1)}""#).contains(&"Colon".to_string()));
         assert!(kinds(r#"f"{len({"a" => 1})}""#).contains(&"Text(\"a\")".to_string()));
+        // The ':' of `a ? b : c` isn't a format spec; one after it is.
+        assert!(kinds(r#"f"{a ? b : c}""#).contains(&"Colon".to_string()));
+        assert!(kinds(r#"f"{a ? b : c:.2f}""#).contains(&"Text(\"%.2f\")".to_string()));
+        assert!(kinds(r#"f"{a ?? b:5d}""#).contains(&"Text(\"%5d\")".to_string()));
+        assert!(kinds(r#"f"{a?->b():5d}""#).contains(&"Text(\"%5d\")".to_string()));
         // An identifier f followed by a space isn't an f-string.
         assert!(kinds(r#"f "x""#).starts_with(&["Identifier(\"f\")".to_string()]));
 
@@ -13823,6 +13947,40 @@ mod tests {
         }
         // Right-associative, below ||.
         assert!(compile_source("map[string, bool] m = {}; bool b = m[\"a\"] ?? m[\"b\"] ?? false || true;").is_ok());
+    }
+
+    #[test]
+    fn ternary_evaluates_one_branch_and_needs_one_type() {
+        let main = main_ir(&compile_source("int n = 1; string s = n > 0 ? \"a\" : \"b\";").unwrap()).to_string();
+        assert!(main.contains("label %ternary.then0, label %ternary.else0"), "{main}");
+        assert!(main.contains("ternary.end0:"), "{main}");
+        // null, [], and {} take the other branch's type, or the type expected.
+        for source in [
+            "int n = 1; string s = n > 0 ? null : \"b\";",
+            "int n = 1; print(n > 0 ? null : \"b\");",
+            "int n = 1; int[] xs = n > 0 ? [] : [];",
+            "int n = 1; print(n > 0 ? [] : [n]);",
+            "int n = 1; map[string, int] m = n > 0 ? {} : {\"a\" => n};",
+            "class A {} class B extends A {} class C extends A {} int n = 1; A a = n > 0 ? new B() : new C();",
+            "class A {} class B extends A {} int n = 1; A a = n > 0 ? new B() : new A();",
+            // Right-associative, below ?? and ||.
+            "int n = 1; string s = n == 0 ? \"zero\" : n == 1 ? \"one\" : \"many\";",
+            "int n = 1; bool b = n > 0 || n < 0 ? false : true;",
+            "string s = null; int n = 1; string t = n > 0 ? s ?? \"x\" : \"y\";",
+        ] {
+            assert!(compile_source(source).is_ok(), "{source}: {:?}", compile_source(source).err());
+        }
+        for (source, error) in [
+            ("int n = 1; print(n ? 1 : 2);", "the condition of '?:' must be a bool, found int"),
+            ("int n = 1; print(n > 0 ? 1 : 2.5);", "both branches of '?:' must be the same type; found int and double"),
+            ("int n = 1; print(n > 0 ? 1 : null);", "both branches of '?:' must be the same type; found int and null"),
+            ("class A {} class B {} int n = 1; print(n > 0 ? new A() : new B());", "both branches of '?:' must be the same type; found A and B"),
+            ("function f(): void {} int n = 1; print(n > 0 ? f() : \"x\");", "a branch of '?:' has no value"),
+            ("int n = 1; print(n > 0 ? 1);", "1:27: expected ':' and the value for when the condition is false"),
+        ] {
+            let message = compile_source(source).unwrap_err();
+            assert!(message.contains(error), "{source}: {message}");
+        }
     }
 
     #[test]

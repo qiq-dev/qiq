@@ -113,9 +113,33 @@ en
 
 <ul>
 <li>The left side must be a map or array element, or a string, char, array, map, or object that can be <code>null</code>. The right side must have the same type, and can be <code>null</code> for those types.</li>
-<li><code>??</code> has the lowest precedence of all operators and groups to the right, so <code>a ?? b ?? c</code> tries <code>a</code>, then <code>b</code>, then <code>c</code>.</li>
+<li><code>??</code> has a lower precedence than every operator except <code>?:</code>, and groups to the right, so <code>a ?? b ?? c</code> tries <code>a</code>, then <code>b</code>, then <code>c</code>.</li>
 <li>As in PHP, a <code>null</code> object earlier in a chain throws rather than counting as missing: <code>user-&gt;address-&gt;city ?? ""</code> throws when <code>user</code> is <code>null</code>. Write <code>user?-&gt;address?-&gt;city ?? ""</code> instead, with the <a href="classes.html#nullsafe">nullsafe operator</a>.</li>
 </ul>
+
+<h2>The conditional operator</h2>
+<p><code>condition ? a : b</code> gives <code>a</code> when the <code>bool</code> <code>condition</code> is true, and <code>b</code> otherwise. Only the one chosen is evaluated. It's an <code>if</code> that gives a value:</p>
+
+```qiq
+int count = 3;
+print(f"{count} item{count == 1 ? "" : "s"}");
+string size = count == 0 ? "none" : count < 10 ? "few" : "many";
+print(size);
+string[] picked = count > 5 ? ["all"] : [];
+print(picked);
+```
+```output
+3 items
+few
+[]
+```
+
+<ul>
+<li>The condition must be a <code>bool</code>: <code>count ? a : b</code> is an error; write <code>count != 0 ? a : b</code>.</li>
+<li>Both branches must have the same type, since qiq never converts between types: <code>ok ? 1 : 2.5</code> is an error. A <code>null</code>, <code>[]</code>, or <code>{}</code> branch takes the other branch's type, or the type the result is used as. An object of a class and one of its subclass give the class; objects of two subclasses of <code>Animal</code> can be used where an <code>Animal</code> is expected.</li>
+<li><code>?:</code> has the lowest precedence of all operators, and groups to the right, so <code>a ? b : c ? d : e</code> means <code>a ? b : (c ? d : e)</code>, an else-if chain. In an f-string, the <code>:</code> of a <code>?:</code> doesn't start a format spec; one after it does: <code>{ok ? price : 0.0:.2f}</code>.</li>
+</ul>
+<div class="note"><strong>Note:</strong> PHP 8 rejects <code>a ? b : c ? d : e</code> without parentheses, because older PHP grouped it to the left; qiq groups it to the right, as C and JavaScript do. qiq has no short <code>a ?: b</code>; use <code>??</code> for a value that may be <code>null</code>.</div>
 
 <h2>Logical operators</h2>
 <table>
@@ -164,6 +188,8 @@ true
 <table>
 <thead><tr><th>Operators</th><th>Notes</th></tr></thead>
 <tbody>
+<tr><td><code>? :</code></td><td>Groups right to left</td></tr>
+<tr><td><code>??</code></td><td>Groups right to left</td></tr>
 <tr><td><code>||</code></td><td></td></tr>
 <tr><td><code>&amp;&amp;</code></td><td></td></tr>
 <tr><td><code>==</code> <code>!=</code></td><td></td></tr>
