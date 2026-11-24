@@ -17,5 +17,10 @@
     tests/testing.qiq:67: not written yet
 --- FAIL: test_uncaught (0.00s)
     uncaught OutOfRangeException: index 1 is out of range for an array of length 0
-2 passed, 9 failed, 1 skipped
+(tearDown 1)
+(tearDown 2)
+(tearDown 3)
+--- FAIL: WalletTest::test_method_failure (0.00s)
+    tests/testing.qiq:107: expected "$4.99", found "$5.00"
+4 passed, 10 failed, 1 skipped
 FAIL	tests/testing.qiq	0.00s

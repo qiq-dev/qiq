@@ -66,6 +66,38 @@ FAIL	slug.qiq	0.74s
 <p><code>equal</code> and <code>notEqual</code> take any two values of the same type, and comparing values of different types, such as <code>t-&gt;equal(count, "3")</code>, is a compile error. A failure shows both values as <code>print</code> writes them inside an array, with strings quoted, so <code>"3"</code> and <code>3</code> look different, and with doubles in full: <code>expected 0.3, found 0.30000000000000004</code>.</p>
 <p>Two more methods don't fail: <code>t-&gt;log(message)</code> notes something, shown if the test fails (or with <code>-v</code>), and <code>t-&gt;skip(reason)</code> stops the test, which counts as skipped. <code>t-&gt;name()</code> is the test's function name.</p>
 
+<h2>Test classes</h2>
+<p>Tests can also be public methods named <code>test_...</code> in a class, which suits tests that share a setup. Each test runs on a new instance of its class, so tests can't leak state into each other through its properties: its constructor and <code>setUp()</code>, if it has one, run first, and <code>tearDown()</code> runs after the test, even when the test fails. Both can come from a parent class.</p>
+
+```qiq
+import T from "std/testing";
+import Database from "std/sql";
+
+class AccountTest {
+    private Database db;
+
+    function setUp(): void {
+        this->db = Database::open("sqlite::memory:");
+        this->db->execute("CREATE TABLE accounts (id INTEGER PRIMARY KEY, balance INTEGER)");
+    }
+
+    function tearDown(): void {
+        this->db->close();
+    }
+
+    public function test_deposit(T t): void {
+        this->db->execute("INSERT INTO accounts (balance) VALUES (?)", 100);
+        t->equal(this->db->queryOne("SELECT balance FROM accounts")->getInt("balance"), 100);
+    }
+
+    public function test_starts_empty(T t): void {
+        t->equal(len(this->db->query("SELECT * FROM accounts")), 0);
+    }
+}
+```
+
+<p>A test method is reported as <code>AccountTest::test_deposit</code>, and <code>-run</code> matches that name, so <code>qiq test -run AccountTest</code> runs one class. Test functions and test classes can share a file; their tests run in the order they're written. The class needs a constructor that can be called without arguments; set things up in <code>setUp</code> instead. Abstract classes aren't run, so a base class can hold the setup that several test classes share.</p>
+
 <h2>Table-driven tests</h2>
 <p>Many cases of one check fit a loop over an array:</p>
 

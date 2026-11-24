@@ -11643,71 +11643,151 @@ pub struct TestProgram {
     pub tests: Vec<String>,
 }
 
-/// Compiles `path` for `qiq test`. A test is a top-level function in the file
-/// whose name starts with `test_`, which must take a T from std/testing and
-/// return void. The file's top-level statements don't run; main calls each
-/// test (whose name contains `filter`, if given) through std/testing's
-/// runner, which reports failures (and passes too when `verbose`) and exits
-/// with status 1 if any failed. Returns None for a file without tests.
+/// One test `qiq test` runs: its name as reported, where it's declared, and
+/// the function main calls with a T.
+struct FoundTest {
+    name: String,
+    line: usize,
+    column: usize,
+    function: String,
+}
+
+/// Compiles `path` for `qiq test`. A test is a top-level function whose name
+/// starts with `test_`, or a public method with such a name in a top-level
+/// class; either takes a T from std/testing and returns void. A test method
+/// runs on a new instance of its class, made with no arguments: its
+/// setUp() runs first and its tearDown() after, even if the test fails.
+/// The file's top-level statements don't run; main calls each test (whose
+/// name contains `filter`, if given; methods are named Class::test_x)
+/// through std/testing's runner, which reports failures (and passes too when
+/// `verbose`) and exits with status 1 if any failed. Returns None for a file
+/// without tests.
 pub fn compile_tests(path: &str, filter: Option<&str>, verbose: bool) -> Result<Option<TestProgram>, String> {
-    let read = |file: &Path| {
+    let entry_path = normalize_path(Path::new(path));
+    let read_file = |file: &Path| {
         if file.starts_with(STDLIB_ROOT) {
             read_stdlib(file)
         } else {
             std::fs::read_to_string(file).map_err(|error| format!("could not read {}: {error}", file.display()))
         }
     };
-    let mut program = load_program(Path::new(path), &read)?;
+    let mut program = load_program(Path::new(path), &read_file)?;
     let entry = program.modules[0].path.clone();
-    let mut tests: Vec<&Function> = program
-        .functions
-        .iter()
-        .filter(|function| function.module == 0 && function.name.starts_with("test_") && program.modules[0].functions.get(&function.name) == Some(&function.symbol))
-        .collect();
-    if tests.is_empty() {
-        return Ok(None);
-    }
-    tests.sort_by_key(|function| (function.line, function.column));
-    let testing = program
-        .modules
-        .iter()
-        .position(|module| module.is_stdlib && module.path.ends_with("testing.qiq"));
-    let t_class = testing.and_then(|testing| {
-        program.classes.iter().position(|class| class.name == "T" && class.module as usize == testing)
-    });
-    for test in &tests {
-        let takes_t = test.parameters.len() == 1 && t_class.is_some_and(|t| test.parameters[0].value_type == ValueType::Class(t as u32));
-        if !takes_t || test.return_type != ValueType::Void {
+    let testing = program.modules.iter().position(|module| module.is_stdlib && module.path.ends_with("testing.qiq"));
+    let t_class = testing.and_then(|testing| program.classes.iter().position(|class| class.name == "T" && class.module as usize == testing));
+    let takes_t = |function: &Function| {
+        function.parameters.len() == 1
+            && t_class.is_some_and(|t| function.parameters[0].value_type == ValueType::Class(t as u32))
+            && function.return_type == ValueType::Void
+    };
+    let mut found = Vec::new();
+    // Test functions.
+    for function in &program.functions {
+        if function.module != 0 || !function.name.starts_with("test_") || program.modules[0].functions.get(&function.name) != Some(&function.symbol) {
+            continue;
+        }
+        if !takes_t(function) {
             return Err(format!(
                 "{entry}:{}:{}: test function '{}' must take a T and return void: function {}(T t): void, with import T from \"std/testing\";",
-                test.line, test.column, test.name, test.name
+                function.line, function.column, function.name, function.name
             ));
         }
+        found.push(FoundTest { name: function.name.clone(), line: function.line, column: function.column, function: function.name.clone() });
     }
-    let names: Vec<String> = tests
-        .iter()
-        .map(|test| test.name.clone())
-        .filter(|name| filter.is_none_or(|filter| name.contains(filter)))
-        .collect();
-    let lines: HashMap<String, (usize, usize)> = tests.iter().map(|test| (test.name.clone(), (test.line, test.column))).collect();
+    // Test methods, in classes that can be made: each gets a wrapper function.
+    let mut wrappers = String::new();
+    let mut methods = Vec::new();
+    for (class_id, class) in program.classes.iter().enumerate() {
+        if class.module != 0 || class.is_interface || class.is_abstract {
+            continue;
+        }
+        let tests: Vec<&Function> = class.methods.iter().filter(|method| method.name.starts_with("test_")).collect();
+        if tests.is_empty() {
+            continue;
+        }
+        let at = |method: &Function| format!("{entry}:{}:{}", method.line, method.column);
+        for method in &tests {
+            if method.is_static || method.visibility != Visibility::Public || !takes_t(method) {
+                return Err(format!(
+                    "{}: test method '{}::{}' must be public, not static, take a T, and return void: public function {}(T t): void",
+                    at(method), class.name, method.name, method.name
+                ));
+            }
+        }
+        // The class's own method `name`, or one it inherits.
+        let find = |name: &str| {
+            let mut current = Some(class_id);
+            while let Some(id) = current {
+                if let Some(method) = program.classes[id].methods.iter().find(|method| method.name == name) {
+                    return Some(method);
+                }
+                current = program.classes[id].parent_class.map(|parent| parent as usize);
+            }
+            None
+        };
+        if let Some(constructor) = find("__construct") {
+            if constructor.parameters.iter().any(|parameter| parameter.default.is_none()) {
+                return Err(format!(
+                    "{}: test class '{}' needs a constructor without required arguments, as each test runs on a new instance (set things up in setUp)",
+                    at(constructor), class.name
+                ));
+            }
+        }
+        let mut hooks = Vec::new();
+        for hook in ["setUp", "tearDown"] {
+            if let Some(method) = find(hook) {
+                if method.is_static || method.visibility != Visibility::Public || !method.parameters.is_empty() || method.return_type != ValueType::Void {
+                    return Err(format!("{}: '{}::{hook}' must be public, not static, take nothing, and return void", at(method), class.name));
+                }
+                hooks.push(hook);
+            }
+        }
+        for method in tests {
+            let wrapper = format!("__qiq_test_{}", methods.len());
+            let set_up = if hooks.contains(&"setUp") { "\n    test->setUp();" } else { "" };
+            let run = if hooks.contains(&"tearDown") {
+                format!("\n    try {{\n        test->{}(t);\n    }} finally {{\n        test->tearDown();\n    }}", method.name)
+            } else {
+                format!("\n    test->{}(t);", method.name)
+            };
+            wrappers.push_str(&format!("\nfunction {wrapper}(__QiqT t): void {{\n    {} test = new {}();{set_up}{run}\n}}\n", class.name, class.name));
+            methods.push(FoundTest { name: format!("{}::{}", class.name, method.name), line: method.line, column: method.column, function: wrapper });
+        }
+    }
+    if found.is_empty() && methods.is_empty() {
+        return Ok(None);
+    }
+    if !methods.is_empty() {
+        // Load again with the wrappers at the end. The import goes on the
+        // first line, so the file's lines (which assertions report) keep
+        // their numbers; it names T anew in case the file imports it as
+        // something else.
+        let original = read_file(&entry_path)?;
+        let source = format!("import T as __QiqT from \"std/testing\"; {original}\n{wrappers}");
+        let read_with_wrappers = |file: &Path| if normalize_path(file) == entry_path { Ok(source.clone()) } else { read_file(file) };
+        program = load_program(Path::new(path), &read_with_wrappers)?;
+        found.extend(methods);
+    }
+    found.sort_by_key(|test| (test.line, test.column));
+    let tests: Vec<&FoundTest> = found.iter().filter(|test| filter.is_none_or(|filter| test.name.contains(filter))).collect();
     // The runner's functions, callable from the entry file.
     let testing = testing.expect("a test takes a T, so std/testing is loaded");
     for runner in ["__testing_start", "__testing_run", "__testing_finish"] {
         let symbol = program.modules[testing].functions.get(runner).cloned().ok_or("std/testing has no runner")?;
         program.modules[0].functions.insert(runner.to_string(), symbol);
     }
-    let call = |name: &str, arguments: Vec<Expr>, (line, column): (usize, usize)| Statement {
+    let call = |name: &str, arguments: Vec<Expr>, line: usize, column: usize| Statement {
         kind: StatementKind::Expression(Expr::Call(name.to_string(), arguments)),
         line,
         column,
     };
-    let mut statements = vec![call("__testing_start", vec![Expr::Boolean(verbose)], (1, 1))];
-    for name in &names {
-        statements.push(call("__testing_run", vec![Expr::Text(name.clone()), Expr::Variable(name.clone())], lines[name]));
+    let mut statements = vec![call("__testing_start", vec![Expr::Boolean(verbose)], 1, 1)];
+    for test in &tests {
+        statements.push(call("__testing_run", vec![Expr::Text(test.name.clone()), Expr::Variable(test.function.clone())], test.line, test.column));
     }
-    statements.push(call("__testing_finish", Vec::new(), (1, 1)));
+    statements.push(call("__testing_finish", Vec::new(), 1, 1));
     program.statements = statements;
-    Ok(Some(TestProgram { ir: emit_llvm(&program)?, tests: names }))
+    Ok(Some(TestProgram { ir: emit_llvm(&program)?, tests: tests.iter().map(|test| test.name.clone()).collect() }))
 }
 
 /// Compiles a qiq program from its entry file. Errors include the file path.
@@ -11907,6 +11987,17 @@ mod tests {
         assert_eq!(super::compile_tests(&tests, Some("_a"), false).unwrap().unwrap().tests, ["test_a"]);
         // The assertions say where they are.
         assert!(program.ir.contains("tool.qiq:4"), "{}", program.ir);
+        // Test classes: methods named Class::test_x, in source order with the
+        // functions, and T imported under another name.
+        let classes = file(
+            "classes.qiq",
+            "import T as Check from \"std/testing\";\nfunction test_one(Check t): void {}\nclass ATest {\n    function setUp(): void {}\n    public function test_two(Check t): void {}\n    function helper(): void {}\n}\nfunction test_three(Check t): void {}\n",
+        );
+        let program = super::compile_tests(&classes, None, false).unwrap().unwrap();
+        assert_eq!(program.tests, ["test_one", "ATest::test_two", "test_three"]);
+        assert_eq!(super::compile_tests(&classes, Some("ATest"), false).unwrap().unwrap().tests, ["ATest::test_two"]);
+        let constructor = super::compile_tests(&file("needs.qiq", "import T from \"std/testing\";\nclass N {\n    function __construct(int n) {}\n    function test_x(T t): void {}\n}\n"), None, false).unwrap_err();
+        assert!(constructor.contains("needs.qiq:3:14: test class 'N' needs a constructor without required arguments"), "{constructor}");
         // No tests: nothing to run.
         assert!(super::compile_tests(&file("plain.qiq", "print(1);\n"), None, false).unwrap().is_none());
         // A test_ function that doesn't take a T.

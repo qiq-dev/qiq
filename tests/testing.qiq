@@ -75,3 +75,40 @@ function test_uncaught(T t): void {
     int[] empty = [];
     print(empty[1]);
 }
+
+// Test classes: a new instance per test, with setUp before and tearDown
+// after (even when the test fails), inherited from a base class here.
+abstract class WalletTestBase {
+    protected Money balance;
+    public static int setUps = 0;
+
+    function setUp(): void {
+        this->balance = new Money(500);
+        WalletTestBase::setUps++;
+    }
+
+    function tearDown(): void {
+        println(f"(tearDown {WalletTestBase::setUps})");
+    }
+}
+
+class WalletTest extends WalletTestBase {
+    public function test_spend(T t): void {
+        this->balance = new Money(this->balance->cents - 200);
+        t->equal(this->balance->cents, 300);
+    }
+
+    public function test_new_instance(T t): void {
+        t->equal(this->balance->cents, 500);
+        t->equal(WalletTestBase::setUps, 2);
+    }
+
+    public function test_method_failure(T t): void {
+        t->equal(to_string(this->balance), "$4.99");
+    }
+
+    // Not a test: a helper.
+    function cents(): int {
+        return this->balance->cents;
+    }
+}
