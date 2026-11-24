@@ -3346,7 +3346,12 @@ impl Parser {
         let mut parameters: Vec<Parameter> = Vec::new();
         if !matches!(self.current().kind, TokenKind::RightParen) {
             loop {
-                let value_type = self.parse_value_type()?;
+                // A name alone, `fn(x) => ...`, takes its type from where the
+                // function is used (see emit_closure); until then it's Void,
+                // which no parameter can otherwise be.
+                let untyped = matches!(self.current().kind, TokenKind::Identifier(_))
+                    && matches!(self.tokens.get(self.cursor + 1).map(|token| &token.kind), Some(TokenKind::Comma | TokenKind::RightParen));
+                let value_type = if untyped { ValueType::Void } else { self.parse_value_type()? };
                 let name = self.expect_identifier("expected parameter name")?;
                 if matches!(self.current().kind, TokenKind::Equals) {
                     return Err(self.error("anonymous function parameters can't have defaults"));
@@ -7844,6 +7849,43 @@ impl Emitter {
         variables: &HashMap<String, Value>,
         body: &mut String,
     ) -> Result<Value, String> {
+        // Parameters written without a type take theirs from the function type
+        // expected here: a callback's parameter, a variable's declared type, a
+        // return type.
+        let typed;
+        let closure = if closure.parameters.iter().any(|parameter| parameter.value_type == ValueType::Void) {
+            let untyped: Vec<&str> = closure
+                .parameters
+                .iter()
+                .filter(|parameter| parameter.value_type == ValueType::Void)
+                .map(|parameter| parameter.name.as_str())
+                .collect();
+            let Some(ValueType::Function(type_id)) = expected else {
+                return Err(format!(
+                    "the type of parameter '{}' isn't known here: write it, as in fn(int {}) => ..., or use the function where a function type is expected, such as a callback argument",
+                    untyped[0], untyped[0]
+                ));
+            };
+            let wanted = self.function_types[type_id as usize].parameters.clone();
+            if wanted.len() != closure.parameters.len() {
+                return Err(format!(
+                    "this function has {} parameter{}, but a {} is expected here",
+                    closure.parameters.len(),
+                    if closure.parameters.len() == 1 { "" } else { "s" },
+                    self.type_name(ValueType::Function(type_id))
+                ));
+            }
+            let mut filled = closure.clone();
+            for (parameter, value_type) in filled.parameters.iter_mut().zip(wanted) {
+                if parameter.value_type == ValueType::Void {
+                    parameter.value_type = value_type;
+                }
+            }
+            typed = filled;
+            &typed
+        } else {
+            closure
+        };
         let parameter_types: Vec<ValueType> = closure.parameters.iter().map(|parameter| parameter.value_type).collect();
         // Captures: the variables in scope that the body uses.
         let mut captures: Vec<(Capture, Value)> = Vec::new();
@@ -12199,6 +12241,22 @@ mod tests {
         assert!(ir.contains("@qiq_stdlib___regex_scan"));
         // A pattern without a subject is a type error.
         assert!(compile_source("import preg_match from \"std/regex\"; preg_match(\"a\");").is_err());
+    }
+
+    #[test]
+    fn infers_closure_parameter_types() {
+        // From a variable's type, a parameter's, a return type, and an array element's.
+        assert!(compile_source("function(int, string): string f = fn(n, s) => s + to_string(n);").is_ok());
+        assert!(compile_source("function apply(function(int): int g): int { return g(2); } print(apply(fn(x) => x * 3));").is_ok());
+        assert!(compile_source("function make(): function(string): int { return fn(s) => len(s); }").is_ok());
+        assert!(compile_source("(function(int): bool)[] checks = [fn(n) => n > 0];").is_ok());
+        assert!(compile_source("function(int): int f = function(x): int { return x; };").is_ok());
+        // The inferred type is checked like a written one.
+        assert!(compile_source("function(int): string f = fn(x) => x;").unwrap_err().contains("return type mismatch: expected string, found int"));
+        let error = |source: &str| compile_source(source).unwrap_err();
+        assert!(error("print(fn(x) => x);").contains("the type of parameter 'x' isn't known here"));
+        assert!(error("int n = fn(y) => y;").contains("the type of parameter 'y' isn't known here"));
+        assert!(error("function(int): int f = fn(a, b) => a;").contains("this function has 2 parameters, but a function(int): int is expected here"));
     }
 
     #[test]

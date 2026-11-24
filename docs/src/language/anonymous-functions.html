@@ -115,6 +115,38 @@ hello Lin
 <h2>Arrow functions</h2>
 <p><code>fn(parameters) =&gt; expression</code> is a function whose body is one expression, like PHP's arrow functions. Its return type is the expression's type, or the expected type when it's passed or assigned where a function type is known. An expression that is a call to a void function makes a void function. <code>print</code> is a statement, so it can't be an arrow function's body.</p>
 
+<h2>Parameters without types</h2>
+<p>Where a function type is expected, an anonymous function's parameters can leave out their types, which come from that function type: a parameter of a function or method it's passed to, the type of a variable or property it's assigned to, an element of an array or map of functions, or a function's return type.</p>
+
+```qiq
+class Product {
+    function __construct(public string name, public double price) {}
+}
+
+function cheapest(Product[] products, function(Product): double priceOf): string {
+    string name = "";
+    double lowest = 1000000.0;
+    foreach (products as product) {
+        if (priceOf(product) < lowest) {
+            lowest = priceOf(product);
+            name = product->name;
+        }
+    }
+    return name;
+}
+
+Product[] products = [new Product("Tea", 3.5), new Product("Cake", 2.25)];
+print(cheapest(products, fn(p) => p->price));          // p is a Product
+function(int, int): int add = fn(a, b) => a + b;       // a and b are ints
+print(add(2, 3));
+```
+```output
+Cake
+5
+```
+
+<p>Typed and untyped parameters can be mixed, as in <code>fn(int n, label) =&gt; ...</code>. Where no function type is expected, such as <code>print(fn(x) =&gt; x)</code>, the types have to be written, and leaving one out is a compile error. A function with a different number of parameters than the type expected is a compile error too.</p>
+
 <h2>Calling function values</h2>
 <p>Call a function value like a function: <code>f(x)</code> for a variable, <code>object-&gt;callback(x)</code> for a property holding one (when the class has no method of that name), and <code>expression(x)</code> for anything else, such as <code>makeAdder(2)(3)</code> or <code>(fn(int x) =&gt; x + 1)(41)</code>.</p>
 

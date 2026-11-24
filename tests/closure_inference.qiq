@@ -1,0 +1,68 @@
+// Anonymous functions whose parameters have no types take them from the
+// function type expected where they're used.
+import preg_replace_callback, RegexMatch from "std/regex";
+import Router, Request, ResponseWriter from "std/net/http/server";
+
+// A variable's declared type.
+function(int): int twice = fn(x) => x * 2;
+function(string, int): string repeat = fn(text, times) => str_repeat(text, times);
+print(twice(21), repeat("ab", 3));
+
+// Arguments: functions, named arguments, methods, and static methods.
+function apply(int[] values, function(int): int change): int[] {
+    int[] changed = [];
+    foreach (values as value) {
+        array_push(changed, change(value));
+    }
+    return changed;
+}
+int offset = 10;
+print(apply([1, 2, 3], fn(x) => x + offset), apply(values: [4], change: fn(n) => -n));
+
+class Pipeline {
+    private (function(string): string)[] steps = [];
+
+    function add(function(string): string step): Pipeline {
+        array_push(this->steps, step);
+        return this;
+    }
+
+    function run(string text): string {
+        foreach (this->steps as step) {
+            text = step(text);
+        }
+        return text;
+    }
+
+    static function of(function(string): string first): Pipeline {
+        return (new Pipeline())->add(first);
+    }
+}
+print(Pipeline::of(fn(s) => trim(s))->add(fn(s) => strtoupper(s))->add(function(s): string { return s + "!"; })->run("  hi "));
+
+// Return values, properties, array and map elements.
+function adder(int n): function(int): int {
+    return fn(x) => x + n;
+}
+print(adder(5)(1));
+class Button {
+    public function(string): string onClick;
+}
+Button button = new Button();
+button->onClick = fn(label) => f"clicked {label}";
+print((button->onClick)("OK"));
+(function(int): bool)[] checks = [fn(n) => n > 0, fn(n) => n % 2 == 0];
+map[string, function(int, int): int] operations = {"add" => fn(a, b) => a + b, "multiply" => fn(a, b) => a * b};
+print(checks[0](5), checks[1](5), operations["add"](2, 3));
+
+// Mixed typed and untyped parameters.
+function(int, string): string label = fn(int n, unit) => f"{n} {unit}";
+print(label(3, "apples"));
+
+// The standard library's callbacks.
+print(preg_replace_callback(`/\d+/`, fn(m) => to_string(to_int(m->text) * 2), "3 and 4"));
+Router router = new Router();
+router->handle("GET /hello/{name}", fn(r, w) => w->write(f"hello {r->pathValue("name")}"));
+ResponseWriter writer = new ResponseWriter();
+router->serve(new Request("GET", "/hello/ada", "", "HTTP/1.1", {"host" => "example.com"}, [], "127.0.0.1:5000"), writer);
+print(bytes_to_string(writer->bytes()));
