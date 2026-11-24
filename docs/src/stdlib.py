@@ -28,6 +28,7 @@ OVERVIEW = (
     "<tr><td><code>std/net/http</code></td><td>The <a href=\"ref.http.html\">HTTP client</a> and URL encoding</td></tr>"
     "<tr><td><code>std/net/http/server</code></td><td>The <a href=\"ref.http-server.html\">HTTP server</a></td></tr>"
     "<tr><td><code>std/crypto</code></td><td><a href=\"ref.crypto.html\">Hashing and encoding</a>: MD5, SHA-1, SHA-2, HMAC, hex, base64, and password hashing</td></tr>"
+    "<tr><td><code>std/csv</code></td><td><a href=\"ref.csv.html\">CSV</a>: reading and writing CSV as rows, by column name, as objects, or a row at a time</td></tr>"
     "<tr><td><code>std/testing</code></td><td>The <code>T</code> class that <a href=\"testing.html\">tests</a> take, for <code>qiq test</code></td></tr>"
     "<tr><td><code>std/math</code></td><td><a href=\"ref.math.html\">Math</a>: rounding, roots, logarithms, trigonometry, <code>number_format</code>, and secure random numbers</td></tr>"
     "<tr><td><code>std/regex</code></td><td><a href=\"ref.regex.html\">Regular expressions</a>, with PHP's <code>preg_*</code> functions, and the <a href=\"class.regexmatch.html\">RegexMatch</a> class</td></tr>"
@@ -2703,7 +2704,188 @@ MATH = {
     ],
 }
 
-CATEGORIES = [GENERAL, STRINGS, REGEX, MATH, ARRAYS, MAPS, FILES, DATES, JSON, HTTP, HTTP_SERVER, CRYPTO, PROGRAM, CONVERSIONS, OUTPUT]
+_DELIMITER = param("delimiter", "string", "The character between fields: <code>\",\"</code>, <code>\";\"</code> for files from Excel in many European locales, or <code>\"\\t\"</code> for tab-separated values.", "\",\"")
+_LINE_ENDING = param("lineEnding", "string", "What ends each row: <code>\"\\n\"</code> or <code>\"\\r\\n\"</code>.", "\"\\n\"")
+_CSV_ERROR = "<code>CsvException</code>, naming the line, for a quoted field that's never closed or a field that isn't UTF-8 text; <code>InvalidArgumentException</code> for a delimiter that isn't one character, or is a quote or a line break."
+
+CSV = {
+    "slug": "csv",
+    "title": "CSV",
+    "intro": (
+        "Reading and writing CSV, the comma-separated values that spreadsheets and databases exchange, from <code>std/csv</code>: "
+        "as rows of strings, by column name, as objects of a class, or a record at a time for files too large to read at once."
+    ),
+    "details": r"""<h2>The format</h2>
+<p>qiq reads and writes CSV as RFC 4180 defines it, the format Excel and every CSV library use. A field can be quoted, and must be when it holds the delimiter, a quote, or a line break; inside quotes, <code>""</code> is a quote. When reading:</p>
+<ul>
+<li>Lines can end with <code>\n</code> or <code>\r\n</code>, and the last line needs no line break.</li>
+<li>Blank lines are skipped.</li>
+<li>A UTF-8 byte order mark at the start of the text, which Excel writes, is ignored.</li>
+<li>Text after a field's closing quote is kept, so a slightly malformed file still reads, but a quoted field that's never closed throws <code>CsvException</code>.</li>
+</ul>
+<p>When writing, a field is quoted only when it must be, and rows end with <code>\n</code> unless <code>lineEnding</code> says <code>\r\n</code>; Excel reads both.</p>
+<h2>Four ways to read</h2>
+<table>
+<thead><tr><th>To get</th><th>From text</th><th>From a file</th></tr></thead>
+<tbody>
+<tr><td>Rows of strings: <code>string[][]</code></td><td><a href="function.csv-parse.html">csv_parse</a></td><td><a href="function.csv-read.html">csv_read</a></td></tr>
+<tr><td>Rows by column name: <code>map[string, string][]</code></td><td><a href="function.csv-parse-maps.html">csv_parse_maps</a></td><td><a href="function.csv-read-maps.html">csv_read_maps</a></td></tr>
+<tr><td>Objects of a class, typed</td><td><a href="function.csv-decode.html">csv_decode</a></td><td><code>csv_decode(file_get_contents(path))</code></td></tr>
+<tr><td>A record at a time</td><td></td><td><a href="class.csvreader.html">CsvReader</a></td></tr>
+</tbody>
+</table>
+<p>And to write: <a href="function.csv-format.html">csv_format</a> makes text from rows, <a href="function.csv-write.html">csv_write</a> writes them to a file, <a href="function.csv-encode.html">csv_encode</a> writes objects, and <a href="class.csvwriter.html">CsvWriter</a> writes a row at a time.</p>""",
+    "functions": [
+        {
+            "name": "csv_parse", "purpose": "Read CSV text as rows",
+            "params": [param("text", "string", "The CSV."), _DELIMITER],
+            "returns": "string[][]",
+            "description": "Reads every record of <code>text</code>, each as an array of its fields, like PHP's <code>str_getcsv</code> for a whole text, or Python's <code>csv.reader</code>.",
+            "return_description": "The rows; an empty array for text without records.",
+            "errors": [_CSV_ERROR],
+            "examples": [{"title": "Quoted fields", "code": 'string text = "name,note\\nTea,\\"strong, black\\"\\n\\"Cake \\"\\"deluxe\\"\\"\\",\\"two\\nlines\\"\\n";\nstring[][] rows = csv_parse(text);\nprint(len(rows), rows[1]);\nprint(rows[2][0], rows[2][1] == "two\\nlines");',
+                          "output": '3 ["Tea", "strong, black"]\nCake "deluxe" true'}],
+            "see_also": ["csv_read", "csv_parse_maps", "csv_format"],
+        },
+        {
+            "name": "csv_parse_maps", "purpose": "Read CSV text by column name",
+            "params": [param("text", "string", "The CSV, with a header row."), _DELIMITER],
+            "returns": "map[string, string][]",
+            "description": "Reads the first record as a header of column names, and each record after it as a map from those names to its fields.",
+            "return_description": "A map for each record after the header.",
+            "errors": [_CSV_ERROR, "<code>CsvException</code> if a record has more or fewer fields than the header, or the header names a column twice."],
+            "examples": [{"title": "By name", "code": 'map[string, string][] people = csv_parse_maps("name,email\\nAda,ada@example.com\\nLin,lin@example.com\\n");\nforeach (people as person) {\n    print(person["name"], person["email"]);\n}',
+                          "output": "Ada ada@example.com\nLin lin@example.com"}],
+            "see_also": ["csv_read_maps", "csv_decode"],
+        },
+        {
+            "name": "csv_decode", "purpose": "Read CSV text into objects",
+            "params": [param("text", "string", "The CSV, with a header row."), _DELIMITER],
+            "returns": "T[]",
+            "description": "Reads each record after the header into a new object of the class the result is used as, as <a href=\"function.json-decode.html\">json_decode</a> does for JSON: each public property is set from the column with its name, converted to the property's type. Columns without a property are ignored, and the columns can be in any order. Around ints, doubles, and bools, spaces are ignored; bools are <code>true</code>, <code>false</code>, <code>1</code>, <code>0</code>, <code>yes</code>, or <code>no</code>, in any case.",
+            "return_description": "The objects, one for each record after the header.",
+            "errors": ["<code>CsvException</code> if a column a property needs is missing, a record has more or fewer fields than the header, or a field doesn't fit its property, such as <code>abc</code> for an int; the message names the line and column.",
+                       "A compile error if the result isn't used as an array of objects, or the class has a public property that isn't an int, double, bool, or string."],
+            "examples": [{"title": "Typed rows", "code": 'class Product {\n    public string name;\n    public double price;\n    public int stock;\n}\n\nstring text = "name,stock,price\\nTea,12,3.50\\n\\"Cake, large\\",0,12\\n";\nProduct[] products = csv_decode(text);\nforeach (products as product) {\n    print(product->name, product->price * 2.0, product->stock + 1);\n}',
+                          "output": "Tea 7 13\nCake, large 24 1"}],
+            "see_also": ["csv_encode", "json_decode"],
+        },
+        {
+            "name": "csv_encode", "purpose": "Write objects as CSV text",
+            "params": [param("objects", "T[]", "The objects, of a class whose public properties are ints, doubles, bools, or strings."), _DELIMITER, _LINE_ENDING],
+            "returns": "string",
+            "description": "Writes a header of the class's public property names, then a row for each object, with each property as <code>print</code> would write it (bools as <code>true</code> and <code>false</code>, and a null string as an empty field). What it writes, <a href=\"function.csv-decode.html\">csv_decode</a> reads back.",
+            "return_description": "The CSV text.",
+            "errors": ["<code>RuntimeException</code> if an element is null.", "A compile error if the class has a public property that isn't an int, double, bool, or string."],
+            "examples": [{"title": "A report", "code": 'class Line {\n    function __construct(public string item, public int quantity, public bool paid) {}\n}\n\nLine[] lines = [new Line("Tea", 2, true), new Line("Cake, large", 1, false)];\nprint(csv_encode(lines));',
+                          "output": 'item,quantity,paid\nTea,2,true\n"Cake, large",1,false\n'}],
+            "see_also": ["csv_decode", "csv_format"],
+        },
+        {
+            "name": "csv_format", "purpose": "Write rows as CSV text",
+            "params": [param("rows", "string[][]", "The rows."), _DELIMITER, _LINE_ENDING],
+            "returns": "string",
+            "description": "Writes each row as a line of CSV, quoting a field only when it holds the delimiter, a quote, or a line break.",
+            "return_description": "The CSV text, each row ending with <code>lineEnding</code>.",
+            "errors": ["<code>InvalidArgumentException</code> for a delimiter that isn't one character, or a line ending other than <code>\"\\n\"</code> and <code>\"\\r\\n\"</code>."],
+            "examples": [{"title": "Quoting what must be", "code": 'print(csv_format([["name", "note"], ["Tea", "strong, black"], ["Cake", "say \\"hi\\""]]));\nprint(csv_format([["a", "b"]], ";"));',
+                          "output": 'name,note\nTea,"strong, black"\nCake,"say ""hi"""\n\na;b\n'}],
+            "see_also": ["csv_write", "csv_parse"],
+        },
+        {
+            "name": "csv_read", "purpose": "Read a CSV file as rows",
+            "params": [param("path", "string", "The file."), _DELIMITER],
+            "returns": "string[][]",
+            "description": "Reads the whole file, as <a href=\"function.csv-parse.html\">csv_parse</a> reads text. For files too large to read at once, use <a href=\"class.csvreader.html\">CsvReader</a>.",
+            "return_description": "The rows.",
+            "errors": [_CSV_ERROR, "<code>FileNotFoundException</code>, <code>PermissionDeniedException</code>, or <code>IOException</code> if the file can't be read."],
+            "examples": [{"title": "Write, then read", "code": 'csv_write("cities.csv", [["id", "city"], ["1", "Berlin"], ["2", "São Paulo"]]);\nprint(csv_read("cities.csv"));',
+                          "output": '[["id", "city"], ["1", "Berlin"], ["2", "São Paulo"]]'}],
+            "see_also": ["csv_read_maps", "csv_write", "CsvReader"],
+        },
+        {
+            "name": "csv_read_maps", "purpose": "Read a CSV file by column name",
+            "params": [param("path", "string", "The file, with a header row."), _DELIMITER],
+            "returns": "map[string, string][]",
+            "description": "Reads the whole file, as <a href=\"function.csv-parse-maps.html\">csv_parse_maps</a> reads text.",
+            "return_description": "A map for each record after the header.",
+            "errors": ["As for <a href=\"function.csv-parse-maps.html\">csv_parse_maps</a>, and the file errors of <a href=\"function.csv-read.html\">csv_read</a>."],
+            "examples": [{"title": "By name", "code": 'csv_write("stock.csv", [["item", "count"], ["tea", "12"]]);\nprint(csv_read_maps("stock.csv")[0]["count"]);',
+                          "output": "12"}],
+            "see_also": ["csv_read", "csv_decode"],
+        },
+        {
+            "name": "csv_write", "purpose": "Write rows to a CSV file",
+            "params": [param("path", "string", "The file."), param("rows", "string[][]", "The rows."), _DELIMITER, _LINE_ENDING,
+                       param("append", "bool", "Add to the end of the file instead of replacing it.", "false")],
+            "returns": "void",
+            "description": "Writes <code>rows</code> to the file as <a href=\"function.csv-format.html\">csv_format</a> formats them, creating the file if it doesn't exist. For a row at a time, use <a href=\"class.csvwriter.html\">CsvWriter</a>.",
+            "return_description": "Nothing.",
+            "errors": ["As for <a href=\"function.csv-format.html\">csv_format</a>, and <code>PermissionDeniedException</code> or <code>IOException</code> if the file can't be written."],
+            "examples": [{"title": "Adding rows", "code": 'csv_write("log.csv", [["when", "what"]]);\ncsv_write("log.csv", [["today", "started, finally"]], append: true);\nprint(file_get_contents("log.csv"));',
+                          "output": 'when,what\ntoday,"started, finally"\n'}],
+            "see_also": ["csv_read", "CsvWriter"],
+        },
+    ],
+}
+
+CSVREADER_CLASS = r"""<h1>The CsvReader class</h1>
+<p>Reads a CSV file a record at a time, so a file of any size takes little memory. Import it from <code>std/csv</code>. It reads as <a href="function.csv-parse.html">csv_parse</a> does.</p>
+<h2>Class synopsis</h2>
+<div class="synopsis"><code><span class="kw">final class</span> <span class="cls">CsvReader</span> {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">static function</span> <span class="fn">open</span>(<span class="type">string</span> path, <span class="type">string</span> delimiter = <span class="default">","</span>): <span class="cls">CsvReader</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">next</span>(): <span class="type">string[]</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">line</span>(): <span class="type">int</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">close</span>(): <span class="type">void</span><br>
+}</code></div>
+<table>
+<thead><tr><th>Method</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>CsvReader::open(path, delimiter)</code></td><td>Opens the file. Throws <code>FileNotFoundException</code>, <code>PermissionDeniedException</code>, or <code>IOException</code> if it can't.</td></tr>
+<tr><td><code>next()</code></td><td>The next record's fields, or <code>null</code> at the end of the file. Throws <code>CsvException</code> for malformed CSV.</td></tr>
+<tr><td><code>line()</code></td><td>The line the last record starts on, for messages about it. A record with a quoted line break spans several lines.</td></tr>
+<tr><td><code>close()</code></td><td>Closes the file; closing twice does nothing.</td></tr>
+</tbody>
+</table>
+<h2>Example</h2>
+<pre class="code">CsvReader reader = CsvReader::open("orders.csv");
+string[] header = reader-&gt;next();
+string[] order = reader-&gt;next();
+while (order != null) {
+    if (len(order) != len(header)) {
+        print(f"line {reader-&gt;line()}: expected {len(header)} fields");
+    }
+    order = reader-&gt;next();
+}
+reader-&gt;close();</pre>
+"""
+
+CSVWRITER_CLASS = r"""<h1>The CsvWriter class</h1>
+<p>Writes a CSV file a row at a time. Import it from <code>std/csv</code>. It writes as <a href="function.csv-format.html">csv_format</a> does.</p>
+<h2>Class synopsis</h2>
+<div class="synopsis"><code><span class="kw">final class</span> <span class="cls">CsvWriter</span> {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">static function</span> <span class="fn">open</span>(<span class="type">string</span> path, <span class="type">string</span> delimiter = <span class="default">","</span>, <span class="type">string</span> lineEnding = <span class="default">"\n"</span>, <span class="type">bool</span> append = <span class="default">false</span>): <span class="cls">CsvWriter</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">write</span>(<span class="type">string[]</span> row): <span class="type">void</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">close</span>(): <span class="type">void</span><br>
+}</code></div>
+<table>
+<thead><tr><th>Method</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>CsvWriter::open(path, delimiter, lineEnding, append)</code></td><td>Creates the file, or replaces it, or adds to it with <code>append</code>. Throws <code>PermissionDeniedException</code> or <code>IOException</code> if it can't, and <code>InvalidArgumentException</code> for a bad delimiter or line ending.</td></tr>
+<tr><td><code>write(row)</code></td><td>Writes one row.</td></tr>
+<tr><td><code>close()</code></td><td>Writes what's left and closes the file.</td></tr>
+</tbody>
+</table>
+<h2>Example</h2>
+<pre class="code">CsvWriter writer = CsvWriter::open("report.csv");
+writer-&gt;write(["day", "visits"]);
+foreach (range(1, 7) as day) {
+    writer-&gt;write([to_string(day), to_string(random_int(100, 999))]);
+}
+writer-&gt;close();</pre>
+"""
+
+CATEGORIES = [GENERAL, STRINGS, REGEX, MATH, ARRAYS, MAPS, FILES, CSV, DATES, JSON, HTTP, HTTP_SERVER, CRYPTO, PROGRAM, CONVERSIONS, OUTPUT]
 
 FILE_CLASS = """<h1>The File class</h1>
 <p>A <code>File</code> reads or writes a file a piece at a time: a line, or a chunk of bytes. Use it for files too large to load at once, for files you build up gradually, and for standard input and output. To read or write a whole file in one call, the <a href="ref.files.html">file functions</a> are simpler.</p>
@@ -2849,6 +3031,7 @@ EXCEPTION_CLASSES = """<h1>Exception classes</h1>
 ├── InvalidArgumentException
 ├── JsonException
 ├── RegexException
+├── CsvException
 └── HttpException</pre>
 <h2>The Exception class</h2>
 <div class="synopsis"><code><span class="kw">class</span> <span class="cls">Exception</span> {<br>
@@ -2878,6 +3061,7 @@ EXCEPTION_CLASSES = """<h1>Exception classes</h1>
 <tr><td><code>DivisionByZeroException</code></td><td>Int <code>/</code> or <code>%</code> with a zero right-hand side.</td></tr>
 <tr><td><code>InvalidArgumentException</code></td><td>A standard library function was given an argument it can't accept, such as a negative <code>str_repeat</code> count.</td></tr>
 <tr><td><code>RegexException</code></td><td>A <a href="ref.regex.html">regular expression</a> is malformed, its replacement refers to a group it doesn't have, or it needs too much backtracking on its text.</td></tr>
+<tr><td><code>CsvException</code></td><td><a href="ref.csv.html">CSV</a> is malformed (a quoted field that's never closed), or doesn't fit what it's read into: a record with the wrong number of fields, a missing column, or a value that isn't a number where one is needed. The message names the line.</td></tr>
 <tr><td><code>JsonException</code></td><td><code>json_decode</code> was given text that isn't JSON or doesn't match the type it decodes into, or <code>json_encode</code> was given a value JSON can't represent.</td></tr>
 <tr><td><code>NetworkException</code></td><td>A network connection failed: the host couldn't be found, refused the connection, timed out, closed it early, or failed the TLS certificate check. A subclass of <code>IOException</code>.</td></tr>
 <tr><td><code>HttpException</code></td><td><code>Response::raiseForStatus()</code> found a 4xx or 5xx status (the status is the exception's code), or a request was redirected more than 10 times.</td></tr>
@@ -3573,6 +3757,8 @@ CLASS_PAGES = [
     ("class.database.html", "The Database class", "SQL databases (SQLite, PostgreSQL, MySQL, and MariaDB): running statements with values for their placeholders, queries, and transactions.", DATABASE_CLASS),
     ("class.row.html", "The Row class", "One row of a query's result, read by column name with typed getters.", ROW_CLASS),
     ("class.cursor.html", "The Cursor class", "A query's rows, read a batch at a time, for results too big to hold in memory.", CURSOR_CLASS),
+    ("class.csvreader.html", "The CsvReader class", "Reads a CSV file a record at a time.", CSVREADER_CLASS),
+    ("class.csvwriter.html", "The CsvWriter class", "Writes a CSV file a row at a time.", CSVWRITER_CLASS),
     ("class.regexmatch.html", "The RegexMatch class", "A match of a regular expression: its text, position, and groups.", REGEXMATCH_CLASS),
     ("class.processresult.html", "The ProcessResult class", "The exit status and output of a command run by exec or shell.", PROCESSRESULT_CLASS),
     ("exception-classes.html", "Exception classes", "The exception classes thrown by the language and the standard library.", EXCEPTION_CLASSES),

@@ -1,0 +1,32 @@
+3 ["Tea", "strong, black", "3.50"] Cake "deluxe" true
+true true
+a,b c,,"x,y","say ""hi"""
+""
+
+[["a", "b"], ["1", "2"], ["", "3"]]
+[["a", "b", "c;d"]] [["a", "b"]] a;"b;c"
+
+true
+2 lin@example.com {"name" => "Ada", "email" => "ada@example.com"}
+2 Tea 3.5 12 true Cake, large 12 false
+name,price,stock,active
+Tea,3.5,12,true
+"Cake, large",12,0,false
+
+Cake, large 0
+0 name;price;stock;active
+
+[["id", "city"], ["1", "Berlin"], ["2", "São Paulo"], ["3", "Lagos, NG"]] Lagos, NG
+1 1 row 1 10
+3 2 row 2 10
+5 3 row 3 10
+error: line 1: a quoted field isn't closed
+error: line 2: 3 fields, but the header has 2
+error: csv_parse_maps: line 1: the header has the column "a" twice
+error: csv_parse: the delimiter must be one character other than a quote or a line break, such as ",", ";", or "\t"; found "ab"
+error: csv_format: the line ending must be "\n" or "\r\n"
+error: csv_decode: the CSV has no column 'active' for Product's property
+error: line 2, column 'price': "cheap" isn't a number
+error: line 2, column 'active': "maybe" isn't a bool (true, false, 1, 0, yes, or no)
+error: line 2, column 'stock': "2.5" isn't an int
+error: could not open tests/csv_no_such_file.csv: No such file or directory

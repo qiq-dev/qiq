@@ -1505,6 +1505,21 @@ impl Parser {
         Ok((functions, statements))
     }
 
+    /// Whether a value of this type holds only scalars: a scalar, or an array
+    /// or map (of any depth) of them. The C runtime can build these, as
+    /// nothing in them can be part of a reference cycle; objects and
+    /// functions can be.
+    fn only_scalars(&self, value_type: ValueType) -> bool {
+        match value_type {
+            ValueType::Array(_) => self.element_of(value_type).is_some_and(|element| self.only_scalars(element)),
+            ValueType::Map(id) => {
+                let map = &self.map_types[id as usize];
+                map.key_type.is_scalar() && self.only_scalars(map.value_type)
+            }
+            other => other.is_scalar(),
+        }
+    }
+
     /// Parses `extern function name(params): type;`, a function implemented in C as
     /// `qiq_stdlib_<name>`. The return type defaults to void.
     fn parse_extern_function(&mut self) -> Result<Function, String> {
@@ -1519,14 +1534,11 @@ impl Parser {
             .iter()
             .map(|parameter| parameter.value_type)
             .chain(std::iter::once(function.return_type))
-            .find(|value_type| {
-                let scalar_array = self.element_of(*value_type).is_some_and(ValueType::is_scalar);
-                !value_type.is_scalar() && !scalar_array && *value_type != ValueType::Void
-            });
+            .find(|value_type| *value_type != ValueType::Void && !self.only_scalars(*value_type));
         if let Some(value_type) = unsupported {
             let token = &self.tokens[start];
             return Err(format!(
-                "{}:{}: extern function '{}' uses {}; extern functions support only int, double, bool, byte, string, char, and one-dimensional arrays of these",
+                "{}:{}: extern function '{}' uses {}; extern functions support only int, double, bool, byte, string, char, and arrays and maps of these",
                 token.line,
                 token.column,
                 function.name,
@@ -3485,7 +3497,7 @@ fn check_regex_literals(function: &str, arguments: &[(usize, &Expr)]) -> Result<
 
 /// Exception classes the runtime raises, indexed by QiqExceptionKind in
 /// stdlib/runtime/qiq_runtime.h; keep the two lists in the same order.
-const RUNTIME_EXCEPTION_CLASSES: [&str; 17] = [
+const RUNTIME_EXCEPTION_CLASSES: [&str; 18] = [
     "RuntimeException",
     "ArithmeticException",
     "DivisionByZeroException",
@@ -3503,6 +3515,7 @@ const RUNTIME_EXCEPTION_CLASSES: [&str; 17] = [
     "UniqueViolationException",
     "ProcessException",
     "RegexException",
+    "CsvException",
 ];
 
 /// Where `break` and `continue` go. Loops have both; a switch only has a
@@ -3906,7 +3919,7 @@ impl Emitter {
             ir.push_str(&self.emit_dispatch_table(*owner, method_name, Some(supplied)));
         }
         ir.push_str(
-            "\ndeclare i32 @printf(ptr, ...)\ndeclare i32 @strcmp(ptr, ptr)\ndeclare ptr @calloc(i64, i64)\ndeclare ptr @qiq_map_new(i32, i32)\ndeclare void @qiq_retain(ptr)\ndeclare void @qiq_release(ptr)\ndeclare ptr @qiq_object_new(i64, i64)\ndeclare void @qiq_map_set(ptr, i64, i64)\ndeclare i64 @qiq_map_get(ptr, i64)\ndeclare i64 @qiq_map_iteration_end(ptr)\ndeclare i64 @qiq_map_version(ptr)\ndeclare zeroext i1 @qiq_map_entry_live(ptr, i64, i64)\ndeclare zeroext i1 @qiq_map_find(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_map_has(ptr, i64)\ndeclare void @qiq_map_remove(ptr, i64)\ndeclare ptr @qiq_map_keys(ptr, i64, i32)\ndeclare ptr @qiq_map_values(ptr, i64, i32)\ndeclare zeroext i1 @qiq_map_contains_value(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_values_equal(ptr, ptr, ptr)\ndeclare i64 @qiq_map_key_at(ptr, i64)\ndeclare i64 @qiq_map_value_at(ptr, i64)\ndeclare i64 @qiq_string_len(ptr)\ndeclare ptr @qiq_sprintf(ptr, ptr, ptr, i64)\ndeclare void @qiq_bind_values(ptr, ptr, i64)\ndeclare ptr @qiq_json_encode(ptr, i64, i1 zeroext)\ndeclare i64 @qiq_json_decode(ptr, ptr)\ndeclare i32 @qiq_string_equality(ptr, ptr)\ndeclare i32 @qiq_string_compare(ptr, ptr)\ndeclare ptr @qiq_string_char_at(ptr, i64)\ndeclare ptr @qiq_string_concat(ptr, ptr)\ndeclare i64 @qiq_int_divide(i64, i64)\ndeclare i64 @qiq_int_modulo(i64, i64)\ndeclare i64 @qiq_int_power(i64, i64)\ndeclare i64 @qiq_int_power_unchecked(i64, i64)\ndeclare i64 @qiq_int_shift_left(i64, i64)\ndeclare i64 @qiq_int_shift_right(i64, i64)\ndeclare double @llvm.pow.f64(double, double)\ndeclare double @llvm.fabs.f64(double)\ndeclare i64 @qiq_math_min_int(ptr)\ndeclare i64 @qiq_math_max_int(ptr)\ndeclare double @qiq_math_min_double(ptr)\ndeclare double @qiq_math_max_double(ptr)\ndeclare i64 @qiq_math_clamp_int(i64, i64, i64)\ndeclare double @qiq_math_clamp_double(double, double, double)\ndeclare void @qiq_uncaught(ptr, ptr)\ndeclare ptr @qiq_array_new(i64, i64, i32)\ndeclare void @qiq_set_arguments(i32, ptr)\ndeclare void @qiq_check_callable(ptr)\ndeclare void @qiq_array_push(ptr, i64, i64)\ndeclare i64 @qiq_range_plan(i64, i64, i64, i1 zeroext, ptr)\ndeclare ptr @qiq_range_int(i64, i64, i64, i1 zeroext)\ndeclare ptr @qiq_range_count(i64)\ndeclare ptr @qiq_range_double(double, double, double, i1 zeroext)\ndeclare ptr @qiq_range_char(ptr, ptr, i64, i1 zeroext)\ndeclare i64 @qiq_array_pop(ptr, i64)\ndeclare i64 @qiq_array_shift(ptr, i64)\ndeclare void @qiq_array_insert(ptr, i64, i64, i64)\ndeclare ptr @qiq_array_splice(ptr, i64, i64, i64, i1 zeroext, ptr)\ndeclare i64 @qiq_array_length(ptr)\ndeclare i64 @qiq_len_string(ptr)\ndeclare i64 @qiq_len_array(ptr)\ndeclare i64 @qiq_len_map(ptr)\ndeclare void @qiq_array_check_index(ptr, i64)\ndeclare void @qiq_print_value(ptr, i64)\ndeclare ptr @qiq_describe_value(ptr, i64)\ndeclare void @qiq_print_space()\ndeclare void @qiq_print_newline()\ndeclare i64 @qiq_double_to_int(double)\ndeclare zeroext i8 @qiq_int_to_byte(i64)\ndeclare i64 @qiq_string_to_int(ptr)\ndeclare double @qiq_string_to_double(ptr)\ndeclare ptr @qiq_int_to_string(i64)\ndeclare ptr @qiq_double_to_string(double)\n",
+            "\ndeclare i32 @printf(ptr, ...)\ndeclare i32 @strcmp(ptr, ptr)\ndeclare ptr @calloc(i64, i64)\ndeclare ptr @qiq_map_new(i32, i32)\ndeclare void @qiq_retain(ptr)\ndeclare void @qiq_release(ptr)\ndeclare ptr @qiq_object_new(i64, i64)\ndeclare void @qiq_map_set(ptr, i64, i64)\ndeclare i64 @qiq_map_get(ptr, i64)\ndeclare i64 @qiq_map_iteration_end(ptr)\ndeclare i64 @qiq_map_version(ptr)\ndeclare zeroext i1 @qiq_map_entry_live(ptr, i64, i64)\ndeclare zeroext i1 @qiq_map_find(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_map_has(ptr, i64)\ndeclare void @qiq_map_remove(ptr, i64)\ndeclare ptr @qiq_map_keys(ptr, i64, i32)\ndeclare ptr @qiq_map_values(ptr, i64, i32)\ndeclare zeroext i1 @qiq_map_contains_value(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_values_equal(ptr, ptr, ptr)\ndeclare i64 @qiq_map_key_at(ptr, i64)\ndeclare i64 @qiq_map_value_at(ptr, i64)\ndeclare i64 @qiq_string_len(ptr)\ndeclare ptr @qiq_sprintf(ptr, ptr, ptr, i64)\ndeclare void @qiq_bind_values(ptr, ptr, i64)\ndeclare ptr @qiq_json_encode(ptr, i64, i1 zeroext)\ndeclare i64 @qiq_json_decode(ptr, ptr)\ndeclare i64 @qiq_csv_decode(ptr, ptr, ptr)\ndeclare ptr @qiq_csv_encode(ptr, ptr, ptr, ptr)\ndeclare i32 @qiq_string_equality(ptr, ptr)\ndeclare i32 @qiq_string_compare(ptr, ptr)\ndeclare ptr @qiq_string_char_at(ptr, i64)\ndeclare ptr @qiq_string_concat(ptr, ptr)\ndeclare i64 @qiq_int_divide(i64, i64)\ndeclare i64 @qiq_int_modulo(i64, i64)\ndeclare i64 @qiq_int_power(i64, i64)\ndeclare i64 @qiq_int_power_unchecked(i64, i64)\ndeclare i64 @qiq_int_shift_left(i64, i64)\ndeclare i64 @qiq_int_shift_right(i64, i64)\ndeclare double @llvm.pow.f64(double, double)\ndeclare double @llvm.fabs.f64(double)\ndeclare i64 @qiq_math_min_int(ptr)\ndeclare i64 @qiq_math_max_int(ptr)\ndeclare double @qiq_math_min_double(ptr)\ndeclare double @qiq_math_max_double(ptr)\ndeclare i64 @qiq_math_clamp_int(i64, i64, i64)\ndeclare double @qiq_math_clamp_double(double, double, double)\ndeclare void @qiq_uncaught(ptr, ptr)\ndeclare ptr @qiq_array_new(i64, i64, i32)\ndeclare void @qiq_set_arguments(i32, ptr)\ndeclare void @qiq_check_callable(ptr)\ndeclare void @qiq_array_push(ptr, i64, i64)\ndeclare i64 @qiq_range_plan(i64, i64, i64, i1 zeroext, ptr)\ndeclare ptr @qiq_range_int(i64, i64, i64, i1 zeroext)\ndeclare ptr @qiq_range_count(i64)\ndeclare ptr @qiq_range_double(double, double, double, i1 zeroext)\ndeclare ptr @qiq_range_char(ptr, ptr, i64, i1 zeroext)\ndeclare i64 @qiq_array_pop(ptr, i64)\ndeclare i64 @qiq_array_shift(ptr, i64)\ndeclare void @qiq_array_insert(ptr, i64, i64, i64)\ndeclare ptr @qiq_array_splice(ptr, i64, i64, i64, i1 zeroext, ptr)\ndeclare i64 @qiq_array_length(ptr)\ndeclare i64 @qiq_len_string(ptr)\ndeclare i64 @qiq_len_array(ptr)\ndeclare i64 @qiq_len_map(ptr)\ndeclare void @qiq_array_check_index(ptr, i64)\ndeclare void @qiq_print_value(ptr, i64)\ndeclare ptr @qiq_describe_value(ptr, i64)\ndeclare void @qiq_print_space()\ndeclare void @qiq_print_newline()\ndeclare i64 @qiq_double_to_int(double)\ndeclare zeroext i8 @qiq_int_to_byte(i64)\ndeclare i64 @qiq_string_to_int(ptr)\ndeclare double @qiq_string_to_double(ptr)\ndeclare ptr @qiq_int_to_string(i64)\ndeclare ptr @qiq_double_to_string(double)\n",
         );
         ir.push_str(&extern_declarations);
         ir.push('\n');
@@ -8264,6 +8277,92 @@ impl Emitter {
         }))
     }
 
+    /// The class of the objects csv_decode reads or csv_encode writes, from
+    /// `value_type` (which must be an array of a class whose public
+    /// properties CSV can hold: ints, doubles, bools, and strings).
+    fn csv_class(&self, value_type: ValueType, function: &str) -> Result<u32, String> {
+        let class_id = match self.element_of(value_type) {
+            Some(ValueType::Class(class_id)) => class_id,
+            _ => {
+                let hint = if function == "csv_decode" { "; for rows of strings, use csv_parse" } else { "; for rows of strings, use csv_format" };
+                return Err(format!(
+                    "{function} works on an array of objects, such as Product[], found {}{hint}",
+                    self.type_name(value_type)
+                ))
+            }
+        };
+        let class = &self.classes[class_id as usize];
+        if function == "csv_decode" && (class.is_interface || class.is_abstract) {
+            return Err(format!("csv_decode can't create {}, which is {}", class.name, if class.is_interface { "an interface" } else { "abstract" }));
+        }
+        let mut current = Some(class_id);
+        while let Some(id) = current {
+            for property in &self.classes[id as usize].properties {
+                if property.visibility == Visibility::Public
+                    && !matches!(property.value_type, ValueType::Int | ValueType::Double | ValueType::Bool | ValueType::String)
+                {
+                    return Err(format!(
+                        "{function} can't {} {}'s property '{}', a {}: CSV holds ints, doubles, bools, and strings",
+                        if function == "csv_decode" { "read" } else { "write" },
+                        class.name,
+                        property.name,
+                        self.type_name(property.value_type)
+                    ));
+                }
+            }
+            current = self.classes[id as usize].parent_class;
+        }
+        Ok(class_id)
+    }
+
+    /// `csv_decode(text, delimiter)` into `target`, an array of objects: the
+    /// runtime (csv.c) reads the rows by header name, converts each field to
+    /// its property's type, and builds the objects with json_decode.
+    fn emit_csv_decode(&mut self, called: &str, arguments: &[Expr], target: ValueType, variables: &HashMap<String, Value>, body: &mut String) -> Result<Value, String> {
+        let class_id = self.csv_class(target, "csv_decode")?;
+        self.use_class(class_id);
+        let parameters = self.signatures.get("qiq_stdlib_csv_decode").ok_or("std/csv isn't loaded")?.parameters.clone();
+        let callee = format!("function '{called}'");
+        let resolved = Self::resolve_arguments(&parameters, arguments, &callee)?;
+        let operands = self.emit_arguments(&parameters, &resolved, true, &callee, &format!("argument type mismatch calling '{called}'"), variables, body)?;
+        let descriptor = self.json_descriptor(target);
+        let descriptor = self.string_literal(descriptor.as_bytes());
+        let payload = self.new_register();
+        body.push_str(&format!("  {payload} = call i64 @qiq_csv_decode({}, ptr {descriptor})\n", operands.join(", ")));
+        self.emit_exception_check(body);
+        let value = self.decode_payload(target, &payload, body)?;
+        Ok(self.own(value))
+    }
+
+    /// `csv_encode(objects, delimiter, lineEnding)`: the objects' class
+    /// decides the columns. The array is evaluated first, to learn its type.
+    fn emit_csv_encode(&mut self, called: &str, arguments: &[Expr], variables: &HashMap<String, Value>, body: &mut String) -> Result<Value, String> {
+        let Some(first) = arguments.first().filter(|first| !matches!(first, Expr::NamedArgument(..))) else {
+            return Err(format!("{called} expects the objects to write first"));
+        };
+        let objects = self.emit_expression(first, variables, body)?;
+        self.csv_class(objects.value_type, "csv_encode")?;
+        let descriptor = self.json_descriptor(objects.value_type);
+        let mut parameters = self.signatures.get("qiq_stdlib_csv_encode").ok_or("std/csv isn't loaded")?.parameters.clone();
+        parameters[0].value_type = objects.value_type;
+        let mut scope = variables.clone();
+        scope.insert("#csv.objects".to_string(), Value { slot: None, ..objects });
+        let mut rest = vec![Expr::Variable("#csv.objects".to_string())];
+        rest.extend_from_slice(&arguments[1..]);
+        let callee = format!("function '{called}'");
+        let resolved = Self::resolve_arguments(&parameters, &rest, &callee)?;
+        let operands = self.emit_arguments(&parameters, &resolved, true, &callee, &format!("argument type mismatch calling '{called}'"), &scope, body)?;
+        let descriptor = self.string_literal(descriptor.as_bytes());
+        let register = self.new_register();
+        // (objects, descriptor, delimiter, lineEnding)
+        body.push_str(&format!(
+            "  {register} = call ptr @qiq_csv_encode({}, ptr {descriptor}, {}, {})\n",
+            operands[0], operands[1], operands[2]
+        ));
+        self.emit_exception_check(body);
+        Ok(self.own(Value { value_type: ValueType::String, operand: register, slot: None }))
+    }
+
     /// `json_decode(text)` into `target`, checked against the type by the
     /// runtime (json.c) as it parses.
     fn emit_json_decode(
@@ -8507,6 +8606,13 @@ impl Emitter {
             // json_decode decodes into the type its result is used as.
             Expr::Call(name, arguments) if name == "json_decode" && expected.is_some_and(|expected| !matches!(expected, ValueType::Void | ValueType::Null)) => {
                 self.emit_json_decode(arguments, expected.expect("checked above"), variables, body)
+            }
+            // So does std/csv's csv_decode.
+            Expr::Call(name, arguments)
+                if self.module_functions[self.current_module].get(name).is_some_and(|symbol| symbol == "qiq_stdlib_csv_decode")
+                    && expected.is_some_and(|expected| !matches!(expected, ValueType::Void | ValueType::Null)) =>
+            {
+                self.emit_csv_decode(name, arguments, expected.expect("checked above"), variables, body)
             }
             // `null` can be stored wherever a reference is expected: a string,
             // char, array, map, or object variable, property, element, map
@@ -10010,6 +10116,14 @@ impl Emitter {
                 // on ints and doubles: compiled here for the types given.
                 // (number_format is an extern, named for its C function; only
                 // the standard library can declare externs.)
+                if symbol == "qiq_stdlib_csv_decode" {
+                    return Err(format!(
+                        "csv_decode needs to know the class to read into: use it where the type is known, such as `Product[] products = {name}(text);`"
+                    ));
+                }
+                if symbol == "qiq_stdlib_csv_encode" {
+                    return self.emit_csv_encode(name, arguments, variables, body);
+                }
                 let math = symbol.strip_prefix("qiq.stdlib.math.").or((symbol == "qiq_stdlib_number_format").then_some("number_format"));
                 if let Some(function) = math {
                     if let Some(value) = self.emit_math_generic(function, name, arguments, variables, body)? {
@@ -11534,6 +11648,7 @@ const STDLIB_MODULES: &[(&str, Option<&str>, &str)] = &[
     ("regex.qiq", Some("std/regex"), include_str!("../stdlib/regex.qiq")),
     ("math.qiq", Some("std/math"), include_str!("../stdlib/math.qiq")),
     ("testing.qiq", Some("std/testing"), include_str!("../stdlib/testing.qiq")),
+    ("csv.qiq", Some("std/csv"), include_str!("../stdlib/csv.qiq")),
 ];
 
 /// Standard library modules that have moved, as (old path, new path), so
@@ -11965,6 +12080,18 @@ mod tests {
         assert!(ir.contains("@qiq_stdlib___regex_scan"));
         // A pattern without a subject is a type error.
         assert!(compile_source("import preg_match from \"std/regex\"; preg_match(\"a\");").is_err());
+    }
+
+    #[test]
+    fn csv_decode_and_encode_check_their_class() {
+        let error = |body: &str| compile_source(&format!("import csv_decode, csv_encode from \"std/csv\";\n{body}")).unwrap_err();
+        assert!(error("print(csv_decode(\"a\"));").contains("csv_decode needs to know the class to read into"));
+        assert!(error("string[][] rows = csv_decode(\"a\");").contains("found string[][]; for rows of strings, use csv_parse"));
+        assert!(error("class P { public string[] tags; } P[] p = csv_decode(\"tags\");").contains("csv_decode can't read P's property 'tags', a string[]"));
+        assert!(error("class B { public int n; } class C extends B { public map[string, int] m; } C[] c = [];\nprint(csv_encode(c));").contains("csv_encode can't write C's property 'm'"));
+        assert!(error("abstract class R { public int n; } R[] r = csv_decode(\"n\");").contains("csv_decode can't create R, which is abstract"));
+        let ir = compile_source("import csv_decode, csv_encode from \"std/csv\";\nclass Q { public int n; public string s; }\nQ[] q = csv_decode(\"n,s\", \";\");\nprint(csv_encode(q, lineEnding: \"\\r\\n\"));").unwrap();
+        assert!(ir.contains("@qiq_csv_decode(") && ir.contains("@qiq_csv_encode("));
     }
 
     #[test]

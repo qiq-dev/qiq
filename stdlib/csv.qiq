@@ -1,0 +1,142 @@
+// CSV: reading and writing comma-separated values, as Excel, databases,
+// and spreadsheets exchange them (RFC 4180), implemented in C
+// (stdlib/runtime/csv.c). Functions whose names start with "__" are
+// internal to the standard library.
+//
+//   import csv_read, csv_write, csv_decode from "std/csv";
+//
+//   string[][] rows = csv_read("products.csv");
+//   Product[] products = csv_decode(file_get_contents("products.csv"));
+//
+// Fields may be quoted, with "" for a quote inside, and quoted fields may
+// hold the delimiter and line breaks. Every function takes a `delimiter`:
+// "," by default, ";" for files from Excel in many European locales, or
+// "\t" for tab-separated values. Malformed CSV throws CsvException, naming
+// the line.
+
+import File, file_get_contents, file_put_contents from "file";
+
+extern function __csv_parse(string text, string delimiter): string[][];
+extern function __csv_parse_maps(string text, string delimiter): map[string, string][];
+extern function __csv_format(string[][] rows, string delimiter, string lineEnding): string;
+extern function __csv_format_row(string[] row, string delimiter, string lineEnding): string;
+extern function __csv_open(string path, string delimiter): int;
+extern function __csv_next(int handle): string[];
+extern function __csv_line(int handle): int;
+extern function __csv_close(int handle): void;
+
+// Every record of CSV text, as rows of fields. Blank lines are skipped, and
+// a UTF-8 byte order mark at the start (which Excel writes) is ignored.
+function csv_parse(string text, string delimiter = ","): string[][] {
+    return __csv_parse(text, delimiter);
+}
+
+// CSV text with a header row, read by column name: each record after the
+// header becomes a map from the header's names to its fields. Throws
+// CsvException if a record has more or fewer fields than the header.
+function csv_parse_maps(string text, string delimiter = ","): map[string, string][] {
+    return __csv_parse_maps(text, delimiter);
+}
+
+// Rows as CSV text: fields are quoted only when they must be, and each row
+// ends with `lineEnding`, "\n" or "\r\n".
+function csv_format(string[][] rows, string delimiter = ",", string lineEnding = "\n"): string {
+    return __csv_format(rows, delimiter, lineEnding);
+}
+
+// Every record of the CSV file at `path`, as csv_parse reads it.
+function csv_read(string path, string delimiter = ","): string[][] {
+    return __csv_parse(file_get_contents(path), delimiter);
+}
+
+// The CSV file at `path` read by column name, as csv_parse_maps reads it.
+function csv_read_maps(string path, string delimiter = ","): map[string, string][] {
+    return __csv_parse_maps(file_get_contents(path), delimiter);
+}
+
+// Writes `rows` to the file at `path` as CSV, replacing it, or adding to it
+// with `append`.
+function csv_write(string path, string[][] rows, string delimiter = ",", string lineEnding = "\n", bool append = false): void {
+    file_put_contents(path, __csv_format(rows, delimiter, lineEnding), append);
+}
+
+// Objects of a class, read from CSV text with a header row: each record
+// becomes an object of the class the result is used as, with each public
+// property set from the column of the same name, converted to its type:
+//
+//   Product[] products = csv_decode(text);
+//
+// The class's properties must be ints, doubles, bools, or strings; columns
+// without a property are ignored. Throws CsvException for a missing column
+// or a value that doesn't fit its property, such as "abc" for an int.
+// (The compiler handles csv_decode, as it does json_decode.)
+extern function csv_decode(string text, string delimiter = ","): string[][];
+
+// Objects as CSV text: a header row of the class's public property names,
+// then a row for each object. (The compiler handles csv_encode.)
+extern function csv_encode(string[][] objects, string delimiter = ",", string lineEnding = "\n"): string;
+
+// Reads a CSV file a record at a time, for files too large to read at once.
+final class CsvReader {
+    private int handle;
+
+    private function __construct(int handle) {
+        this->handle = handle;
+    }
+
+    // Opens the CSV file at `path`. Throws FileNotFoundException,
+    // PermissionDeniedException, or IOException if it can't.
+    static function open(string path, string delimiter = ","): CsvReader {
+        return new CsvReader(__csv_open(path, delimiter));
+    }
+
+    // The next record's fields, or null at the end of the file.
+    function next(): string[] {
+        return __csv_next(this->handle);
+    }
+
+    // The line the last record read starts on, for messages.
+    function line(): int {
+        return __csv_line(this->handle);
+    }
+
+    // Closes the file; closing twice does nothing.
+    function close(): void {
+        __csv_close(this->handle);
+    }
+}
+
+// Writes a CSV file a row at a time.
+final class CsvWriter {
+    private File file;
+    private string delimiter;
+    private string lineEnding;
+
+    private function __construct(File file, string delimiter, string lineEnding) {
+        this->file = file;
+        this->delimiter = delimiter;
+        this->lineEnding = lineEnding;
+    }
+
+    // Creates (or replaces) the file at `path`, or adds to it with `append`.
+    static function open(string path, string delimiter = ",", string lineEnding = "\n", bool append = false): CsvWriter {
+        string mode = "w";
+        if (append) {
+            mode = "a";
+        }
+        CsvWriter writer = new CsvWriter(File::open(path, mode), delimiter, lineEnding);
+        // Checks the delimiter and line ending before anything is written.
+        __csv_format_row([""], delimiter, lineEnding);
+        return writer;
+    }
+
+    // Writes one row.
+    function write(string[] row): void {
+        this->file->write(__csv_format_row(row, this->delimiter, this->lineEnding));
+    }
+
+    // Writes the rest of the file and closes it.
+    function close(): void {
+        this->file->close();
+    }
+}

@@ -20,6 +20,7 @@
 // ├── InvalidArgumentException
 // ├── JsonException
 // ├── RegexException
+// ├── CsvException
 // └── HttpException
 //
 // The runtime raises some of these itself (see QiqExceptionKind in
@@ -126,3 +127,8 @@ class HttpException extends Exception {}
 // A regular expression (std/regex) is malformed, or needs too much
 // backtracking on the text it's matched against.
 class RegexException extends Exception {}
+
+// CSV (std/csv) is malformed, such as a quoted field that's never closed,
+// or doesn't fit what it's read into: a missing column, or a value that
+// isn't a number where one is needed. The message names the line.
+class CsvException extends Exception {}

@@ -1,0 +1,71 @@
+// std/csv: parsing and writing RFC 4180 CSV, by column name, into and from
+// objects, and a record or row at a time for large files.
+import csv_parse, csv_format, csv_parse_maps, csv_read, csv_write, csv_read_maps, csv_decode, csv_encode, CsvReader, CsvWriter from "std/csv";
+import file_get_contents, file_put_contents from "std/file";
+
+// Quoting: commas, quotes ("" inside quotes), and line breaks in fields.
+string text = "name,note,price\nTea,\"strong, black\",3.50\n\"Cake \"\"deluxe\"\"\",\"two\nlines\",12\n";
+string[][] rows = csv_parse(text);
+print(len(rows), rows[1], rows[2][0], rows[2][1] == "two\nlines");
+// Writing quotes only what must be quoted, and reads back the same.
+string written = csv_format(rows);
+print(written == text, csv_parse(written) == rows);
+print(csv_format([["a", "b c", "", "x,y", "say \"hi\""], [""]]));
+
+// Blank lines, a byte order mark (from Excel; the invisible first character of the string below), \r\n, a missing final newline, and empty fields.
+print(csv_parse("﻿a,b\r\n\r\n1,2\r\n\n,3"));
+// Other delimiters.
+print(csv_parse("a;b;\"c;d\"", ";"), csv_parse("a\tb", "\t"), csv_format([["a", "b;c"]], ";"));
+print(csv_format([["a", "b"]], ",", "\r\n") == "a,b\r\n");
+
+// By column name.
+map[string, string][] people = csv_parse_maps("name,email\nAda,ada@example.com\nLin,lin@example.com\n");
+print(len(people), people[1]["email"], people[0]);
+
+// Into and from objects: each column by name, converted to its property's type.
+class Product {
+    public string name;
+    public double price;
+    public int stock;
+    public bool active;
+}
+Product[] products = csv_decode("stock,name,active,price,unused\n12,Tea,yes,3.5,x\n0,\"Cake, large\",false, 12 ,y\n");
+print(len(products), products[0]->name, products[0]->price, products[0]->stock, products[0]->active, products[1]->name, products[1]->price, products[1]->active);
+string encoded = csv_encode(products);
+print(encoded);
+Product[] again = csv_decode(encoded, ",");
+print(again[1]->name, again[1]->stock);
+Product[] none = csv_decode("name,price,stock,active\n");
+print(len(none), csv_encode(none, ";"));
+
+// Files, whole and a record at a time.
+csv_write("tests/csv_output.csv", [["id", "city"], ["1", "Berlin"], ["2", "São Paulo"]]);
+csv_write("tests/csv_output.csv", [["3", "Lagos, NG"]], append: true);
+print(csv_read("tests/csv_output.csv"), csv_read_maps("tests/csv_output.csv")[2]["city"]);
+CsvWriter writer = CsvWriter::open("tests/csv_stream.csv", lineEnding: "\r\n");
+foreach (range(1, 3) as n) {
+    writer->write([to_string(n), f"row {n}", "multi\nline"]);
+}
+writer->close();
+CsvReader reader = CsvReader::open("tests/csv_stream.csv");
+string[] record = reader->next();
+while (record != null) {
+    print(reader->line(), record[0], record[1], len(record[2]));
+    record = reader->next();
+}
+reader->close();
+reader->close();
+
+// Errors.
+string[] bad = ["a,\"unclosed\nb,c", "x,y\n1,2,3"];
+try { csv_parse(bad[0]); } catch (CsvException e) { print("error:", e->getMessage()); }
+try { csv_parse_maps(bad[1]); } catch (CsvException e) { print("error:", e->getMessage()); }
+try { csv_parse_maps("a,a\n1,2"); } catch (CsvException e) { print("error:", e->getMessage()); }
+try { csv_parse("a", "ab"); } catch (InvalidArgumentException e) { print("error:", e->getMessage()); }
+try { csv_format([["a"]], ",", "\r"); } catch (InvalidArgumentException e) { print("error:", e->getMessage()); }
+Product[] broken = [];
+try { broken = csv_decode("name,price,stock\nTea,1,2"); } catch (CsvException e) { print("error:", e->getMessage()); }
+try { broken = csv_decode("name,price,stock,active\nTea,cheap,2,true"); } catch (CsvException e) { print("error:", e->getMessage()); }
+try { broken = csv_decode("name,price,stock,active\nTea,1,2,maybe"); } catch (CsvException e) { print("error:", e->getMessage()); }
+try { broken = csv_decode("name,price,stock,active\nTea,1,2.5,true"); } catch (CsvException e) { print("error:", e->getMessage()); }
+try { CsvReader::open("tests/csv_no_such_file.csv"); } catch (FileNotFoundException e) { print("error:", e->getMessage()); }
