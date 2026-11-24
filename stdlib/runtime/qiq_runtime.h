@@ -145,6 +145,11 @@ char *qiq_string_adopt(void *block, size_t length);
 void qiq_retain(void *value);
 void qiq_release(void *value);
 
+// Whether two payloads of the type `descriptor` describes are equal, as ==
+// compares them (map.c).
+bool qiq_payload_equal(const char *descriptor, uint64_t left, uint64_t right);
+extern void *qiq_pending_exception;
+
 // Frees a map's entries, releasing keys and values it holds (map.c).
 void qiq_map_drop(void *map);
 // For the cycle collector: calls `visit` with each non-null value of a map

@@ -15,6 +15,9 @@ extern function substr(string text, int start, int length = 9223372036854775807)
 extern function strpos(string haystack, string needle, int offset = 0): int;
 
 extern function str_contains(string haystack, string needle): bool;
+// -1, 0, or 1 as `a` sorts before, the same as, or after `b`, by Unicode
+// code point (as < compares strings): for usort's comparison functions.
+extern function strcmp(string a, string b): int;
 extern function str_ends_with(string haystack, string needle): bool;
 
 // Replaces every occurrence of `search` in `subject`.

@@ -3559,6 +3559,8 @@ struct Emitter {
     /// The IR of anonymous functions and of adapters for named functions used
     /// as values, emitted as they're met.
     closure_functions: String,
+    /// The comparison adapters usort's calls have made (see compare_adapter).
+    compare_adapters: Vec<String>,
     next_closure: usize,
     /// The synthetic class of the cell for each captured value type.
     cell_classes: Vec<(ValueType, u32)>,
@@ -3634,7 +3636,7 @@ struct Emitter {
 /// Built-in conversion functions (see Emitter::emit_conversion).
 /// Functions built into the compiler rather than declared in the standard
 /// library, because each accepts several types.
-const CONVERSION_FUNCTIONS: [&str; 35] = [
+const CONVERSION_FUNCTIONS: [&str; 44] = [
     // An f-string's expression (see lex_fstring).
     "__interpolate",
     "to_int",
@@ -3665,6 +3667,15 @@ const CONVERSION_FUNCTIONS: [&str; 35] = [
     "array_all",
     "map_filter",
     "map_map",
+    "sort",
+    "rsort",
+    "usort",
+    "in_array",
+    "array_search",
+    "array_slice",
+    "array_reverse",
+    "array_unique",
+    "array_sum",
     "array_push",
     "array_pop",
     "array_shift",
@@ -3706,6 +3717,7 @@ impl Emitter {
             in_closure: false,
             closure_has_this: false,
             closure_functions: String::new(),
+            compare_adapters: Vec::new(),
             next_closure: 0,
             cell_classes: Vec::new(),
             function_references: Vec::new(),
@@ -3939,7 +3951,7 @@ impl Emitter {
             ir.push_str(&self.emit_dispatch_table(*owner, method_name, Some(supplied)));
         }
         ir.push_str(
-            "\ndeclare i32 @printf(ptr, ...)\ndeclare i32 @strcmp(ptr, ptr)\ndeclare ptr @calloc(i64, i64)\ndeclare ptr @qiq_map_new(i32, i32)\ndeclare void @qiq_retain(ptr)\ndeclare void @qiq_release(ptr)\ndeclare ptr @qiq_object_new(i64, i64)\ndeclare void @qiq_map_set(ptr, i64, i64)\ndeclare i64 @qiq_map_get(ptr, i64)\ndeclare i64 @qiq_map_iteration_end(ptr)\ndeclare i64 @qiq_map_version(ptr)\ndeclare zeroext i1 @qiq_map_entry_live(ptr, i64, i64)\ndeclare zeroext i1 @qiq_map_find(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_map_has(ptr, i64)\ndeclare void @qiq_map_remove(ptr, i64)\ndeclare ptr @qiq_map_keys(ptr, i64, i32)\ndeclare ptr @qiq_map_values(ptr, i64, i32)\ndeclare zeroext i1 @qiq_map_contains_value(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_values_equal(ptr, ptr, ptr)\ndeclare i64 @qiq_map_key_at(ptr, i64)\ndeclare i64 @qiq_map_value_at(ptr, i64)\ndeclare ptr @qiq_map_merge(ptr, ptr)\ndeclare ptr @qiq_map_filter_keys(ptr, ptr, i1 zeroext)\ndeclare ptr @qiq_map_filter_entries(ptr, ptr, ptr, i1 zeroext)\ndeclare ptr @qiq_map_flip(ptr, i32, i32)\ndeclare i64 @qiq_string_len(ptr)\ndeclare ptr @qiq_sprintf(ptr, ptr, ptr, i64)\ndeclare void @qiq_bind_values(ptr, ptr, i64)\ndeclare ptr @qiq_json_encode(ptr, i64, i1 zeroext)\ndeclare i64 @qiq_json_decode(ptr, ptr)\ndeclare i64 @qiq_csv_decode(ptr, ptr, ptr)\ndeclare ptr @qiq_csv_encode(ptr, ptr, ptr, ptr)\ndeclare i32 @qiq_string_equality(ptr, ptr)\ndeclare i32 @qiq_string_compare(ptr, ptr)\ndeclare ptr @qiq_string_char_at(ptr, i64)\ndeclare ptr @qiq_string_concat(ptr, ptr)\ndeclare i64 @qiq_int_divide(i64, i64)\ndeclare i64 @qiq_int_modulo(i64, i64)\ndeclare i64 @qiq_int_power(i64, i64)\ndeclare i64 @qiq_int_power_unchecked(i64, i64)\ndeclare i64 @qiq_int_shift_left(i64, i64)\ndeclare i64 @qiq_int_shift_right(i64, i64)\ndeclare double @llvm.pow.f64(double, double)\ndeclare double @llvm.fabs.f64(double)\ndeclare i64 @qiq_math_min_int(ptr)\ndeclare i64 @qiq_math_max_int(ptr)\ndeclare double @qiq_math_min_double(ptr)\ndeclare double @qiq_math_max_double(ptr)\ndeclare i64 @qiq_math_clamp_int(i64, i64, i64)\ndeclare double @qiq_math_clamp_double(double, double, double)\ndeclare void @qiq_uncaught(ptr, ptr)\ndeclare ptr @qiq_array_new(i64, i64, i32)\ndeclare void @qiq_set_arguments(i32, ptr)\ndeclare void @qiq_check_callable(ptr)\ndeclare void @qiq_array_push(ptr, i64, i64)\ndeclare i64 @qiq_range_plan(i64, i64, i64, i1 zeroext, ptr)\ndeclare ptr @qiq_range_int(i64, i64, i64, i1 zeroext)\ndeclare ptr @qiq_range_count(i64)\ndeclare ptr @qiq_range_double(double, double, double, i1 zeroext)\ndeclare ptr @qiq_range_char(ptr, ptr, i64, i1 zeroext)\ndeclare i64 @qiq_array_pop(ptr, i64)\ndeclare i64 @qiq_array_shift(ptr, i64)\ndeclare void @qiq_array_insert(ptr, i64, i64, i64)\ndeclare ptr @qiq_array_splice(ptr, i64, i64, i64, i1 zeroext, ptr)\ndeclare i64 @qiq_array_length(ptr)\ndeclare i64 @qiq_len_string(ptr)\ndeclare i64 @qiq_len_array(ptr)\ndeclare i64 @qiq_len_map(ptr)\ndeclare void @qiq_array_check_index(ptr, i64)\ndeclare void @qiq_print_value(ptr, i64)\ndeclare ptr @qiq_describe_value(ptr, i64)\ndeclare void @qiq_print_space()\ndeclare void @qiq_print_newline()\ndeclare i64 @qiq_double_to_int(double)\ndeclare zeroext i8 @qiq_int_to_byte(i64)\ndeclare i64 @qiq_string_to_int(ptr)\ndeclare double @qiq_string_to_double(ptr)\ndeclare ptr @qiq_int_to_string(i64)\ndeclare ptr @qiq_double_to_string(double)\n",
+            "\ndeclare i32 @printf(ptr, ...)\ndeclare i32 @strcmp(ptr, ptr)\ndeclare ptr @calloc(i64, i64)\ndeclare ptr @qiq_map_new(i32, i32)\ndeclare void @qiq_retain(ptr)\ndeclare void @qiq_release(ptr)\ndeclare ptr @qiq_object_new(i64, i64)\ndeclare void @qiq_map_set(ptr, i64, i64)\ndeclare i64 @qiq_map_get(ptr, i64)\ndeclare i64 @qiq_map_iteration_end(ptr)\ndeclare i64 @qiq_map_version(ptr)\ndeclare zeroext i1 @qiq_map_entry_live(ptr, i64, i64)\ndeclare zeroext i1 @qiq_map_find(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_map_has(ptr, i64)\ndeclare void @qiq_map_remove(ptr, i64)\ndeclare ptr @qiq_map_keys(ptr, i64, i32)\ndeclare ptr @qiq_map_values(ptr, i64, i32)\ndeclare zeroext i1 @qiq_map_contains_value(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_values_equal(ptr, ptr, ptr)\ndeclare i64 @qiq_map_key_at(ptr, i64)\ndeclare i64 @qiq_map_value_at(ptr, i64)\ndeclare ptr @qiq_map_merge(ptr, ptr)\ndeclare ptr @qiq_array_sort(ptr, i64, i32, i32, i1 zeroext)\ndeclare ptr @qiq_array_usort(ptr, i64, i32, ptr, ptr)\ndeclare i64 @qiq_array_index_of(ptr, i64, ptr, i64)\ndeclare ptr @qiq_array_slice(ptr, i64, i32, i64, i64, i1 zeroext)\ndeclare ptr @qiq_array_reverse(ptr, i64, i32)\ndeclare ptr @qiq_array_unique(ptr, i64, i32, ptr)\ndeclare i64 @qiq_array_sum_int(ptr)\ndeclare double @qiq_array_sum_double(ptr)\ndeclare ptr @qiq_map_filter_keys(ptr, ptr, i1 zeroext)\ndeclare ptr @qiq_map_filter_entries(ptr, ptr, ptr, i1 zeroext)\ndeclare ptr @qiq_map_flip(ptr, i32, i32)\ndeclare i64 @qiq_string_len(ptr)\ndeclare ptr @qiq_sprintf(ptr, ptr, ptr, i64)\ndeclare void @qiq_bind_values(ptr, ptr, i64)\ndeclare ptr @qiq_json_encode(ptr, i64, i1 zeroext)\ndeclare i64 @qiq_json_decode(ptr, ptr)\ndeclare i64 @qiq_csv_decode(ptr, ptr, ptr)\ndeclare ptr @qiq_csv_encode(ptr, ptr, ptr, ptr)\ndeclare i32 @qiq_string_equality(ptr, ptr)\ndeclare i32 @qiq_string_compare(ptr, ptr)\ndeclare ptr @qiq_string_char_at(ptr, i64)\ndeclare ptr @qiq_string_concat(ptr, ptr)\ndeclare i64 @qiq_int_divide(i64, i64)\ndeclare i64 @qiq_int_modulo(i64, i64)\ndeclare i64 @qiq_int_power(i64, i64)\ndeclare i64 @qiq_int_power_unchecked(i64, i64)\ndeclare i64 @qiq_int_shift_left(i64, i64)\ndeclare i64 @qiq_int_shift_right(i64, i64)\ndeclare double @llvm.pow.f64(double, double)\ndeclare double @llvm.fabs.f64(double)\ndeclare i64 @qiq_math_min_int(ptr)\ndeclare i64 @qiq_math_max_int(ptr)\ndeclare double @qiq_math_min_double(ptr)\ndeclare double @qiq_math_max_double(ptr)\ndeclare i64 @qiq_math_clamp_int(i64, i64, i64)\ndeclare double @qiq_math_clamp_double(double, double, double)\ndeclare void @qiq_uncaught(ptr, ptr)\ndeclare ptr @qiq_array_new(i64, i64, i32)\ndeclare void @qiq_set_arguments(i32, ptr)\ndeclare void @qiq_check_callable(ptr)\ndeclare void @qiq_array_push(ptr, i64, i64)\ndeclare i64 @qiq_range_plan(i64, i64, i64, i1 zeroext, ptr)\ndeclare ptr @qiq_range_int(i64, i64, i64, i1 zeroext)\ndeclare ptr @qiq_range_count(i64)\ndeclare ptr @qiq_range_double(double, double, double, i1 zeroext)\ndeclare ptr @qiq_range_char(ptr, ptr, i64, i1 zeroext)\ndeclare i64 @qiq_array_pop(ptr, i64)\ndeclare i64 @qiq_array_shift(ptr, i64)\ndeclare void @qiq_array_insert(ptr, i64, i64, i64)\ndeclare ptr @qiq_array_splice(ptr, i64, i64, i64, i1 zeroext, ptr)\ndeclare i64 @qiq_array_length(ptr)\ndeclare i64 @qiq_len_string(ptr)\ndeclare i64 @qiq_len_array(ptr)\ndeclare i64 @qiq_len_map(ptr)\ndeclare void @qiq_array_check_index(ptr, i64)\ndeclare void @qiq_print_value(ptr, i64)\ndeclare ptr @qiq_describe_value(ptr, i64)\ndeclare void @qiq_print_space()\ndeclare void @qiq_print_newline()\ndeclare i64 @qiq_double_to_int(double)\ndeclare zeroext i8 @qiq_int_to_byte(i64)\ndeclare i64 @qiq_string_to_int(ptr)\ndeclare double @qiq_string_to_double(ptr)\ndeclare ptr @qiq_int_to_string(i64)\ndeclare ptr @qiq_double_to_string(double)\n",
         );
         ir.push_str(&extern_declarations);
         ir.push('\n');
@@ -6970,6 +6982,9 @@ impl Emitter {
         ) {
             return self.emit_with_callback(name, arguments, None, variables, body);
         }
+        if matches!(name, "sort" | "rsort" | "usort" | "in_array" | "array_search" | "array_slice" | "array_reverse" | "array_unique" | "array_sum") {
+            return self.emit_array_basic(name, arguments, variables, body);
+        }
         if name == "json_decode" {
             return Err(
                 "json_decode needs to know the type to decode into: use it where the type is known, such as `User user = json_decode(text);` or `int[] ids = json_decode(text);`"
@@ -8157,6 +8172,149 @@ impl Emitter {
     /// The map functions: `map_key_exists(key, map)`, `map_keys(map)`,
     /// `map_values(map)`, `in_map(value, map)`, and `unset(map[key])`. Built
     /// in because they work with any key and value types.
+    /// sort, rsort, usort, in_array, array_search, array_slice, array_reverse,
+    /// array_unique, and array_sum, done by the runtime (array.c) on the
+    /// array's elements; the ones that return arrays return new ones. For
+    /// usort, the compiler makes a function that calls the comparison
+    /// callback with two elements of their type, which the runtime's sort
+    /// calls.
+    fn emit_array_basic(&mut self, name: &str, arguments: &[Expr], variables: &HashMap<String, Value>, body: &mut String) -> Result<Value, String> {
+        if arguments.iter().any(|argument| matches!(argument, Expr::NamedArgument(..))) {
+            return Err(format!("{name} takes no named arguments"));
+        }
+        let (fewest, most, usage) = match name {
+            "usort" => (2, 2, "an array and a comparison function"),
+            "in_array" | "array_search" => (2, 2, "a value and an array"),
+            "array_slice" => (2, 3, "an array, an offset, and optionally a length"),
+            _ => (1, 1, "an array"),
+        };
+        if arguments.len() < fewest || arguments.len() > most {
+            return Err(format!("{name} expects {usage}, found {} argument{}", arguments.len(), if arguments.len() == 1 { "" } else { "s" }));
+        }
+        // in_array(value, array): the value first, as in PHP.
+        let (array_expression, value_expression) = if matches!(name, "in_array" | "array_search") { (&arguments[1], Some(&arguments[0])) } else { (&arguments[0], None) };
+        let value = match value_expression {
+            Some(expression) => Some(self.emit_expression(expression, variables, body)?),
+            None => None,
+        };
+        let array = self.emit_expression(array_expression, variables, body)?;
+        let Some(element) = self.element_of(array.value_type) else {
+            return Err(format!("{name} expects an array, found {}", self.type_name(array.value_type)));
+        };
+        let size = element.size_bytes();
+        let flags = self.contents_flags(element);
+        let register = self.new_register();
+        let array_type = array.value_type;
+        let result = |value_type: ValueType, operand: String| Value { value_type, operand, slot: None };
+        match name {
+            "sort" | "rsort" => {
+                let kind = match element {
+                    ValueType::Int => 0,
+                    ValueType::Double => 1,
+                    ValueType::String | ValueType::Char => 2,
+                    ValueType::Byte | ValueType::Bool => 3,
+                    other => {
+                        return Err(format!(
+                            "{name} sorts ints, doubles, strings, chars, bytes, and bools, found {}[]; for other types, use usort with a comparison function",
+                            self.type_name(other)
+                        ))
+                    }
+                };
+                body.push_str(&format!(
+                    "  {register} = call ptr @qiq_array_sort(ptr {}, i64 {size}, i32 {flags}, i32 {kind}, i1 zeroext {})\n",
+                    array.operand,
+                    name == "rsort"
+                ));
+            }
+            "usort" => {
+                let compare = self.emit_callback("usort", &arguments[1], &[element, element], Some(ValueType::Int), variables, body)?;
+                body.push_str(&format!("  call void @qiq_check_callable(ptr {})\n", compare.operand));
+                self.emit_exception_check(body);
+                let adapter = self.compare_adapter(element);
+                body.push_str(&format!(
+                    "  {register} = call ptr @qiq_array_usort(ptr {}, i64 {size}, i32 {flags}, ptr @{adapter}, ptr {})\n",
+                    array.operand, compare.operand
+                ));
+            }
+            "in_array" | "array_search" => {
+                let value = value.expect("evaluated above");
+                if !self.is_assignable(element, value.value_type) {
+                    let wanted = self.type_name(element);
+                    let article = if wanted.starts_with(['a', 'e', 'i', 'o', 'u']) { "an" } else { "a" };
+                    return Err(format!("{name} looks for {article} {wanted} in a {}, found {}", self.type_name(array_type), self.type_name(value.value_type)));
+                }
+                let value = Value { value_type: element, ..value };
+                let bits = if value.operand == "null" { "0".to_string() } else { self.encode_payload(&value, body)? };
+                let descriptor = self.type_descriptor(element);
+                let descriptor = self.string_literal(descriptor.as_bytes());
+                let index = self.new_register();
+                body.push_str(&format!("  {index} = call i64 @qiq_array_index_of(ptr {}, i64 {size}, ptr {descriptor}, i64 {bits})\n", array.operand));
+                self.emit_exception_check(body);
+                if name == "array_search" {
+                    return Ok(result(ValueType::Int, index));
+                }
+                body.push_str(&format!("  {register} = icmp sge i64 {index}, 0\n"));
+                return Ok(result(ValueType::Bool, register));
+            }
+            "array_slice" => {
+                let offset = self.emit_expression(&arguments[1], variables, body)?;
+                let length = match arguments.get(2) {
+                    Some(expression) => Some(self.emit_expression(expression, variables, body)?),
+                    None => None,
+                };
+                for value in std::iter::once(&offset).chain(length.iter()) {
+                    if value.value_type != ValueType::Int {
+                        return Err(format!("array_slice's offset and length are ints, found {}", self.type_name(value.value_type)));
+                    }
+                }
+                body.push_str(&format!(
+                    "  {register} = call ptr @qiq_array_slice(ptr {}, i64 {size}, i32 {flags}, i64 {}, i64 {}, i1 zeroext {})\n",
+                    array.operand,
+                    offset.operand,
+                    length.as_ref().map(|length| length.operand.clone()).unwrap_or_else(|| "0".to_string()),
+                    length.is_some()
+                ));
+            }
+            "array_reverse" => {
+                body.push_str(&format!("  {register} = call ptr @qiq_array_reverse(ptr {}, i64 {size}, i32 {flags})\n", array.operand));
+            }
+            "array_unique" => {
+                let descriptor = self.type_descriptor(element);
+                let descriptor = self.string_literal(descriptor.as_bytes());
+                body.push_str(&format!("  {register} = call ptr @qiq_array_unique(ptr {}, i64 {size}, i32 {flags}, ptr {descriptor})\n", array.operand));
+            }
+            _ => {
+                // array_sum
+                let (function, value_type) = match element {
+                    ValueType::Int => ("qiq_array_sum_int", ValueType::Int),
+                    ValueType::Double => ("qiq_array_sum_double", ValueType::Double),
+                    other => return Err(format!("array_sum adds ints or doubles, found {}[]", self.type_name(other))),
+                };
+                body.push_str(&format!("  {register} = call {} @{function}(ptr {})\n", value_type.llvm(), array.operand));
+                self.emit_exception_check(body);
+                return Ok(result(value_type, register));
+            }
+        }
+        self.emit_exception_check(body);
+        Ok(self.own(result(array_type, register)))
+    }
+
+    /// The function usort's runtime sort calls for each comparison: it loads
+    /// two elements of type `element` and calls the closure with them. One
+    /// for each element type.
+    fn compare_adapter(&mut self, element: ValueType) -> String {
+        let llvm = element.llvm();
+        let symbol = format!("qiq.compare.{}", llvm.replace('*', "p"));
+        if self.compare_adapters.contains(&symbol) {
+            return symbol;
+        }
+        self.compare_adapters.push(symbol.clone());
+        self.closure_functions.push_str(&format!(
+            "define internal i64 @{symbol}(ptr %closure, ptr %left, ptr %right) {{\nentry:\n  %a = load {llvm}, ptr %left, align 1\n  %b = load {llvm}, ptr %right, align 1\n  %at = getelementptr inbounds i64, ptr %closure, i64 {OBJECT_HEADER_FIELDS}\n  %function = load ptr, ptr %at, align 8\n  %result = call i64 %function(ptr %closure, {llvm} %a, {llvm} %b)\n  ret i64 %result\n}}\n\n"
+        ));
+        symbol
+    }
+
     /// A callback for array_filter and the rest: an anonymous function whose
     /// untyped parameters get `parameters` (its return type is inferred
     /// unless `returns` gives it), or any other expression whose type must be
@@ -12471,6 +12629,19 @@ mod tests {
         assert!(ir.contains("@qiq_stdlib___regex_scan"));
         // A pattern without a subject is a type error.
         assert!(compile_source("import preg_match from \"std/regex\"; preg_match(\"a\");").is_err());
+    }
+
+    #[test]
+    fn array_basics_check_their_types() {
+        assert!(compile_source("int[] a = sort([3, 1]); string[] b = rsort([\"x\"]); bool f = in_array(1, [1]); int i = array_search(\"a\", [\"a\"]); int[] s = array_slice([1, 2], 1); int[] r = array_reverse([1]); double d = array_sum([1.5]); int[] u = array_unique([1, 1]);").is_ok());
+        let ir = compile_source("class P { public int n; } P[] p = []; P[] q = usort(p, fn(a, b) => a->n - b->n); int[] r = usort([1], fn(x, y) => x - y);").unwrap();
+        // One comparison adapter per element type.
+        assert_eq!(ir.matches("define internal i64 @qiq.compare.").count(), 2, "{ir}");
+        let error = |source: &str| compile_source(source).unwrap_err();
+        assert!(error("print(sort([[1], [2]]));").contains("for other types, use usort with a comparison function"));
+        assert!(error("print(in_array(\"1\", [1, 2]));").contains("in_array looks for an int in a int[], found string"));
+        assert!(error("print(usort([1], fn(a) => 1));").contains("usort's callback takes 2 parameters (int, int)"));
+        assert!(error("print(array_sum([\"a\"]));").contains("array_sum adds ints or doubles, found string[]"));
     }
 
     #[test]

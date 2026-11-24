@@ -1,0 +1,24 @@
+[-7, -2, 0, 3, 5, 8] [8, 5, 3, 0, -2, -7] [5, -2, 8, 0, -7, 3]
+[-1, 2.5, 10.25] ["Apple", "apple", "fig", "pear", "émile"] [false, true, true] ['a', 'b']
+[] [1]
+Lin 29
+Alan 29
+Ada 36
+Grace 36
+["ccc", "bb", "a"]
+["a", "bb", "ccc"]
+Ada
+Alan
+Grace
+Lin
+-1 0 1 -1 -1
+error: division by zero
+true false 3 -1
+true true true false
+true false true 1
+[-2, 8, 0] [-7, 3] [-7, 3] [-2, 8, 0]
+[] [5, -2] [] [5, -2, 8, 0, -7, 3]
+[3, -7, 0, 8, -2, 5] ["a"] []
+[3, 1, 2] ["b", "a", null] [[1], [2]] [1.5]
+7 0.75 0
+[5, -2, 8, 0, -7, 3]

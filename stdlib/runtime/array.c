@@ -333,3 +333,285 @@ QIQ_GUARDED(void *, qiq_range_char, NULL, (const char *start, const char *end, i
     }
     return array;
 }
+
+// ---------------------------------------------------------------------------
+// sort, rsort, usort, in_array, array_search, array_slice, array_reverse,
+// array_unique, and array_sum. Each returns a new array (or a value),
+// leaving its argument as it was. `size` is the element size (1 for bools
+// and bytes, 8 otherwise) and `flags` the array's (references, cycles), as
+// the compiler passes them to qiq_array_new.
+
+// From map.c, for array_unique.
+void *qiq_map_new(uint32_t key_type, int32_t value_references);
+void qiq_map_set(void *map, uint64_t key, uint64_t value);
+bool qiq_map_has(void *map, uint64_t key);
+
+// A new array of `count` elements of `array`, from `indexes` (or all of them
+// in order when NULL), holding references of its own.
+static void *qiq_array_pick(void *array, int64_t size, int32_t flags, const int64_t *indexes, int64_t count) {
+    void *result = qiq_array_create(count, size, flags);
+    const char *data = QIQ_ARRAY_DATA(array);
+    for (int64_t index = 0; index < count; index++) {
+        uint64_t value = qiq_load(data, indexes ? indexes[index] : index, size);
+        if ((flags & QIQ_ELEMENTS_ARE_REFERENCES) && value != 0) qiq_retain((void *)(uintptr_t)value);
+        qiq_store(QIQ_ARRAY_DATA(result), index, size, value);
+    }
+    return result;
+}
+
+// What qiq_array_sort compares: an element kind for sort and rsort, or a
+// comparison function compiled for usort.
+typedef struct {
+    const char *data;
+    int64_t size;
+    int kind;            // 0 int, 1 double, 2 string or char, 3 byte; -1 for `compare`
+    bool descending;
+    int64_t (*compare)(void *closure, const void *left, const void *right);
+    void *closure;
+    bool failed;         // the comparison threw
+} QiqSortOrder;
+
+// <0, 0, or >0 for elements `left` and `right` (indexes into the data).
+static int qiq_sort_compare(QiqSortOrder *order, int64_t left, int64_t right) {
+    const char *a = order->data + left * order->size;
+    const char *b = order->data + right * order->size;
+    int result;
+    if (order->kind < 0) {
+        int64_t compared = order->compare(order->closure, a, b);
+        if (qiq_pending_exception != NULL) order->failed = true;
+        result = compared < 0 ? -1 : compared > 0 ? 1 : 0;
+    } else {
+        uint64_t x = qiq_load(order->data, left, order->size), y = qiq_load(order->data, right, order->size);
+        switch (order->kind) {
+        case 0:
+            result = (int64_t)x < (int64_t)y ? -1 : (int64_t)x > (int64_t)y;
+            break;
+        case 1: {
+            double p, q;
+            memcpy(&p, &x, sizeof p);
+            memcpy(&q, &y, sizeof q);
+            result = p < q ? -1 : p > q;
+            break;
+        }
+        case 2:
+            result = strcmp((const char *)(uintptr_t)(x ? x : (uint64_t)(uintptr_t)""), (const char *)(uintptr_t)(y ? y : (uint64_t)(uintptr_t)""));
+            break;
+        default:
+            result = x < y ? -1 : x > y;
+        }
+    }
+    return order->descending ? -result : result;
+}
+
+// A stable merge sort of the indexes `items[0..count)`, using `scratch`.
+static void qiq_merge_sort(QiqSortOrder *order, int64_t *items, int64_t *scratch, int64_t count) {
+    if (count < 2 || order->failed) return;
+    int64_t half = count / 2;
+    qiq_merge_sort(order, items, scratch, half);
+    qiq_merge_sort(order, items + half, scratch, count - half);
+    if (order->failed) return;
+    int64_t left = 0, right = half, out = 0;
+    while (left < half && right < count) {
+        // Equal elements keep their order: the left one first.
+        if (qiq_sort_compare(order, items[right], items[left]) < 0) scratch[out++] = items[right++];
+        else scratch[out++] = items[left++];
+        if (order->failed) return;
+    }
+    while (left < half) scratch[out++] = items[left++];
+    while (right < count) scratch[out++] = items[right++];
+    memcpy(items, scratch, (size_t)count * sizeof *items);
+}
+
+static void *qiq_array_sorted(void *array, int64_t size, int32_t flags, QiqSortOrder *order) {
+    qiq_require_array(array);
+    int64_t count = QIQ_ARRAY_LENGTH(array);
+    int64_t *items = malloc((size_t)(count > 0 ? count : 1) * sizeof *items * 2);
+    if (items == NULL) qiq_fatal("out of memory sorting an array");
+    for (int64_t index = 0; index < count; index++) items[index] = index;
+    order->data = QIQ_ARRAY_DATA(array);
+    order->size = size;
+    qiq_merge_sort(order, items, items + count, count);
+    void *result = order->failed ? NULL : qiq_array_pick(array, size, flags, items, count);
+    free(items);
+    return result;
+}
+
+// Sorts numbers directly, rather than through indexes: equal numbers can't
+// be told apart, so the sort needn't be stable. A merge sort, with insertion
+// sort for short runs.
+#define QIQ_VALUE_SORT(name, type)                                                                \
+    static void name(type *values, type *scratch, int64_t count) {                              \
+        if (count <= 24) {                                                                       \
+            for (int64_t i = 1; i < count; i++) {                                                \
+                type value = values[i];                                                          \
+                int64_t j = i;                                                                   \
+                while (j > 0 && value < values[j - 1]) {                                         \
+                    values[j] = values[j - 1];                                                   \
+                    j--;                                                                         \
+                }                                                                                \
+                values[j] = value;                                                               \
+            }                                                                                    \
+            return;                                                                              \
+        }                                                                                        \
+        int64_t half = count / 2;                                                                \
+        name(values, scratch, half);                                                             \
+        name(values + half, scratch, count - half);                                              \
+        if (!(values[half] < values[half - 1])) return;                                          \
+        int64_t left = 0, right = half, out = 0;                                                 \
+        while (left < half && right < count) {                                                   \
+            scratch[out++] = values[right] < values[left] ? values[right++] : values[left++];    \
+        }                                                                                        \
+        while (left < half) scratch[out++] = values[left++];                                     \
+        memcpy(values, scratch, (size_t)out * sizeof(type));                                     \
+    }
+QIQ_VALUE_SORT(qiq_sort_ints, int64_t)
+QIQ_VALUE_SORT(qiq_sort_doubles, double)
+QIQ_VALUE_SORT(qiq_sort_bytes, uint8_t)
+
+// sort(array) and rsort(array): ints, doubles, strings and chars (by their
+// bytes, so by Unicode code point), or bytes and bools.
+QIQ_GUARDED(void *, qiq_array_sort, NULL, (void *array, int64_t size, int32_t flags, int32_t kind, bool descending),
+            (array, size, flags, kind, descending)) {
+    if (kind == 2) {
+        QiqSortOrder order = {NULL, 0, kind, descending, NULL, NULL, false};
+        return qiq_array_sorted(array, size, flags, &order);
+    }
+    qiq_require_array(array);
+    int64_t count = QIQ_ARRAY_LENGTH(array);
+    void *result = qiq_array_create(count, size, flags);
+    if (count == 0) return result;
+    void *values = QIQ_ARRAY_DATA(result);
+    memcpy(values, QIQ_ARRAY_DATA(array), (size_t)(count * size));
+    void *scratch = malloc((size_t)(count * size));
+    if (scratch == NULL) qiq_fatal("out of memory sorting an array");
+    if (kind == 0) qiq_sort_ints(values, scratch, count);
+    else if (kind == 1) qiq_sort_doubles(values, scratch, count);
+    else qiq_sort_bytes(values, scratch, count);
+    free(scratch);
+    if (descending) {
+        char *bytes = values;
+        for (int64_t i = 0, j = count - 1; i < j; i++, j--) {
+            char swap[8];
+            memcpy(swap, bytes + i * size, (size_t)size);
+            memcpy(bytes + i * size, bytes + j * size, (size_t)size);
+            memcpy(bytes + j * size, swap, (size_t)size);
+        }
+    }
+    return result;
+}
+
+// usort(array, compare): `compare` is compiled for the element type, and
+// calls the closure with two elements. Compiled code doesn't jump out of
+// this function when it throws; it leaves the exception pending, which stops
+// the sort, and the compiled code that called usort sees it.
+QIQ_GUARDED(void *, qiq_array_usort, NULL,
+            (void *array, int64_t size, int32_t flags, int64_t (*compare)(void *, const void *, const void *), void *closure),
+            (array, size, flags, compare, closure)) {
+    qiq_require_array(array);
+    QiqSortOrder order = {NULL, 0, -1, false, compare, closure, false};
+    return qiq_array_sorted(array, size, flags, &order);
+}
+
+// in_array and array_search: the index of the first element equal to
+// `value` (as == compares, by `descriptor`), or -1.
+QIQ_GUARDED(int64_t, qiq_array_index_of, -1, (void *array, int64_t size, const char *descriptor, uint64_t value),
+            (array, size, descriptor, value)) {
+    qiq_require_array(array);
+    const char *data = QIQ_ARRAY_DATA(array);
+    for (int64_t index = 0; index < QIQ_ARRAY_LENGTH(array); index++) {
+        if (qiq_payload_equal(descriptor, qiq_load(data, index, size), value)) return index;
+    }
+    return -1;
+}
+
+// array_slice(array, offset, length): as PHP's. A negative offset counts
+// from the end; without a length (`has_length` false) the slice runs to the
+// end, and a negative length stops that many elements before it. Offsets
+// past either end are clamped, so the result can be empty.
+QIQ_GUARDED(void *, qiq_array_slice, NULL, (void *array, int64_t size, int32_t flags, int64_t offset, int64_t length, bool has_length),
+            (array, size, flags, offset, length, has_length)) {
+    qiq_require_array(array);
+    int64_t count = QIQ_ARRAY_LENGTH(array);
+    int64_t start = offset < 0 ? count + offset : offset;
+    if (start < 0) start = 0;
+    if (start > count) start = count;
+    int64_t end = !has_length ? count : length < 0 ? count + length : start + (length > count ? count : length);
+    if (end > count) end = count;
+    if (end < start) end = start;
+    void *result = qiq_array_create(end - start, size, flags);
+    const char *data = QIQ_ARRAY_DATA(array);
+    for (int64_t index = start; index < end; index++) {
+        uint64_t value = qiq_load(data, index, size);
+        if ((flags & QIQ_ELEMENTS_ARE_REFERENCES) && value != 0) qiq_retain((void *)(uintptr_t)value);
+        qiq_store(QIQ_ARRAY_DATA(result), index - start, size, value);
+    }
+    return result;
+}
+
+// array_reverse(array): the elements in the opposite order.
+QIQ_GUARDED(void *, qiq_array_reverse, NULL, (void *array, int64_t size, int32_t flags), (array, size, flags)) {
+    qiq_require_array(array);
+    int64_t count = QIQ_ARRAY_LENGTH(array);
+    int64_t *indexes = malloc((size_t)(count > 0 ? count : 1) * sizeof *indexes);
+    if (indexes == NULL) qiq_fatal("out of memory reversing an array");
+    for (int64_t index = 0; index < count; index++) indexes[index] = count - 1 - index;
+    void *result = qiq_array_pick(array, size, flags, indexes, count);
+    free(indexes);
+    return result;
+}
+
+// array_unique(array): each value once, where it first appears.
+QIQ_GUARDED(void *, qiq_array_unique, NULL, (void *array, int64_t size, int32_t flags, const char *descriptor),
+            (array, size, flags, descriptor)) {
+    qiq_require_array(array);
+    int64_t count = QIQ_ARRAY_LENGTH(array);
+    const char *data = QIQ_ARRAY_DATA(array);
+    int64_t *kept = malloc((size_t)(count > 0 ? count : 1) * sizeof *kept);
+    if (kept == NULL) qiq_fatal("out of memory");
+    int64_t kept_count = 0;
+    // Values a map can hold as keys are found with one; others compared one by one.
+    int key_type = strchr("idbsc", descriptor[0]) && descriptor[1] == '\0' ? (int)(strchr("idbsc", descriptor[0]) - "idbsc") : -1;
+    void *seen = key_type >= 0 ? qiq_map_new((uint32_t)key_type, 0) : NULL;
+    for (int64_t index = 0; index < count; index++) {
+        uint64_t value = qiq_load(data, index, size);
+        bool duplicate = false;
+        if (seen != NULL) {
+            if (key_type >= 3 && value == 0) {
+                // A null string: compared by hand, as map keys can't be null.
+                for (int64_t other = 0; other < kept_count && !duplicate; other++) duplicate = qiq_load(data, kept[other], size) == 0;
+            } else {
+                duplicate = qiq_map_has(seen, value);
+                if (!duplicate) {
+                    if (key_type >= 3) qiq_retain((void *)(uintptr_t)value);
+                    qiq_map_set(seen, value, 1);
+                }
+            }
+        } else {
+            for (int64_t other = 0; other < kept_count && !duplicate; other++) {
+                duplicate = qiq_payload_equal(descriptor, qiq_load(data, kept[other], size), value);
+            }
+        }
+        if (!duplicate) kept[kept_count++] = index;
+    }
+    if (seen != NULL) qiq_release(seen);
+    void *result = qiq_array_pick(array, size, flags, kept, kept_count);
+    free(kept);
+    return result;
+}
+
+// array_sum(array): of ints (wrapping, as + does) or doubles.
+QIQ_GUARDED(int64_t, qiq_array_sum_int, 0, (void *array), (array)) {
+    qiq_require_array(array);
+    const int64_t *data = QIQ_ARRAY_DATA(array);
+    uint64_t sum = 0;
+    for (int64_t index = 0; index < QIQ_ARRAY_LENGTH(array); index++) sum += (uint64_t)data[index];
+    return (int64_t)sum;
+}
+
+QIQ_GUARDED(double, qiq_array_sum_double, 0, (void *array), (array)) {
+    qiq_require_array(array);
+    const double *data = QIQ_ARRAY_DATA(array);
+    double sum = 0;
+    for (int64_t index = 0; index < QIQ_ARRAY_LENGTH(array); index++) sum += data[index];
+    return sum;
+}

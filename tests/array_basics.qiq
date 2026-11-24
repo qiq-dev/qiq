@@ -1,0 +1,49 @@
+// sort, rsort, usort, in_array, array_search, array_slice, array_reverse,
+// array_unique, and array_sum: new arrays, with their arguments unchanged.
+int[] numbers = [5, -2, 8, 0, -7, 3];
+print(sort(numbers), rsort(numbers), numbers);
+print(sort([2.5, -1.0, 10.25]), sort(["pear", "Apple", "fig", "émile", "apple"]), sort([true, false, true]), sort(['b', 'a']));
+int[] none = [];
+print(sort(none), rsort([1]));
+
+// usort: stable, so elements that compare equal keep their order.
+class Person {
+    function __construct(public string name, public int age) {}
+}
+Person[] people = [new Person("Ada", 36), new Person("Lin", 29), new Person("Grace", 36), new Person("Alan", 29)];
+foreach (usort(people, fn(a, b) => a->age - b->age) as p) {
+    print(p->name, p->age);
+}
+print(usort(["ccc", "a", "bb"], fn(x, y) => len(y) - len(x)));
+function byLength(string a, string b): int {
+    return len(a) - len(b);
+}
+print(usort(["ccc", "a", "bb"], byLength));
+// By a string, with strcmp.
+foreach (usort(people, fn(a, b) => strcmp(a->name, b->name)) as p) {
+    print(p->name);
+}
+print(strcmp("a", "b"), strcmp("b", "b"), strcmp("b", "a"), strcmp("Z", "a"), strcmp("", "a"));
+// A comparison that throws stops the sort.
+try {
+    print(usort(numbers, fn(a, b) => 10 / (a - a)));
+} catch (DivisionByZeroException e) {
+    print("error:", e->getMessage());
+}
+
+// Searching: as == compares.
+print(in_array(8, numbers), in_array(9, numbers), array_search(0, numbers), array_search(9, numbers));
+print(in_array("fig", ["pear", "fig"]), in_array([1, 2], [[3], [1, 2]]), in_array(2.5, [1.0, 2.5]), in_array('x', ['y']));
+Person ada = people[0];
+string missing = null;
+print(in_array(ada, people), in_array(new Person("Ada", 36), people), in_array(missing, ["a", null]), array_search(true, [false, true]));
+
+// Slicing, as PHP's array_slice: negative offsets count from the end.
+print(array_slice(numbers, 1, 3), array_slice(numbers, 4), array_slice(numbers, -2), array_slice(numbers, 1, -2));
+print(array_slice(numbers, 10), array_slice(numbers, -100, 2), array_slice(numbers, 2, 0), array_slice(numbers, 0, 100));
+
+// Reversing, removing duplicates, and summing.
+print(array_reverse(numbers), array_reverse(["a"]), array_reverse(none));
+print(array_unique([3, 1, 3, 2, 1]), array_unique(["b", "a", "b", null, null]), array_unique([[1], [2], [1]]), array_unique([1.5, 1.5]));
+print(array_sum(numbers), array_sum([0.5, 0.25]), array_sum(none));
+print(numbers);

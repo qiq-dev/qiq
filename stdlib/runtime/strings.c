@@ -1021,3 +1021,11 @@ QIQ_GUARDED(char *, qiq_sprintf, NULL, (const char *format, const char *types, c
     free(output.data);
     return result;
 }
+
+// strcmp(a, b): -1, 0, or 1, by bytes (so by Unicode code point), as PHP 8.2's.
+QIQ_GUARDED(int64_t, qiq_stdlib_strcmp, 0, (const char *a, const char *b), (a, b)) {
+    qiq_require_string(a);
+    qiq_require_string(b);
+    int result = strcmp(a, b);
+    return result < 0 ? -1 : result > 0;
+}

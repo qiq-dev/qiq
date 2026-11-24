@@ -386,6 +386,12 @@ static bool qiq_payloads_equal(const char *descriptor, uint64_t left, uint64_t r
     }
 }
 
+// Whether two payloads of the type `descriptor` describes are equal, as ==
+// would say, for array.c (in_array, array_search, array_unique).
+bool qiq_payload_equal(const char *descriptor, uint64_t left, uint64_t right) {
+    return qiq_payloads_equal(descriptor, left, right);
+}
+
 // `left == right` for two arrays or two maps of the type `descriptor`
 // describes ("a..." or "m...").
 bool qiq_values_equal(const char *descriptor, void *left, void *right) {
