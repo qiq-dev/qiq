@@ -132,9 +132,27 @@ _Noreturn void qiq_throwf(QiqExceptionKind kind, const char *format, ...) {
     longjmp(*guard, 1);
 }
 
+// "caller (file:line)": a frame of an exception's stack trace, made by
+// Exception::__locate as the exception passes through the program's code.
+char *qiq_stdlib___trace_frame(const char *caller, const char *file, int64_t line) {
+    int length = snprintf(NULL, 0, "%s (%s:%lld)", caller, file, (long long)line);
+    char *text = malloc((size_t)length + 1);
+    if (text == NULL) qiq_fatal("out of memory");
+    snprintf(text, (size_t)length + 1, "%s (%s:%lld)", caller, file, (long long)line);
+    char *frame = qiq_string_from(text, (size_t)length);
+    free(text);
+    return frame;
+}
+
+// The most frames an uncaught exception's trace prints: the innermost ones,
+// and then how many more there were (as from deep recursion).
+#define QIQ_TRACE_PRINTED 40
+
 // Called by `main` when an exception reaches the top level, with where it
-// was thrown (file is "" and line 0 when that isn't known).
-_Noreturn void qiq_uncaught(const char *class_name, const char *message, const char *file, int64_t line) {
+// was thrown (file is "" and line 0 when that isn't known) and its trace (a
+// string[] of "name (file:line)", innermost first). The trace is printed
+// when it has more than one frame: one would only repeat the first line.
+_Noreturn void qiq_uncaught(const char *class_name, const char *message, const char *file, int64_t line, void *trace) {
     fflush(stdout);
     fputs("qiq: ", stderr);
     if (file != NULL && file[0] != 0 && line > 0) {
@@ -144,6 +162,16 @@ _Noreturn void qiq_uncaught(const char *class_name, const char *message, const c
         fprintf(stderr, "uncaught %s: %s\n", class_name, message);
     } else {
         fprintf(stderr, "uncaught %s\n", class_name);
+    }
+    int64_t frames = trace == NULL ? 0 : QIQ_ARRAY_LENGTH(trace);
+    if (frames > 1) {
+        char **data = QIQ_ARRAY_DATA(trace);
+        for (int64_t index = 0; index < frames && index < QIQ_TRACE_PRINTED; index++) {
+            fprintf(stderr, "    at %s\n", data[index]);
+        }
+        if (frames > QIQ_TRACE_PRINTED) {
+            fprintf(stderr, "    ... and %lld more\n", (long long)(frames - QIQ_TRACE_PRINTED));
+        }
     }
     exit(1);
 }

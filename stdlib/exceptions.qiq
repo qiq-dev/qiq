@@ -26,6 +26,9 @@
 // The runtime raises some of these itself (see QiqExceptionKind in
 // stdlib/runtime/qiq_runtime.h).
 
+// "caller (file:line)", a stack trace's frame (core.c).
+extern function __trace_frame(string caller, string file, int line): string;
+
 class Exception {
     protected string message;
     protected int code;
@@ -33,6 +36,11 @@ class Exception {
     // code (not the standard library's) it was thrown from or passed through.
     protected string file = "";
     protected int line = 0;
+    // The functions it passed through, innermost first, as
+    // "name (file:line)" (see getTrace).
+    protected string[] trace = [];
+    // The function that added the last frame.
+    private string lastCaller = "";
 
     function __construct(string message = "", int code = 0) {
         this->message = message;
@@ -57,13 +65,33 @@ class Exception {
         return this->line;
     }
 
+    // The functions in the program's own code that the exception passed
+    // through on its way here, innermost first, each as
+    // "name (file:line)": where it was thrown, then where each caller made
+    // the call. An uncaught exception's trace goes back to main.
+    function getTrace(): string[] {
+        return this->trace;
+    }
+
     // Called by compiled code wherever the exception is thrown or passes
-    // through the program's own code; only the first place counts.
-    function __locate(string file, int line): void {
+    // through the program's own code: the first place is where it was
+    // thrown, and each adds a frame to the trace. `thrown` is set for a
+    // throw statement, which doesn't add a frame when it rethrows in the
+    // function that last saw the exception.
+    function __locate(string file, int line, string caller, bool thrown): void {
         if (this->line == 0) {
             this->file = file;
             this->line = line;
         }
+        if (thrown) {
+            if (len(this->trace) > 0) {
+                if (this->lastCaller == caller) {
+                    return;
+                }
+            }
+        }
+        array_push(this->trace, __trace_frame(caller, file, line));
+        this->lastCaller = caller;
     }
 }
 

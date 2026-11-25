@@ -185,6 +185,13 @@ function __testing_run(string name, function(Test): void test): void {
         if (e->getLine() > 0) {
             reason = f"{e->getFile()}:{e->getLine()}: {reason}";
         }
+        // The functions it passed through, when there's more than the test.
+        string[] trace = e->getTrace();
+        if (len(trace) > 1) {
+            foreach (trace as frame) {
+                reason = reason + "\n        at " + frame;
+            }
+        }
     }
     string time = sprintf("%.2fs", to_double(hrtime() - start) / 1000000000.0);
     if (status == "PASS") {

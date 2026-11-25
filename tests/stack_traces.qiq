@@ -1,0 +1,50 @@
+// Stack traces: an exception records each function in the program's code
+// that it passes through. Uncaught, it ends the program with its trace.
+// test: exit 1
+
+class Config {
+    static function load(string text): int {
+        return to_int(text);
+    }
+}
+
+function setting(string text): int {
+    return Config::load(text);
+}
+
+// getTrace(): innermost first, each "function (file:line)".
+try {
+    setting("x");
+} catch (InvalidArgumentException e) {
+    print(e->getMessage());
+    foreach (e->getTrace() as frame) {
+        print(frame);
+    }
+}
+
+// Recursion shows each call; rethrowing in the function that caught it
+// doesn't add the function again.
+function countdown(int n): int {
+    if (n == 0) {
+        throw new RuntimeException("zero");
+    }
+    return countdown(n - 1);
+}
+
+function retry(): int {
+    try {
+        return countdown(2);
+    } catch (RuntimeException e) {
+        throw e;
+    }
+}
+
+try {
+    retry();
+} catch (RuntimeException e) {
+    print(len(e->getTrace()), e->getTrace()[3]);
+}
+
+function(string): int parse = fn(string text) => setting(text);
+print("about to fail");
+print(parse("y"));

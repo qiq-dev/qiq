@@ -1,0 +1,5 @@
+qiq: tests/stack_traces.qiq:7: uncaught InvalidArgumentException: "y" is not an int
+    at Config::load (tests/stack_traces.qiq:7)
+    at setting (tests/stack_traces.qiq:12)
+    at anonymous function (tests/stack_traces.qiq:48)
+    at main (tests/stack_traces.qiq:50)

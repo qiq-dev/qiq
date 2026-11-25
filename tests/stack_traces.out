@@ -1,0 +1,6 @@
+"x" is not an int
+Config::load (tests/stack_traces.qiq:7)
+setting (tests/stack_traces.qiq:12)
+main (tests/stack_traces.qiq:17)
+5 retry (tests/stack_traces.qiq:36)
+about to fail

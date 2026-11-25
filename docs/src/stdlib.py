@@ -3602,13 +3602,15 @@ EXCEPTION_CLASSES = """<h1>Exception classes</h1>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">protected</span> <span class="type">int</span> code;<br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">protected</span> <span class="type">string</span> file = <span class="default">""</span>;<br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">protected</span> <span class="type">int</span> line = <span class="default">0</span>;<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">protected</span> <span class="type">string[]</span> trace = <span class="default">[]</span>;<br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">__construct</span>(<span class="type">string</span> message = <span class="default">""</span>, <span class="type">int</span> code = <span class="default">0</span>)<br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">getMessage</span>(): <span class="type">string</span><br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">getCode</span>(): <span class="type">int</span><br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">getFile</span>(): <span class="type">string</span><br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">getLine</span>(): <span class="type">int</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">getTrace</span>(): <span class="type">string[]</span><br>
 }</code></div>
-<p><code>getFile()</code> and <code>getLine()</code> give where the exception was thrown: the <code>throw</code> statement, or, for an exception raised by the standard library, the line of your code that called it.</p>
+<p><code>getFile()</code> and <code>getLine()</code> give where the exception was thrown: the <code>throw</code> statement, or, for an exception raised by the standard library, the line of your code that called it. <code>getTrace()</code> gives the functions it passed through, innermost first, each as <code>"name (file:line)"</code>; see <a href="exceptions.html">Uncaught exceptions</a>.</p>
 <p>Every subclass inherits the constructor and the methods. A subclass that declares no constructor uses this one, so <code>class ConfigException extends Exception {}</code> is enough to define a new exception.</p>
 <h2>When each is thrown</h2>
 <table>
