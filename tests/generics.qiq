@@ -164,3 +164,89 @@ print(shown->show(), boxes[1]->value, named["a"]->value);
 print(json_encode(nested), json_encode(boxes));
 Box<int> decoded = json_decode("{\"value\": 42}");
 print(decoded->value);
+
+// Generic interfaces, implemented by generic classes and by ordinary ones.
+interface Comparable<T> {
+    function compareTo(T other): int;
+}
+
+interface Repository<T> {
+    function find(int id): T;
+    function save(T item): void;
+    function count(): int;
+}
+
+class Money implements Comparable<Money> {
+    public int cents;
+
+    function __construct(int cents) {
+        this->cents = cents;
+    }
+
+    function compareTo(Money other): int {
+        return this->cents - other->cents;
+    }
+}
+
+class MemoryRepository<T> implements Repository<T> {
+    private map[int, T] items = {};
+
+    function find(int id): T {
+        return this->items[id];
+    }
+
+    function save(T item): void {
+        this->items[len(this->items) + 1] = item;
+    }
+
+    function count(): int {
+        return len(this->items);
+    }
+}
+
+// A bound can mention its own parameter: T must be comparable with T.
+function largest<T: Comparable<T>>(T[] items): T {
+    T best = items[0];
+    foreach (items as item) {
+        if (item->compareTo(best) > 0) {
+            best = item;
+        }
+    }
+    return best;
+}
+
+// The type arguments of `new` can come from an interface the object is used as.
+Repository<Word> words = new MemoryRepository();
+words->save(new Word("first"));
+words->save(new Word("second"));
+print(words->find(2)->text, words->count(), words);
+print(largest([new Money(5), new Money(12), new Money(7)])->cents);
+
+// Generic methods: type parameters of their own, inferred at each call.
+class Converter<T> {
+    public T value;
+
+    function __construct(T value) {
+        this->value = value;
+    }
+
+    function convert<U>(function(T): U change): Converter<U> {
+        return new Converter(change(this->value));
+    }
+}
+
+// Ordinary classes can have generic methods too, static ones included.
+class Lists {
+    static function repeat<V>(V value, int times): V[] {
+        V[] values = [];
+        foreach (range(times) as i) {
+            array_push(values, value);
+        }
+        return values;
+    }
+}
+
+Converter<int> number = new Converter(21);
+Converter<string> label = number->convert(fn(n) => f"#{n * 2}");
+print(label->value, label, number->convert(fn(int n) => n > 20)->value);
+print(Lists::repeat("ab", 3), Lists::repeat(Money::class, 1));

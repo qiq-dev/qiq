@@ -89,6 +89,61 @@ print(transform(["a", "bb"], fn(string s) => len(s)));
 
 <p>An anonymous function argument, like <code>fn(n) =&gt; n * 10</code> above, takes its parameter types from the other arguments, and its return type decides <code>U</code>. Arguments that need a type to have one (<code>[]</code>, <code>{}</code>, <code>null</code>) take it from the other arguments too. When an argument gives a different type for a parameter than an earlier one did, the call is an error: <code>T is int from an earlier argument, but string here</code>.</p>
 
+<h2>Generic methods</h2>
+<p>A method can have type parameters of its own, alongside its class's. Like a generic function's, they come from the arguments at each call. Static methods can be generic too.</p>
+
+```qiq
+class Box<T> {
+    public T value;
+
+    function __construct(T value) {
+        this->value = value;
+    }
+
+    function convert<U>(function(T): U change): Box<U> {
+        return new Box(change(this->value));
+    }
+}
+
+Box<int> number = new Box(21);
+Box<string> label = number->convert(fn(n) => f"#{n * 2}");
+print(label->value, label);
+```
+```output
+#42 Box<string>
+```
+
+<h2>Generic interfaces</h2>
+<p>An interface can have type parameters too: <code>Repository&lt;User&gt;</code> declares methods that take and return users. A class implements it for particular types (<code>class Money implements Comparable&lt;Money&gt;</code>), or a generic class for its own (<code>class MemoryRepository&lt;T&gt; implements Repository&lt;T&gt;</code>), and its methods must match the interface's with those types filled in.</p>
+
+```qiq
+interface Repository<T> {
+    function find(int id): T;
+    function save(T item): void;
+}
+
+class MemoryRepository<T> implements Repository<T> {
+    private map[int, T] items = {};
+
+    function find(int id): T {
+        return this->items[id];
+    }
+
+    function save(T item): void {
+        this->items[len(this->items) + 1] = item;
+    }
+}
+
+Repository<string> names = new MemoryRepository();
+names->save("Ada");
+print(names->find(1), names);
+```
+```output
+Ada MemoryRepository<string>
+```
+
+<p>Here <code>new MemoryRepository()</code> takes its type argument from the interface it's used as.</p>
+
 <h2>Bounds</h2>
 <p>Without a bound, generic code can only store, pass, return, and compare a <code>T</code>, since it could be any type. A bound, written <code>T: Interface</code> (or a class), says what <code>T</code> must be: generic code can then call that type's methods, and each use is checked to give a type that is one.</p>
 
@@ -126,6 +181,40 @@ hello
 ```
 
 <p>Calling <code>longest</code> with objects that aren't a <code>HasLength</code> is the error <code>longest's type parameter T must be a HasLength, but Plain isn't one</code>.</p>
+<p>A bound can be a generic interface that mentions the parameter itself, so generic code can compare a <code>T</code> with another <code>T</code>:</p>
+
+```qiq
+interface Comparable<T> {
+    function compareTo(T other): int;
+}
+
+class Money implements Comparable<Money> {
+    public int cents;
+
+    function __construct(int cents) {
+        this->cents = cents;
+    }
+
+    function compareTo(Money other): int {
+        return this->cents - other->cents;
+    }
+}
+
+function largest<T: Comparable<T>>(T[] items): T {
+    T best = items[0];
+    foreach (items as item) {
+        if (item->compareTo(best) > 0) {
+            best = item;
+        }
+    }
+    return best;
+}
+
+print(largest([new Money(5), new Money(12), new Money(7)])->cents);
+```
+```output
+12
+```
 
 <h2>How it works</h2>
 <p>The compiler makes a copy of a generic class or function for each set of type arguments the program uses, with the types filled in, so generic code runs exactly as fast as code written for those types: a <code>Stack&lt;int&gt;</code> stores plain ints. Generic code is also checked once on its own, even if nothing uses it, with each <code>T</code> standing for its bound, or for a type with no methods; a mistake shows up there rather than at some later use. One case is only caught when the code is used: comparing a <code>T</code> with <code>null</code> is an error when <code>T</code> is a type that can't be null, such as <code>int</code>.</p>
@@ -133,7 +222,7 @@ hello
 <h2>Rules</h2>
 <ul>
 <li>A generic class can't extend a class, be abstract, or have static members yet; it can implement interfaces, and ordinary classes can't extend it.</li>
-<li>Interfaces can't be generic yet, and methods can't have type parameters of their own: give them to the class.</li>
+<li>Interface and abstract methods can't have type parameters of their own yet, and generic methods can't be overridden. A constructor's type parameters are its class's.</li>
 <li><code>?T</code> isn't allowed, since <code>T</code> may already be a type that can be null. <code>instanceof</code> can't test for a generic class.</li>
 <li>Calls can't write type arguments (<code>first&lt;int&gt;(xs)</code>); a generic function can't be used as a function value.</li>
 <li>Type arguments are exact: a <code>Stack&lt;Dog&gt;</code> isn't a <code>Stack&lt;Animal&gt;</code>, even when a <code>Dog</code> is an <code>Animal</code>.</li>

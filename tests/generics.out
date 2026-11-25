@@ -10,3 +10,7 @@ hello
 a list of 3 2 A
 {"value":{"value":7}} [{"value":1},{"value":2}]
 42
+second 2 MemoryRepository<Word>
+12
+#42 Converter<string> true
+["ab", "ab", "ab"] ["Money"]

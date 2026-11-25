@@ -813,7 +813,9 @@ enum ValueType {
 #[derive(Debug, Clone)]
 struct TypeParamDef {
     name: String,
-    bound: Option<u32>,
+    /// A class or interface (Class), or a generic interface applied to type
+    /// arguments, which may mention the parameters (Applied).
+    bound: Option<ValueType>,
 }
 
 /// A generic class applied to type arguments, as written: `Box<int>`, or
@@ -841,6 +843,12 @@ struct Generics {
     class_instances: Vec<(u32, Vec<ValueType>, u32)>,
     /// The function made for each generic function and arguments, by symbol.
     function_instances: Vec<(String, Vec<ValueType>, String)>,
+    /// The method made for each generic method (class, name) and arguments:
+    /// its name in that class.
+    method_instances: Vec<(u32, String, Vec<ValueType>, String)>,
+    /// How copies of generic methods are named in errors (`map<int>` for
+    /// `map.g0`).
+    shown_names: HashMap<String, String>,
 }
 
 /// The scalars that have nullable forms (strings, chars, arrays, maps, and
@@ -1232,6 +1240,10 @@ struct ClassDef {
     /// For a class made from a generic one: the generic class and the type
     /// arguments it was made for.
     instance_of: Option<(u32, Vec<ValueType>)>,
+    /// Generic interfaces it implements (or, for an interface, extends), as
+    /// written: `implements Repository<User>`. Each becomes an entry in
+    /// `interfaces` once the interface is made for those arguments.
+    applied_interfaces: Vec<ValueType>,
     /// Where the class's name is, for errors about the class as a whole.
     line: usize,
     column: usize,
@@ -1834,11 +1846,14 @@ impl Parser {
         // `function first<T>(T[] items): T`
         let scope_size = self.type_scope.len();
         let type_params = if matches!(self.current().kind, TokenKind::Less) {
-            if owner_class.is_some() {
-                return Err(self.error("methods can't have their own type parameters yet; give them to the class instead, as in `class Box<T>`"));
+            if owner_class.is_some() && is_abstract {
+                return Err(self.error("abstract and interface methods can't have their own type parameters yet"));
             }
             if is_abstract {
                 return Err(self.error("extern functions can't be generic"));
+            }
+            if owner_class.is_some() && name == "__construct" {
+                return Err(self.error("a constructor can't have its own type parameters; give them to the class"));
             }
             self.parse_type_parameters()?
         } else {
@@ -2033,6 +2048,12 @@ impl Parser {
             return Err(self.error(&format!("generic class '{name}' can't extend a class yet; it can implement interfaces")));
         }
         let generic = !type_params.is_empty();
+        // Known from here, so `implements Comparable<Money>` can name it.
+        let class_id = self.classes.len() as u32;
+        self.class_names.insert(name.clone(), class_id);
+        if generic {
+            self.class_params_in_progress = Some((class_id, type_params.len()));
+        }
         let backing = if is_enum && matches!(self.current().kind, TokenKind::Colon) {
             self.advance();
             let at = self.error("");
@@ -2067,19 +2088,14 @@ impl Parser {
         } else {
             None
         };
-        let interfaces = if matches!(self.current().kind, TokenKind::Implements) {
+        let (interfaces, applied_interfaces) = if matches!(self.current().kind, TokenKind::Implements) {
             self.advance();
             self.parse_interface_list(&name, "implements")?
         } else {
-            Vec::new()
+            (Vec::new(), Vec::new())
         };
-        let class_id = self.classes.len() as u32;
-        self.class_names.insert(name.clone(), class_id);
         self.current_class = Some(class_id);
         self.current_parent = parent_class;
-        if generic {
-            self.class_params_in_progress = Some((class_id, type_params.len()));
-        }
         self.expect(TokenKind::LeftBrace, &format!("expected '{{' after {kind} name"))?;
 
         let mut properties = Vec::new();
@@ -2320,6 +2336,7 @@ impl Parser {
             enumeration,
             type_params,
             instance_of: None,
+            applied_interfaces,
             line,
             column,
         });
@@ -2489,8 +2506,11 @@ impl Parser {
         }
     }
 
-    fn parse_interface_list(&mut self, owner: &str, keyword: &str) -> Result<Vec<u32>, String> {
+    /// The interfaces after `implements` (or an interface's `extends`): plain
+    /// ones, and generic ones with their type arguments (`Repository<User>`).
+    fn parse_interface_list(&mut self, owner: &str, keyword: &str) -> Result<(Vec<u32>, Vec<ValueType>), String> {
         let mut interfaces = Vec::new();
+        let mut applied = Vec::new();
         loop {
             let interface_name =
                 self.expect_identifier(&format!("expected interface name after {keyword}"))?;
@@ -2500,14 +2520,22 @@ impl Parser {
             if !self.classes[interface_id as usize].is_interface {
                 return Err(self.error(&format!("'{interface_name}' is a class, not an interface")));
             }
-            if interfaces.contains(&interface_id) {
-                return Err(self.error(&format!(
-                    "'{owner}' lists interface '{interface_name}' more than once"
-                )));
+            if self.generic_arity(interface_id) > 0 {
+                let interface = self.parse_type_arguments(interface_id, &interface_name)?;
+                if applied.contains(&interface) {
+                    return Err(self.error(&format!("'{owner}' lists interface '{interface_name}' more than once")));
+                }
+                applied.push(interface);
+            } else {
+                if interfaces.contains(&interface_id) {
+                    return Err(self.error(&format!(
+                        "'{owner}' lists interface '{interface_name}' more than once"
+                    )));
+                }
+                interfaces.push(interface_id);
             }
-            interfaces.push(interface_id);
             if !matches!(self.current().kind, TokenKind::Comma) {
-                return Ok(interfaces);
+                return Ok((interfaces, applied));
             }
             self.advance();
         }
@@ -2518,17 +2546,20 @@ impl Parser {
         let (line, column) = (self.current().line, self.current().column);
         let name = self.expect_identifier("expected interface name")?;
         self.check_class_name_is_free(&name)?;
-        if matches!(self.current().kind, TokenKind::Less) {
-            return Err(self.error("generic interfaces aren't supported yet; a generic class can implement ordinary interfaces"));
-        }
-        let interfaces = if matches!(self.current().kind, TokenKind::Extends) {
+        // `interface Repository<T>`
+        let scope_size = self.type_scope.len();
+        let type_params = if matches!(self.current().kind, TokenKind::Less) { self.parse_type_parameters()? } else { Vec::new() };
+        let (interfaces, applied_interfaces) = if matches!(self.current().kind, TokenKind::Extends) {
             self.advance();
             self.parse_interface_list(&name, "extends")?
         } else {
-            Vec::new()
+            (Vec::new(), Vec::new())
         };
         let interface_id = self.classes.len() as u32;
         self.class_names.insert(name.clone(), interface_id);
+        if !type_params.is_empty() {
+            self.class_params_in_progress = Some((interface_id, type_params.len()));
+        }
         self.expect(TokenKind::LeftBrace, "expected '{' after interface name")?;
 
         let mut methods: Vec<Function> = Vec::new();
@@ -2601,11 +2632,14 @@ impl Parser {
             constants,
             methods,
             enumeration: None,
-            type_params: Vec::new(),
+            type_params,
             instance_of: None,
+            applied_interfaces,
             line,
             column,
         });
+        self.class_params_in_progress = None;
+        self.type_scope.truncate(scope_size);
         Ok(())
     }
 
@@ -3746,22 +3780,29 @@ impl Parser {
             if matches!(name.as_str(), "int" | "double" | "bool" | "byte" | "string" | "char" | "void" | "map") {
                 return Err(format!("{at}type parameter '{name}' has the name of a type; use a name such as T"));
             }
-            let bound = if matches!(self.current().kind, TokenKind::Colon) {
-                self.advance();
-                let bound_at = self.error("");
-                let bound_name = self.expect_identifier("expected the class or interface a type parameter must be, as in `T: Comparable`")?;
-                let bound = *self.class_names.get(&bound_name).ok_or_else(|| format!("{bound_at}type '{bound_name}' is not declared or imported"))?;
-                if self.classes.get(bound as usize).is_some_and(|class| !class.type_params.is_empty()) {
-                    return Err(format!("{bound_at}a bound can't be a generic class"));
-                }
-                Some(bound)
-            } else {
-                None
-            };
+            // In scope already, for a bound that mentions it: `T: Comparable<T>`.
             let id = self.generics.params.len() as u32;
-            self.generics.params.push(TypeParamDef { name: name.clone(), bound });
+            self.generics.params.push(TypeParamDef { name: name.clone(), bound: None });
             self.type_scope.push((name, id));
             params.push(id);
+            if matches!(self.current().kind, TokenKind::Colon) {
+                self.advance();
+                let bound_at = self.error("");
+                let bound = match &self.current().kind {
+                    TokenKind::Identifier(name) if self.class_names.contains_key(name) => self.parse_scalar_type()?,
+                    TokenKind::Identifier(name) => {
+                        return Err(format!("{bound_at}type '{name}' is not declared or imported"));
+                    }
+                    _ => return Err(self.error("expected the class or interface a type parameter must be, as in `T: Comparable`")),
+                };
+                if let ValueType::Applied(application) = bound {
+                    let generic = self.generics.applications[application as usize].generic;
+                    if !self.classes.get(generic as usize).is_some_and(|class| class.is_interface) {
+                        return Err(format!("{bound_at}a bound can't be a generic class; it can be a generic interface"));
+                    }
+                }
+                self.generics.params[id as usize].bound = Some(bound);
+            }
             if !matches!(self.current().kind, TokenKind::Comma) {
                 break;
             }
@@ -4223,6 +4264,8 @@ struct Emitter {
     generics: Generics,
     /// Copies of generic functions made while emitting, waiting to be emitted.
     pending_generic_functions: Vec<Function>,
+    /// Copies of generic methods, with their classes, waiting to be emitted.
+    pending_generic_methods: Vec<(u32, Function)>,
     /// The type a call to a generic function is used as, for inferring type
     /// arguments its arguments don't decide (see infer_type_arguments).
     generic_expectation: Option<ValueType>,
@@ -4374,6 +4417,7 @@ impl Emitter {
         Self {
             generics,
             pending_generic_functions: Vec::new(),
+            pending_generic_methods: Vec::new(),
             generic_expectation: None,
             next_generic_argument: 0,
             signatures,
@@ -4505,8 +4549,17 @@ impl Emitter {
                 .filter(|class_id| !emitted_classes.contains(class_id))
                 .collect();
             let generic_functions = std::mem::take(&mut self.pending_generic_functions);
-            if pending.is_empty() && pending_classes.is_empty() && generic_functions.is_empty() {
+            let generic_methods = std::mem::take(&mut self.pending_generic_methods);
+            if pending.is_empty() && pending_classes.is_empty() && generic_functions.is_empty() && generic_methods.is_empty() {
                 break;
+            }
+            for (class_id, method) in generic_methods {
+                let module = self.classes[class_id as usize].module;
+                self.next_register = 0;
+                self.current_module = module as usize;
+                let ir = self.emit_function(&method, Some(class_id)).map_err(|error| self.in_module(module, error))?;
+                functions_ir.push_str(&ir);
+                functions_ir.push('\n');
             }
             for class_id in pending_classes {
                 emitted_classes.push(class_id);
@@ -4701,7 +4754,9 @@ impl Emitter {
     fn emit_class_methods(&mut self, class: &ClassDef, class_id: u32) -> Result<String, String> {
         let mut ir = String::new();
         for method in &class.methods {
-            if method.is_abstract {
+            // A generic method is emitted as its copies, which are emitted
+            // on their own (see generic_method_instance).
+            if method.is_abstract || !method.type_params.is_empty() || method.name.contains('.') {
                 continue;
             }
             self.next_register = 0;
@@ -4720,7 +4775,8 @@ impl Emitter {
     /// the function as a whole.
     fn emit_function(&mut self, function: &Function, owner_class: Option<u32>) -> Result<String, String> {
         self.emit_function_body(function, owner_class).map_err(|error| {
-            let context = format!("function '{}': ", function.name);
+            let shown = self.generics.shown_names.get(&function.name).unwrap_or(&function.name);
+            let context = format!("function '{shown}': ");
             match split_position(&error) {
                 Some((position, message)) => format!("{position}{context}{message}"),
                 None => format!("{}:{}: {context}{error}", function.line, function.column),
@@ -6638,30 +6694,66 @@ impl Emitter {
     fn check_generic_code(&mut self, program: &Program) -> Result<(), String> {
         let user = |module: u32| !program.modules[module as usize].is_stdlib;
         let mut stand_ins: HashMap<u32, ValueType> = HashMap::new();
-        let mut stand_in = |this: &mut Self, param: u32| -> ValueType {
-            if let Some(value_type) = stand_ins.get(&param) {
-                return *value_type;
+        // For each parameter, an abstract class of its name with no members,
+        // which implements (or extends) the bound, with the stand-ins for the
+        // parameters it mentions.
+        let mut stand_in_all = |this: &mut Self, params: &[u32]| -> Result<Vec<ValueType>, String> {
+            for param in params {
+                if !stand_ins.contains_key(param) {
+                    let name = this.generics.params[*param as usize].name.clone();
+                    let class_id = this.add_synthetic_class(&name, Vec::new());
+                    this.classes[class_id as usize].is_abstract = true;
+                    stand_ins.insert(*param, ValueType::Class(class_id));
+                }
             }
-            let definition = this.generics.params[param as usize].clone();
-            let value_type = match definition.bound {
-                Some(bound) => ValueType::Class(bound),
-                None => ValueType::Class(this.add_synthetic_class(&definition.name, Vec::new())),
-            };
-            stand_ins.insert(param, value_type);
-            value_type
+            let bindings = Bindings { types: stand_ins.iter().map(|(param, value_type)| (*param, *value_type)).collect(), own_class: None };
+            for param in params {
+                let Some(bound) = this.generics.params[*param as usize].bound else { continue };
+                let ValueType::Class(stand_in) = stand_ins[param] else { continue };
+                let bound = this.monomorphize(|m| m.subst(bound, &bindings))?;
+                if let ValueType::Class(bound) = bound {
+                    if this.classes[bound as usize].is_interface {
+                        if !this.classes[stand_in as usize].interfaces.contains(&bound) {
+                            this.classes[stand_in as usize].interfaces.push(bound);
+                        }
+                    } else {
+                        this.classes[stand_in as usize].parent_class = Some(bound);
+                    }
+                }
+            }
+            Ok(params.iter().map(|param| stand_ins[param]).collect())
         };
         let mut functions: Vec<Function> = self.generics.function_templates.values().filter(|function| user(function.module)).cloned().collect();
         functions.sort_by(|a, b| a.symbol.cmp(&b.symbol));
         for template in functions {
-            let types: Vec<ValueType> = template.type_params.iter().map(|param| stand_in(self, *param)).collect();
+            let types = stand_in_all(self, &template.type_params).map_err(|error| self.in_module(template.module, error))?;
             self.current_module = template.module as usize;
             self.generic_function_instance(&template, types).map_err(|error| self.in_module(template.module, error))?;
         }
         let mut classes: Vec<(u32, ClassDef)> = self.generics.class_templates.iter().filter(|(_, class)| user(class.module)).map(|(id, class)| (*id, class.clone())).collect();
         classes.sort_by_key(|(id, _)| *id);
+        let mut checked_classes: Vec<u32> = (0..program.classes.len() as u32)
+            .filter(|id| {
+                let class = &program.classes[*id as usize];
+                user(class.module) && class.type_params.is_empty() && class.instance_of.is_none() && !class.is_interface
+            })
+            .collect();
         for (class_id, template) in classes {
-            let types: Vec<ValueType> = template.type_params.iter().map(|param| stand_in(self, *param)).collect();
-            self.monomorphize(|m| m.instance(class_id, types)).map_err(|error| self.in_module(template.module, error))?;
+            let types = stand_in_all(self, &template.type_params).map_err(|error| self.in_module(template.module, error))?;
+            let copy = self.monomorphize(|m| m.instance(class_id, types)).map_err(|error| self.in_module(template.module, error))?;
+            if !template.is_interface {
+                checked_classes.push(copy);
+            }
+        }
+        // Generic methods, in ordinary classes and in those copies.
+        for class_id in checked_classes {
+            let methods: Vec<Function> = self.classes[class_id as usize].methods.iter().filter(|method| !method.type_params.is_empty()).cloned().collect();
+            let module = self.classes[class_id as usize].module;
+            for method in methods {
+                let types = stand_in_all(self, &method.type_params).map_err(|error| self.in_module(module, error))?;
+                self.current_module = module as usize;
+                self.generic_method_instance(class_id, &method, types).map_err(|error| self.in_module(module, error))?;
+            }
         }
         Ok(())
     }
@@ -6821,13 +6913,28 @@ impl Emitter {
                 }
             }
             (ValueType::Applied(id), ValueType::Class(class_id)) => {
+                // The class, or an ancestor or interface of it, made from the
+                // same generic class or interface: `Comparable<T>` against a
+                // Word that implements Comparable<Word>.
                 let application = self.generics.applications[id as usize].clone();
-                if let Some((generic, arguments)) = self.classes[class_id as usize].instance_of.clone() {
-                    if generic == application.generic {
-                        for (pattern, actual) in application.arguments.iter().zip(&arguments) {
-                            self.unify(*pattern, *actual, bindings, callee)?;
+                let mut pending = vec![class_id];
+                let mut seen = Vec::new();
+                while let Some(current) = pending.pop() {
+                    if seen.contains(&current) {
+                        continue;
+                    }
+                    seen.push(current);
+                    let class = &self.classes[current as usize];
+                    if let Some((generic, arguments)) = class.instance_of.clone() {
+                        if generic == application.generic {
+                            for (pattern, actual) in application.arguments.iter().zip(&arguments) {
+                                self.unify(*pattern, *actual, bindings, callee)?;
+                            }
+                            break;
                         }
                     }
+                    pending.extend(class.parent_class);
+                    pending.extend(class.interfaces.iter().copied());
                 }
             }
             _ => {}
@@ -6871,6 +6978,41 @@ impl Emitter {
         Ok(symbol)
     }
 
+    /// The name, in class `class_id`, of generic method `template`'s copy for
+    /// `types`, made (and queued for emitting) the first time. The copy is
+    /// added to the class's methods, and called directly: a generic method
+    /// can't be overridden.
+    fn generic_method_instance(&mut self, class_id: u32, template: &Function, types: Vec<ValueType>) -> Result<String, String> {
+        let key = |made: &(u32, String, Vec<ValueType>, String)| made.0 == class_id && made.1 == template.name && made.2 == types;
+        if let Some(made) = self.generics.method_instances.iter().find(|made| key(made)) {
+            return Ok(made.3.clone());
+        }
+        let class_name = self.classes[class_id as usize].name.clone();
+        if self.is_overridden(class_id, &template.name) {
+            return Err(format!("generic method '{class_name}::{}' can't be overridden", template.name));
+        }
+        let copies = self.generics.method_instances.iter().filter(|made| made.0 == class_id && made.1 == template.name).count();
+        if copies >= 64 {
+            return Err(format!("generic method {class_name}::{} has been made for 64 different type arguments", template.name));
+        }
+        let names: Vec<String> = types.iter().map(|value_type| self.type_name(*value_type)).collect();
+        let mut method = template.clone();
+        method.name = format!("{}.g{copies}", template.name);
+        method.type_params = Vec::new();
+        let bindings = Bindings { types: template.type_params.iter().copied().zip(types.clone()).collect(), own_class: None };
+        let owner = format!("{class_name}::{}", template.name);
+        self.monomorphize(|m| {
+            m.check_bounds(&owner, &template.type_params, &types)?;
+            m.subst_function(&mut method, &bindings).map_err(|error| at(template.line, template.column, error))
+        })?;
+        self.generics.shown_names.insert(method.name.clone(), format!("{}<{}>", template.name, names.join(", ")));
+        self.generics.method_instances.push((class_id, template.name.clone(), types, method.name.clone()));
+        self.classes[class_id as usize].methods.push(method.clone());
+        let name = method.name.clone();
+        self.pending_generic_methods.push((class_id, method));
+        Ok(name)
+    }
+
     /// `new Box<int>(...)`, or `new Box(...)` with the type arguments from
     /// the type the object is used as (`expected`) or from the constructor's
     /// arguments: an object of the class made for them.
@@ -6884,10 +7026,23 @@ impl Emitter {
         body: &mut String,
     ) -> Result<Value, String> {
         let template = self.generics.class_templates.get(&generic).cloned().ok_or("internal error: not a generic class")?;
-        let from_expected = expected.and_then(|expected| match expected {
+        // From the type it's used as: the class itself (`Box<int> b = new
+        // Box()`), or an interface it implements (`Repository<User> users =
+        // new MemoryRepository()`).
+        let mut from_expected = expected.and_then(|expected| match expected {
             ValueType::Class(class_id) => self.classes[class_id as usize].instance_of.clone().filter(|(of, _)| *of == generic).map(|(_, types)| types),
             _ => None,
         });
+        if let (None, Some(expected @ ValueType::Class(_))) = (&from_expected, expected) {
+            let mut bindings = Bindings::default();
+            for interface in &template.applied_interfaces {
+                self.unify(*interface, expected, &mut bindings, "new")?;
+            }
+            let types: Vec<ValueType> = template.type_params.iter().filter_map(|param| bindings.types.iter().find(|(bound, _)| bound == param).map(|(_, value_type)| *value_type)).collect();
+            if types.len() == template.type_params.len() {
+                from_expected = Some(types);
+            }
+        }
         let (types, scope, rewritten) = match (type_arguments, from_expected) {
             (Some(types), _) => (types.to_vec(), variables.clone(), arguments.to_vec()),
             (None, Some(types)) => (types, variables.clone(), arguments.to_vec()),
@@ -7027,6 +7182,7 @@ impl Emitter {
             enumeration: None,
             type_params: Vec::new(),
             instance_of: None,
+            applied_interfaces: Vec::new(),
             line: 0,
             column: 0,
         });
@@ -10614,6 +10770,10 @@ impl Emitter {
         if let Expr::NewGeneric(generic, None, arguments) = expression {
             return self.emit_new_generic(*generic, None, arguments, expected, variables, body);
         }
+        // Taken at the start of the call's emission, if it turns out generic.
+        if matches!(expression, Expr::MethodCall(..) | Expr::StaticCall(..)) {
+            self.generic_expectation = expected;
+        }
         match expression {
             Expr::Number(number) if expected == Some(ValueType::Byte) => {
                 if !(0..=255).contains(number) {
@@ -11567,7 +11727,15 @@ impl Emitter {
                 .iter()
                 .chain(supertypes.iter())
                 .find_map(|&super_id| self.find_method(super_id, &method.name).ok());
-            if let Some((parent_parameters, parent_return, parent_visibility, _, _)) = inherited {
+            if let Some((parent_parameters, parent_return, parent_visibility, owner, _)) = inherited {
+                let generic = |candidate: &Function| !candidate.type_params.is_empty() || candidate.name.contains('.');
+                let inherited_generic = self.classes[owner as usize].methods.iter().any(|candidate| candidate.name == method.name && generic(candidate));
+                if generic(method) || inherited_generic {
+                    return Err(at(method.line, method.column, format!(
+                        "method '{}::{}' overrides a method, and generic methods can't be overridden yet",
+                        class.name, method.name
+                    )));
+                }
                 let same_types = method.parameters.len() == parent_parameters.len()
                     && method
                         .parameters
@@ -11850,6 +12018,7 @@ impl Emitter {
             Expr::MethodCall(object_expression, method_name, arguments) => {
                 // Only this call, not the ones in its receiver or arguments.
                 let expectation = self.call_expectation.take();
+                let generic_expectation = self.generic_expectation.take();
                 let object = self.emit_expression(object_expression, variables, body)?;
                 let class_id = match object.value_type {
                     ValueType::Class(class_id) => class_id,
@@ -11887,6 +12056,20 @@ impl Emitter {
                 }
                 let (parameters, return_type, visibility, method_owner, is_abstract) = found?;
                 self.check_visibility(visibility, method_owner, method_name)?;
+                // A generic method: its copy for the type arguments the
+                // arguments give, called on the object (evaluated already).
+                let generic = self.classes[method_owner as usize].methods.iter().find(|method| method.name == *method_name && !method.type_params.is_empty()).cloned();
+                if let Some(template) = generic {
+                    let callee = format!("method '{method_name}'");
+                    let expected = generic_expectation.map(|expected| (template.return_type, expected));
+                    let (types, mut scope, rewritten) =
+                        self.infer_type_arguments(&template.parameters, &template.type_params, &callee, arguments, expected, variables, body)?;
+                    let copy = self.generic_method_instance(method_owner, &template, types)?;
+                    let receiver = format!("#generic.receiver{}", self.next_generic_argument);
+                    self.next_generic_argument += 1;
+                    scope.insert(receiver.clone(), Value { slot: None, ..object });
+                    return self.emit_expression(&Expr::MethodCall(Box::new(Expr::Variable(receiver)), copy, rewritten), &scope, body);
+                }
                 self.use_class(class_id);
                 self.use_class(method_owner);
                 let owner_class = &self.classes[method_owner as usize];
@@ -12019,6 +12202,7 @@ impl Emitter {
             }
             Expr::StaticCall(target, method_name, arguments) => {
                 let target = *target;
+                let generic_expectation = self.generic_expectation.take();
                 self.note_database_open(target, method_name, arguments);
                 let class_id = Self::static_target_class(target);
                 let class_name = self.classes[class_id as usize].name.clone();
@@ -12048,6 +12232,14 @@ impl Emitter {
                     .cloned()
                     .expect("find_declaring_class found it");
                 self.check_visibility(method.visibility, owner, method_name)?;
+                if !method.type_params.is_empty() {
+                    let callee = format!("method '{owner_name}::{method_name}'");
+                    let expected = generic_expectation.map(|expected| (method.return_type, expected));
+                    let (types, scope, rewritten) =
+                        self.infer_type_arguments(&method.parameters, &method.type_params, &callee, arguments, expected, variables, body)?;
+                    let copy = self.generic_method_instance(owner, &method, types)?;
+                    return self.emit_expression(&Expr::StaticCall(target, copy, rewritten), &scope, body);
+                }
                 let callee_name = format!("method '{owner_name}::{method_name}'");
                 let mismatch = format!("argument type mismatch calling '{owner_name}::{method_name}'");
                 let mut operands = Vec::new();
@@ -13070,6 +13262,7 @@ impl Monomorphizer<'_> {
             types: template.type_params.iter().copied().zip(arguments).collect(),
             own_class: Some((generic, class_id)),
         };
+        self.resolve_interfaces(&mut class, &bindings)?;
         for property in &mut class.properties {
             property.value_type = self.subst(property.value_type, &bindings)?;
             if let Some(default) = &mut property.default {
@@ -13085,19 +13278,41 @@ impl Monomorphizer<'_> {
     }
 
     /// Each type argument must be its parameter's bound (or extend or
-    /// implement it).
-    fn check_bounds(&self, owner: &str, params: &[u32], arguments: &[ValueType]) -> Result<(), String> {
+    /// implement it). A bound can mention the parameters, as in
+    /// `T: Comparable<T>`: it's checked with them filled in.
+    fn check_bounds(&mut self, owner: &str, params: &[u32], arguments: &[ValueType]) -> Result<(), String> {
+        let bindings = Bindings { types: params.iter().copied().zip(arguments.iter().copied()).collect(), own_class: None };
         for (param, argument) in params.iter().zip(arguments) {
-            let definition = &self.generics.params[*param as usize];
+            let definition = self.generics.params[*param as usize].clone();
             let Some(bound) = definition.bound else { continue };
-            let meets = matches!(argument, ValueType::Class(class_id) if class_is_a(self.classes, *class_id, bound));
+            let bound = self.subst(bound, &bindings)?;
+            let meets = match (argument, bound) {
+                (ValueType::Class(class_id), ValueType::Class(bound)) => class_is_a(self.classes, *class_id, bound),
+                _ => false,
+            };
             if !meets {
                 return Err(format!(
                     "{owner}'s type parameter {} must be a {}, but {} isn't one",
                     definition.name,
-                    self.classes[bound as usize].name,
+                    self.type_name(bound),
                     self.type_name(*argument)
                 ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Adds the generic interfaces a class implements (as written, with the
+    /// arguments in `bindings` filled in) to its interfaces.
+    fn resolve_interfaces(&mut self, class: &mut ClassDef, bindings: &Bindings) -> Result<(), String> {
+        for interface in std::mem::take(&mut class.applied_interfaces) {
+            match self.subst(interface, bindings)? {
+                ValueType::Class(interface_id) => {
+                    if !class.interfaces.contains(&interface_id) {
+                        class.interfaces.push(interface_id);
+                    }
+                }
+                other => class.applied_interfaces.push(other),
             }
         }
         Ok(())
@@ -13342,6 +13557,7 @@ impl Monomorphizer<'_> {
             let mut class = this.classes[class_id].clone();
             let module = class.module;
             let result = (|| -> Result<(), String> {
+                this.resolve_interfaces(&mut class, &none)?;
                 for property in &mut class.properties {
                     property.value_type = this.subst(property.value_type, &none)?;
                 }
@@ -16930,7 +17146,7 @@ mod tests {
             ("function f<T: HasLength>(T x): int { return x->length(); } print(f(new Plain()));", "f's type parameter T must be a HasLength, but Plain isn't one"),
             ("class S<T: HasLength> {} S<Plain> s = null;", "S's type parameter T must be a HasLength, but Plain isn't one"),
             // Generic code is checked even when unused: a T has only its bound's methods...
-            ("function f<T: HasLength>(T x): int { return x->size(); }", "function 'f<HasLength>': class 'HasLength' has no method 'size'"),
+            ("function f<T: HasLength>(T x): int { return x->size(); }", "function 'f<T>': class 'T' has no method 'size'"),
             // ...and without a bound, none.
             ("function g<T>(T x): int { return x + 1; }", "function 'g<T>': '+' requires two ints or two doubles"),
             ("class C<T> { function m(T x): void { x->go(); } }", "class 'T' has no method 'go'"),
@@ -16943,8 +17159,14 @@ mod tests {
             ("class B<T> { static int n = 0; }", "generic class 'B' can't have static members yet"),
             ("abstract class B<T> {}", "a generic class can't be abstract yet"),
             ("enum E<T> { case A; }", "an enum can't be generic"),
-            ("interface I<T> {}", "generic interfaces aren't supported yet"),
-            ("class B<T> { function m<U>(U x): void {} }", "methods can't have their own type parameters yet"),
+            ("interface I { function m<U>(U x): void; }", "abstract and interface methods can't have their own type parameters yet"),
+            ("class A { function __construct<U>(U x) {} }", "a constructor can't have its own type parameters"),
+            ("class A { function m<U>(U x): int { return x + 1; } }", "function 'm<U>': '+' requires two ints or two doubles"),
+            ("class A { function m<U>(U x): U { return x; } } class B extends A { function m<U>(U x): U { return x; } }", "method 'B::m' overrides a method, and generic methods can't be overridden yet"),
+            // Generic interfaces: implementations must match with the arguments filled in.
+            ("interface Repo<T> { function find(): T; } class R implements Repo<string> { function find(): int { return 1; } }", "method 'R::find' does not match the signature declared by interface 'Repo<string>'"),
+            ("interface Cmp<T> { function compareTo(T other): int; } function top<T: Cmp<T>>(T[] items): T { return items[0]; } print(top([new Plain()]));", "top's type parameter T must be a Cmp<Plain>, but Plain isn't one"),
+            ("class B<T: Box<int>> {}", "a bound can't be a generic class; it can be a generic interface"),
             ("print(1 instanceof Box);", "instanceof can't test for generic class Box"),
             ("function f<T>(?T x): void {}", "?T isn't supported"),
             ("function f<T, T>(T x): void {}", "type parameter 'T' is declared more than once"),
