@@ -3706,7 +3706,7 @@ Ada is 36
 ```
 
 <h2>Values for placeholders</h2>
-<p>Write a <code>?</code> in the SQL for each value, and give the values after the SQL, in order. Each can be an <code>int</code>, <code>double</code>, <code>bool</code> (stored as 1 or 0), <code>byte</code>, <code>string</code>, <code>char</code>, <code>byte[]</code> (stored as a blob), <a href="class.datetime.html">DateTime</a> (stored as text: see <a href="class.datetime.html">In databases</a>), or <code>null</code>; a <code>null</code> string or array is stored as NULL. The compiler checks the types, as it does for <a href="function.sprintf.html">sprintf</a>.</p>
+<p>Write a <code>?</code> in the SQL for each value, and give the values after the SQL, in order. Each can be an <code>int</code>, <code>double</code>, <code>bool</code> (stored as 1 or 0), <code>byte</code>, <code>string</code>, <code>char</code>, <code>byte[]</code> (stored as a blob), <a href="class.datetime.html">DateTime</a> (stored as text: see <a href="class.datetime.html">In databases</a>), or <code>null</code>; a <code>null</code> string or array is stored as NULL, and so is a <a href="types.html#nullable">nullable scalar</a> (such as an <code>?int</code>) that's null. The compiler checks the types, as it does for <a href="function.sprintf.html">sprintf</a>.</p>
 <p>The values are sent to the database separately from the SQL, never pasted into it, so a value can't change what the statement does: this is what prevents SQL injection. Build the SQL itself only from text in your program, and give everything else as a value.</p>
 <pre class="code">Database db = Database::open("sqlite:app.db");
 string name = "Robert'); drop table students; --";
@@ -3759,7 +3759,7 @@ Lin true
 <ul>
 <li>When the class has a constructor, it's called with each parameter set from the column of the same name, read with the getter for the parameter's type (<code>getInt</code> for an <code>int</code>, and so on), so constructor promotion makes a short record class. A parameter with a default gets it when its column is NULL or missing; one without a default needs the column, or the query throws <code>DatabaseException</code>, as does a value of another type.</li>
 <li>When the class has no constructor, its public properties are set the same way, by name, after the object is made. Properties with defaults keep them when their column is missing or NULL.</li>
-<li>Parameters and properties can be <code>int</code>, <code>double</code>, <code>bool</code>, <code>string</code>, <code>byte[]</code>, or <code>DateTime</code> (read with <code>getDateTime</code>); others are a compile error. Name columns to match, with <code>AS</code> where they differ: <code>select created_at as createdAt</code>. Columns that nothing reads are ignored.</li>
+<li>Parameters and properties can be <code>int</code>, <code>double</code>, <code>bool</code>, <code>?int</code>, <code>?double</code>, <code>?bool</code> (NULL gives <code>null</code>), <code>string</code>, <code>byte[]</code>, or <code>DateTime</code> (read with <code>getDateTime</code>); others are a compile error. Name columns to match, with <code>AS</code> where they differ: <code>select created_at as createdAt</code>. Columns that nothing reads are ignored.</li>
 <li>The constructor must be public, and the class concrete: not an interface or abstract.</li>
 <li>For results too big to hold at once, a <a href="class.cursor.html">Cursor</a>'s <code>nextAs</code> and <code>fetchAs</code> read rows into objects the same way, a batch at a time.</li>
 </ul>
@@ -3939,6 +3939,9 @@ ROW_CLASS = """<h1>The Row class</h1>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">getIntOr</span>(<span class="type">string</span> column, <span class="type">int</span> fallback): <span class="type">int</span><br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">getDoubleOr</span>(<span class="type">string</span> column, <span class="type">double</span> fallback): <span class="type">double</span><br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">getBoolOr</span>(<span class="type">string</span> column, <span class="type">bool</span> fallback): <span class="type">bool</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">getIntOrNull</span>(<span class="type">string</span> column): <span class="type">?int</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">getDoubleOrNull</span>(<span class="type">string</span> column): <span class="type">?double</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">getBoolOrNull</span>(<span class="type">string</span> column): <span class="type">?bool</span><br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">isNull</span>(<span class="type">string</span> column): <span class="type">bool</span><br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">has</span>(<span class="type">string</span> column): <span class="type">bool</span><br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">columns</span>(): <span class="type">string[]</span><br>
@@ -3956,6 +3959,7 @@ ROW_CLASS = """<h1>The Row class</h1>
 <tr><td><code>getBytes(column)</code></td><td>A <code>BLOB</code>, or text that isn't valid UTF-8</td><td>Returns <code>null</code></td></tr>
 <tr><td><code>getDateTime(column, zone)</code></td><td>A <a href="class.datetime.html">DateTime</a>: text such as a PostgreSQL <code>timestamptz</code> or a MySQL <code>DATETIME</code>, read as <code>DateTime::parse</code> reads it (a time without an offset is in <code>zone</code>, or the default zone), or an <code>INTEGER</code> Unix timestamp</td><td>Returns <code>null</code></td></tr>
 <tr><td><code>getIntOr</code>, <code>getDoubleOr</code>, <code>getBoolOr(column, fallback)</code></td><td>The same as the getter</td><td>Returns <code>fallback</code></td></tr>
+<tr><td><code>getIntOrNull</code>, <code>getDoubleOrNull</code>, <code>getBoolOrNull(column)</code></td><td>The same as the getter, as a <a href="types.html#nullable">nullable scalar</a> (<code>?int</code>, <code>?double</code>, <code>?bool</code>)</td><td>Returns <code>null</code></td></tr>
 <tr><td><code>isNull(column)</code></td><td colspan="2">Whether the column is NULL</td></tr>
 <tr><td><code>has(column)</code></td><td colspan="2">Whether the result has a column with that name</td></tr>
 <tr><td><code>columns()</code></td><td colspan="2">The column names, in the order the query gives them</td></tr>

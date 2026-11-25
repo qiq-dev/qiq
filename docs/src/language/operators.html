@@ -112,7 +112,8 @@ en
 ```
 
 <ul>
-<li>The left side must be a map or array element, or a string, char, array, map, or object that can be <code>null</code>. The right side must have the same type, and can be <code>null</code> for those types.</li>
+<li>The left side must be a map or array element, or a value that can be <code>null</code>: a <a href="types.html#nullable">nullable scalar</a> such as <code>?int</code>, or a string, char, array, map, or object. The right side must have the same type, and can be <code>null</code>.</li>
+<li>For a nullable scalar, a plain fallback gives the plain type: with <code>?int count</code>, <code>count ?? 0</code> is an <code>int</code>.</li>
 <li><code>??</code> has a lower precedence than every operator except <code>?:</code>, and groups to the right, so <code>a ?? b ?? c</code> tries <code>a</code>, then <code>b</code>, then <code>c</code>.</li>
 <li>As in PHP, a <code>null</code> object earlier in a chain throws rather than counting as missing: <code>user-&gt;address-&gt;city ?? ""</code> throws when <code>user</code> is <code>null</code>. Write <code>user?-&gt;address?-&gt;city ?? ""</code> instead, with the <a href="classes.html#nullsafe">nullsafe operator</a>.</li>
 </ul>

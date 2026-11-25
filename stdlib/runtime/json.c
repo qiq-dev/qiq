@@ -24,6 +24,8 @@ extern const char *const qiq_class_json[];
 // defined by the compiler.
 extern char *(*const qiq_json_datetime_format)(const char *format, int64_t micros, const char *zone);
 extern const char *qiq_class_names[];
+// The box classes of ?int, ?double, ?bool, and ?byte, in that order.
+extern const int64_t qiq_box_classes[];
 
 // From map.c and memory.c.
 void *qiq_map_new(uint32_t key_type, int32_t value_references);
@@ -43,13 +45,15 @@ static const char *qiq_skip_descriptor(const char *descriptor) {
         return qiq_skip_descriptor(qiq_skip_descriptor(descriptor + 1));
     case 'o':
         return strchr(descriptor, ';') + 1;
+    case 'N':
+        return descriptor + 2;
     default:
         return descriptor + 1;
     }
 }
 
 static bool qiq_is_reference_descriptor(char kind) {
-    return kind == 's' || kind == 'c' || kind == 'a' || kind == 'm' || kind == 'o';
+    return kind == 's' || kind == 'c' || kind == 'a' || kind == 'm' || kind == 'o' || kind == 'N';
 }
 
 // Whether values of this type can be part of a cycle: it can hold an object.
@@ -82,6 +86,12 @@ static void qiq_descriptor_name(const char *descriptor, char *out, size_t size) 
     case 's': snprintf(out, size, "string"); break;
     case 'c': snprintf(out, size, "char"); break;
     case 'n': snprintf(out, size, "null"); break;
+    case 'N': {
+        char scalar[16];
+        qiq_descriptor_name(descriptor + 1, scalar, sizeof scalar);
+        snprintf(out, size, "?%s", scalar);
+        break;
+    }
     case 'a': {
         char element[128];
         qiq_descriptor_name(descriptor + 1, element, sizeof element);
@@ -365,6 +375,11 @@ static void qiq_encode_value(QiqEncoder *encoder, const char *descriptor, uint64
     }
     case 'n':
         qiq_buffer_text(&encoder->out, "null");
+        return;
+    case 'N':
+        // A nullable scalar: null, or the scalar in its box.
+        if (payload == 0) qiq_buffer_text(&encoder->out, "null");
+        else qiq_encode_value(encoder, descriptor + 1, ((const uint64_t *)(uintptr_t)payload)[1]);
         return;
     default:
         break;
@@ -1030,6 +1045,15 @@ static bool qiq_decode_value(QiqDecoder *decoder, const char *descriptor, uint64
     char first = *decoder->cursor;
     char kind = *descriptor;
     *out = 0;
+    if (kind == 'N' && first != 'n') {
+        // A nullable scalar that isn't null: the scalar, in a new box.
+        uint64_t scalar;
+        if (!qiq_decode_value(decoder, descriptor + 1, &scalar)) return false;
+        int64_t *box = qiq_object_new(2, qiq_box_classes[strchr("idby", descriptor[1]) - "idby"]);
+        box[1] = (int64_t)scalar;
+        *out = (uint64_t)(uintptr_t)box;
+        return true;
+    }
     if (first == '\0') {
         qiq_syntax_error(decoder, "a JSON value");
         return false;

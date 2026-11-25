@@ -230,6 +230,30 @@ final class Row {
         return this->getBool(column);
     }
 
+    // An INTEGER column, or null when it's NULL.
+    function getIntOrNull(string column): ?int {
+        if (this->isNull(column)) {
+            return null;
+        }
+        return this->getInt(column);
+    }
+
+    // A REAL or INTEGER column, or null when it's NULL.
+    function getDoubleOrNull(string column): ?double {
+        if (this->isNull(column)) {
+            return null;
+        }
+        return this->getDouble(column);
+    }
+
+    // A column holding 0 or 1, or null when it's NULL.
+    function getBoolOrNull(string column): ?bool {
+        if (this->isNull(column)) {
+            return null;
+        }
+        return this->getBool(column);
+    }
+
     // A TEXT column (or a PostgreSQL numeric, as its exact text), or null
     // when it's NULL (so `?? ""` gives a default).
     // Text that isn't valid UTF-8 can only be read with getBytes.

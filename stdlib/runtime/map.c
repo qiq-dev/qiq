@@ -313,7 +313,7 @@ QIQ_GUARDED(void *, qiq_map_values, NULL, (void *handle, int64_t element_size, i
 // == and != on arrays and maps, which compare contents, and in_map.
 //
 // Values are described as for json_encode (see json.c): i int, d double,
-// b bool, y byte, s string, c char, a<element>, m<key><value>. The compiler
+// b bool, y byte, s string, c char, a<element>, m<key><value>, N<scalar>. The compiler
 // allows == only on types without objects or functions, so a value can't
 // contain itself and the comparison always ends.
 
@@ -321,6 +321,7 @@ static const char *qiq_skip_value_descriptor(const char *descriptor) {
     switch (*descriptor) {
     case 'a': return qiq_skip_value_descriptor(descriptor + 1);
     case 'm': return qiq_skip_value_descriptor(qiq_skip_value_descriptor(descriptor + 1));
+    case 'N': return descriptor + 2;
     default: return descriptor + 1;
     }
 }
@@ -381,9 +382,20 @@ static bool qiq_payloads_equal(const char *descriptor, uint64_t left, uint64_t r
         return *descriptor == 'a'
             ? qiq_arrays_equal(descriptor + 1, (void *)(uintptr_t)left, (void *)(uintptr_t)right)
             : qiq_maps_equal(descriptor + 1, (QiqMap *)(uintptr_t)left, (QiqMap *)(uintptr_t)right);
+    case 'N':
+        // Nullable scalars: both null, or both set to equal scalars.
+        if (left == right) return true;
+        if (left == 0 || right == 0) return false;
+        return qiq_payloads_equal(descriptor + 1, ((const uint64_t *)(uintptr_t)left)[1], ((const uint64_t *)(uintptr_t)right)[1]);
     default:
         return left == right;
     }
+}
+
+// `box == value`, for a nullable scalar (null, or its box) and a scalar of
+// the type `descriptor` describes, given as its 64 bits.
+bool qiq_nullable_equals(const char *descriptor, void *box, uint64_t bits) {
+    return box != NULL && qiq_payloads_equal(descriptor, ((const uint64_t *)box)[1], bits);
 }
 
 // Whether two payloads of the type `descriptor` describes are equal, as ==

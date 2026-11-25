@@ -1,0 +1,78 @@
+// Nullable scalars: ?int, ?double, ?bool, and ?byte hold their scalar, or null.
+?int count = 5;
+?int missing = null;
+?double ratio = 0.5;
+?bool flag = null;
+?byte level = 200;
+print(count, missing, ratio, flag, level);
+print(f"count={count}, missing={missing}", to_string(missing));
+
+// == and != compare with null, with the scalar, or with another ?int.
+print(count == 5, count != null, missing == null, count == missing, flag ?? true);
+
+// ?? gives the scalar, with a fallback for null.
+int total = (count ?? 0) + (missing ?? 0);
+?int either = missing ?? count;
+print(total, either);
+
+// After a check, a variable is its scalar: inside the if, after an early
+// exit, on the right of && and ||, and in the branches of ?:.
+function describe(?int age): string {
+    if (age == null) {
+        return "age unknown";
+    }
+    return "next year: " + to_string(age + 1);
+}
+print(describe(null), describe(41));
+
+if (count != null && count > 3) {
+    print("big", count * 2);
+} else {
+    print("small or missing");
+}
+print(missing == null || missing > 3, count != null ? count + 1 : 0);
+
+?int[] readings = [3, null, 7, null];
+int sum = 0;
+foreach (readings as reading) {
+    if (reading == null) {
+        continue;
+    }
+    sum += reading;
+}
+print(sum, len(readings), in_array(null, readings), array_search(7, readings));
+
+// Functions, defaults, properties, and maps.
+function halve(int n): ?int {
+    return n % 2 == 0 ? n / 2 : null;
+}
+function label(?int n = null, ?int fallback = 0): string {
+    return f"{n ?? fallback}";
+}
+print(halve(10), halve(7), label(), label(4), label(fallback: 9));
+
+class Reading {
+    public string sensor;
+    public ?double value = null;
+    public ?int retries = 0;
+
+    function __construct(string sensor) {
+        this->sensor = sensor;
+    }
+}
+Reading reading = new Reading("north");
+print(reading->value, reading->retries);
+reading->value = 21.5;
+map[string, ?int] scores = {"ada" => 10, "lin" => null};
+print(scores, scores["lin"] ?? -1, scores["missing"] ?? -1);
+
+// JSON: null and missing values decode as null.
+print(json_encode(reading), json_encode(readings));
+Reading decoded = json_decode("{\"sensor\": \"south\", \"value\": null, \"retries\": 3}");
+print(decoded->sensor, decoded->value, decoded->retries);
+?int[] parsed = json_decode("[1, null]");
+print(parsed);
+
+// Callbacks.
+int[] filled = array_map(readings, fn(?int r) => r ?? -1);
+print(filled);

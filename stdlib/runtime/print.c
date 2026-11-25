@@ -45,6 +45,7 @@ static const char *qiq_skip_type(const char *descriptor) {
     switch (*descriptor) {
     case 'a': return qiq_skip_type(descriptor + 1);
     case 'm': return qiq_skip_type(qiq_skip_type(descriptor + 1));
+    case 'N': return descriptor + 2;
     default: return descriptor + 1;
     }
 }
@@ -118,6 +119,10 @@ static void qiq_write_value(const char *descriptor, uint64_t bits, int nested) {
         return;
     }
     switch (*descriptor) {
+    case 'N':
+        // A nullable scalar's box: the scalar is its one field.
+        qiq_write_value(descriptor + 1, ((const uint64_t *)pointer)[1], nested);
+        return;
     case 's':
         if (nested) qiq_write_quoted(pointer, '"');
         else fputs(pointer, qiq_out);

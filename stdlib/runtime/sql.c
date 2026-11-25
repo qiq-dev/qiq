@@ -108,6 +108,13 @@ void qiq_bind_values(const char *types, const uint64_t *payloads, int64_t count)
     qiq_sql_pending = qiq_sql_grow(qiq_sql_pending, &qiq_sql_pending_capacity, (size_t)count, sizeof(QiqSqlValue));
     for (int64_t index = 0; index < count; index++) {
         QiqSqlValue value = {types[index], payloads[index]};
+        // A nullable scalar (N then its type, as "Ni"): NULL, or the scalar
+        // in its box. Its two letters are one value.
+        if (value.type == 'N') {
+            types++;
+            value.type = value.payload == 0 ? 'n' : types[index];
+            if (value.payload != 0) value.payload = ((const uint64_t *)(uintptr_t)value.payload)[1];
+        }
         if ((value.type == 's' || value.type == 'a' || value.type == 'T') && value.payload != 0) qiq_retain((void *)(uintptr_t)value.payload);
         qiq_sql_pending[index] = value;
     }

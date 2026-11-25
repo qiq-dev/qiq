@@ -794,9 +794,54 @@ enum ValueType {
     /// `Void` is only used as a function return type.
     Null,
     Void,
+    /// `?int`, `?double`, `?bool`, or `?byte`: the scalar, or null. A value
+    /// is a pointer to a small immutable box (an object of the scalar's box
+    /// class, see box_class) holding the scalar, or null.
+    Nullable(Scalar),
+}
+
+/// The scalars that have nullable forms (strings, chars, arrays, maps, and
+/// objects can be null already).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Scalar {
+    Int,
+    Double,
+    Bool,
+    Byte,
+}
+
+impl Scalar {
+    const ALL: [Scalar; 4] = [Scalar::Int, Scalar::Double, Scalar::Bool, Scalar::Byte];
+
+    fn value_type(self) -> ValueType {
+        match self {
+            Scalar::Int => ValueType::Int,
+            Scalar::Double => ValueType::Double,
+            Scalar::Bool => ValueType::Bool,
+            Scalar::Byte => ValueType::Byte,
+        }
+    }
+
+    fn of(value_type: ValueType) -> Option<Scalar> {
+        match value_type {
+            ValueType::Int => Some(Scalar::Int),
+            ValueType::Double => Some(Scalar::Double),
+            ValueType::Bool => Some(Scalar::Bool),
+            ValueType::Byte => Some(Scalar::Byte),
+            _ => None,
+        }
+    }
 }
 
 impl ValueType {
+    /// The scalar a `?scalar` holds when it isn't null.
+    fn non_null(self) -> Option<ValueType> {
+        match self {
+            ValueType::Nullable(scalar) => Some(scalar.value_type()),
+            _ => None,
+        }
+    }
+
     fn llvm(self) -> &'static str {
         match self {
             Self::Int => "i64",
@@ -809,6 +854,7 @@ impl ValueType {
             | Self::Map(_)
             | Self::Class(_)
             | Self::Function(_)
+            | Self::Nullable(_)
             | Self::Null => "ptr",
             Self::Void => "void",
         }
@@ -910,6 +956,7 @@ fn type_name(
         },
         ValueType::Null => "null".to_string(),
         ValueType::Void => "void".to_string(),
+        ValueType::Nullable(scalar) => format!("?{}", name(scalar.value_type())),
     }
 }
 
@@ -1669,6 +1716,12 @@ impl Parser {
         }
         if literal_type == ValueType::Null && is_reference(value_type) {
             return Ok(default);
+        }
+        // `?int count = 5`: a literal of the scalar.
+        if let Some(scalar) = value_type.non_null() {
+            if literal_type == scalar || (scalar == ValueType::Byte && matches!(default, Expr::Number(0..=255))) {
+                return Ok(default);
+            }
         }
         if literal_type != value_type {
             return Err(error_at(
@@ -2527,6 +2580,7 @@ impl Parser {
             | TokenKind::String
             | TokenKind::CharType
             | TokenKind::ByteType
+            | TokenKind::Question
             | TokenKind::Map => {
                 let value_type = self.parse_value_type()?;
                 self.parse_declaration(value_type)
@@ -3535,6 +3589,23 @@ impl Parser {
     }
 
     fn parse_value_type(&mut self) -> Result<ValueType, String> {
+        if matches!(self.current().kind, TokenKind::Question) {
+            // `?int`: the scalar, or null.
+            let at = self.error("");
+            self.advance();
+            let inner = self.parse_scalar_type()?;
+            let Some(scalar) = Scalar::of(inner) else {
+                let name = match inner {
+                    ValueType::Class(class_id) => self.classes.get(class_id as usize).map_or_else(|| "an object".to_string(), |class| class.name.clone()),
+                    ValueType::String => "string".to_string(),
+                    _ => "char".to_string(),
+                };
+                return Err(format!(
+                    "{at}a {name} can already be null, so write {name}, not ?{name}; only int, double, bool, and byte need ? to allow null"
+                ));
+            };
+            return Ok(self.parse_array_suffixes(ValueType::Nullable(scalar)));
+        }
         if matches!(self.current().kind, TokenKind::LeftParen) {
             // Grouping, for arrays of functions: (function(int): int)[]
             self.advance();
@@ -3888,6 +3959,9 @@ struct Emitter {
     next_closure: usize,
     /// The synthetic class of the cell for each captured value type.
     cell_classes: Vec<(ValueType, u32)>,
+    /// The box class of each nullable scalar, in Scalar::ALL order (see
+    /// ValueType::Nullable): one `value` field, set once.
+    box_classes: Vec<u32>,
     /// Named functions used as values, by symbol: their adapter and class.
     function_references: Vec<(String, u32)>,
     map_types: Vec<MapType>,
@@ -4046,6 +4120,7 @@ impl Emitter {
             compare_adapters: Vec::new(),
             next_closure: 0,
             cell_classes: Vec::new(),
+            box_classes: Vec::new(),
             function_references: Vec::new(),
             map_types,
             array_types,
@@ -4085,6 +4160,14 @@ impl Emitter {
     fn emit_program(mut self, program: &Program) -> Result<String, String> {
         self.validate_class_contracts()?;
         self.validate_constants_and_defaults()?;
+        for scalar in Scalar::ALL {
+            let value_type = scalar.value_type();
+            let class_id = self.add_synthetic_class(
+                &format!("?{}", self.type_name(value_type)),
+                vec![Property { name: "value".to_string(), value_type, visibility: Visibility::Private, default: None, default_at: (0, 0), readonly: true }],
+            );
+            self.box_classes.push(class_id);
+        }
         let is_stdlib = |function: &Function| program.modules[function.module as usize].is_stdlib;
         let mut functions_ir = String::new();
         for function in program.functions.iter().filter(|function| !is_stdlib(function)) {
@@ -4279,7 +4362,7 @@ impl Emitter {
             ir.push_str(&self.emit_dispatch_table(*owner, method_name, Some(supplied)));
         }
         ir.push_str(
-            "\ndeclare i32 @printf(ptr, ...)\ndeclare i32 @strcmp(ptr, ptr)\ndeclare ptr @calloc(i64, i64)\ndeclare ptr @qiq_map_new(i32, i32)\ndeclare void @qiq_retain(ptr)\ndeclare void @qiq_release(ptr)\ndeclare ptr @qiq_object_new(i64, i64)\ndeclare void @qiq_map_set(ptr, i64, i64)\ndeclare i64 @qiq_map_get(ptr, i64)\ndeclare i64 @qiq_map_iteration_end(ptr)\ndeclare i64 @qiq_map_version(ptr)\ndeclare zeroext i1 @qiq_map_entry_live(ptr, i64, i64)\ndeclare zeroext i1 @qiq_map_find(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_map_has(ptr, i64)\ndeclare void @qiq_map_remove(ptr, i64)\ndeclare ptr @qiq_map_keys(ptr, i64, i32)\ndeclare ptr @qiq_map_values(ptr, i64, i32)\ndeclare zeroext i1 @qiq_map_contains_value(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_values_equal(ptr, ptr, ptr)\ndeclare i64 @qiq_map_key_at(ptr, i64)\ndeclare i64 @qiq_map_value_at(ptr, i64)\ndeclare ptr @qiq_map_merge(ptr, ptr)\ndeclare ptr @qiq_array_sort(ptr, i64, i32, i32, i1 zeroext)\ndeclare ptr @qiq_array_usort(ptr, i64, i32, ptr, ptr)\ndeclare i64 @qiq_array_index_of(ptr, i64, ptr, i64)\ndeclare ptr @qiq_array_slice(ptr, i64, i32, i64, i64, i1 zeroext)\ndeclare ptr @qiq_array_reverse(ptr, i64, i32)\ndeclare ptr @qiq_array_unique(ptr, i64, i32, ptr)\ndeclare i64 @qiq_array_sum_int(ptr)\ndeclare double @qiq_array_sum_double(ptr)\ndeclare ptr @qiq_map_filter_keys(ptr, ptr, i1 zeroext)\ndeclare ptr @qiq_map_filter_entries(ptr, ptr, ptr, i1 zeroext)\ndeclare ptr @qiq_map_flip(ptr, i32, i32)\ndeclare i64 @qiq_string_len(ptr)\ndeclare ptr @qiq_sprintf(ptr, ptr, ptr, i64)\ndeclare void @qiq_bind_values(ptr, ptr, i64)\ndeclare ptr @qiq_json_encode(ptr, i64, i1 zeroext)\ndeclare i64 @qiq_json_decode(ptr, ptr)\ndeclare i64 @qiq_csv_decode(ptr, ptr, ptr)\ndeclare ptr @qiq_csv_encode(ptr, ptr, ptr, ptr)\ndeclare i32 @qiq_string_equality(ptr, ptr)\ndeclare i32 @qiq_string_compare(ptr, ptr)\ndeclare ptr @qiq_string_char_at(ptr, i64)\ndeclare ptr @qiq_string_concat(ptr, ptr)\ndeclare i64 @qiq_int_divide(i64, i64)\ndeclare i64 @qiq_int_modulo(i64, i64)\ndeclare i64 @qiq_int_power(i64, i64)\ndeclare i64 @qiq_int_power_unchecked(i64, i64)\ndeclare i64 @qiq_int_shift_left(i64, i64)\ndeclare i64 @qiq_int_shift_right(i64, i64)\ndeclare double @llvm.pow.f64(double, double)\ndeclare double @llvm.fabs.f64(double)\ndeclare i64 @qiq_math_min_int(ptr)\ndeclare i64 @qiq_math_max_int(ptr)\ndeclare double @qiq_math_min_double(ptr)\ndeclare double @qiq_math_max_double(ptr)\ndeclare i64 @qiq_math_clamp_int(i64, i64, i64)\ndeclare double @qiq_math_clamp_double(double, double, double)\ndeclare void @qiq_uncaught(ptr, ptr, ptr, i64)\ndeclare ptr @qiq_array_new(i64, i64, i32)\ndeclare void @qiq_set_arguments(i32, ptr)\ndeclare void @qiq_check_callable(ptr)\ndeclare void @qiq_array_push(ptr, i64, i64)\ndeclare i64 @qiq_range_plan(i64, i64, i64, i1 zeroext, ptr)\ndeclare ptr @qiq_range_int(i64, i64, i64, i1 zeroext)\ndeclare ptr @qiq_range_count(i64)\ndeclare ptr @qiq_range_double(double, double, double, i1 zeroext)\ndeclare ptr @qiq_range_char(ptr, ptr, i64, i1 zeroext)\ndeclare i64 @qiq_array_pop(ptr, i64)\ndeclare i64 @qiq_array_shift(ptr, i64)\ndeclare void @qiq_array_insert(ptr, i64, i64, i64)\ndeclare ptr @qiq_array_splice(ptr, i64, i64, i64, i1 zeroext, ptr)\ndeclare ptr @qiq_array_with_tail(i64, ptr, i64, i32)\ndeclare i64 @qiq_array_length(ptr)\ndeclare i64 @qiq_len_string(ptr)\ndeclare i64 @qiq_len_array(ptr)\ndeclare i64 @qiq_len_map(ptr)\ndeclare void @qiq_array_check_index(ptr, i64)\ndeclare void @qiq_print_value(ptr, i64)\ndeclare ptr @qiq_describe_value(ptr, i64)\ndeclare void @qiq_print_space()\ndeclare void @qiq_print_newline()\ndeclare i64 @qiq_double_to_int(double)\ndeclare zeroext i8 @qiq_int_to_byte(i64)\ndeclare i64 @qiq_string_to_int(ptr)\ndeclare double @qiq_string_to_double(ptr)\ndeclare ptr @qiq_int_to_string(i64)\ndeclare ptr @qiq_double_to_string(double)\n",
+            "\ndeclare i32 @printf(ptr, ...)\ndeclare i32 @strcmp(ptr, ptr)\ndeclare ptr @calloc(i64, i64)\ndeclare ptr @qiq_map_new(i32, i32)\ndeclare void @qiq_retain(ptr)\ndeclare void @qiq_release(ptr)\ndeclare ptr @qiq_object_new(i64, i64)\ndeclare void @qiq_map_set(ptr, i64, i64)\ndeclare i64 @qiq_map_get(ptr, i64)\ndeclare i64 @qiq_map_iteration_end(ptr)\ndeclare i64 @qiq_map_version(ptr)\ndeclare zeroext i1 @qiq_map_entry_live(ptr, i64, i64)\ndeclare zeroext i1 @qiq_map_find(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_map_has(ptr, i64)\ndeclare void @qiq_map_remove(ptr, i64)\ndeclare ptr @qiq_map_keys(ptr, i64, i32)\ndeclare ptr @qiq_map_values(ptr, i64, i32)\ndeclare zeroext i1 @qiq_map_contains_value(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_values_equal(ptr, ptr, ptr)\ndeclare zeroext i1 @qiq_nullable_equals(ptr, ptr, i64)\ndeclare i64 @qiq_map_key_at(ptr, i64)\ndeclare i64 @qiq_map_value_at(ptr, i64)\ndeclare ptr @qiq_map_merge(ptr, ptr)\ndeclare ptr @qiq_array_sort(ptr, i64, i32, i32, i1 zeroext)\ndeclare ptr @qiq_array_usort(ptr, i64, i32, ptr, ptr)\ndeclare i64 @qiq_array_index_of(ptr, i64, ptr, i64)\ndeclare ptr @qiq_array_slice(ptr, i64, i32, i64, i64, i1 zeroext)\ndeclare ptr @qiq_array_reverse(ptr, i64, i32)\ndeclare ptr @qiq_array_unique(ptr, i64, i32, ptr)\ndeclare i64 @qiq_array_sum_int(ptr)\ndeclare double @qiq_array_sum_double(ptr)\ndeclare ptr @qiq_map_filter_keys(ptr, ptr, i1 zeroext)\ndeclare ptr @qiq_map_filter_entries(ptr, ptr, ptr, i1 zeroext)\ndeclare ptr @qiq_map_flip(ptr, i32, i32)\ndeclare i64 @qiq_string_len(ptr)\ndeclare ptr @qiq_sprintf(ptr, ptr, ptr, i64)\ndeclare void @qiq_bind_values(ptr, ptr, i64)\ndeclare ptr @qiq_json_encode(ptr, i64, i1 zeroext)\ndeclare i64 @qiq_json_decode(ptr, ptr)\ndeclare i64 @qiq_csv_decode(ptr, ptr, ptr)\ndeclare ptr @qiq_csv_encode(ptr, ptr, ptr, ptr)\ndeclare i32 @qiq_string_equality(ptr, ptr)\ndeclare i32 @qiq_string_compare(ptr, ptr)\ndeclare ptr @qiq_string_char_at(ptr, i64)\ndeclare ptr @qiq_string_concat(ptr, ptr)\ndeclare i64 @qiq_int_divide(i64, i64)\ndeclare i64 @qiq_int_modulo(i64, i64)\ndeclare i64 @qiq_int_power(i64, i64)\ndeclare i64 @qiq_int_power_unchecked(i64, i64)\ndeclare i64 @qiq_int_shift_left(i64, i64)\ndeclare i64 @qiq_int_shift_right(i64, i64)\ndeclare double @llvm.pow.f64(double, double)\ndeclare double @llvm.fabs.f64(double)\ndeclare i64 @qiq_math_min_int(ptr)\ndeclare i64 @qiq_math_max_int(ptr)\ndeclare double @qiq_math_min_double(ptr)\ndeclare double @qiq_math_max_double(ptr)\ndeclare i64 @qiq_math_clamp_int(i64, i64, i64)\ndeclare double @qiq_math_clamp_double(double, double, double)\ndeclare void @qiq_uncaught(ptr, ptr, ptr, i64)\ndeclare ptr @qiq_array_new(i64, i64, i32)\ndeclare void @qiq_set_arguments(i32, ptr)\ndeclare void @qiq_check_callable(ptr)\ndeclare void @qiq_array_push(ptr, i64, i64)\ndeclare i64 @qiq_range_plan(i64, i64, i64, i1 zeroext, ptr)\ndeclare ptr @qiq_range_int(i64, i64, i64, i1 zeroext)\ndeclare ptr @qiq_range_count(i64)\ndeclare ptr @qiq_range_double(double, double, double, i1 zeroext)\ndeclare ptr @qiq_range_char(ptr, ptr, i64, i1 zeroext)\ndeclare i64 @qiq_array_pop(ptr, i64)\ndeclare i64 @qiq_array_shift(ptr, i64)\ndeclare void @qiq_array_insert(ptr, i64, i64, i64)\ndeclare ptr @qiq_array_splice(ptr, i64, i64, i64, i1 zeroext, ptr)\ndeclare ptr @qiq_array_with_tail(i64, ptr, i64, i32)\ndeclare i64 @qiq_array_length(ptr)\ndeclare i64 @qiq_len_string(ptr)\ndeclare i64 @qiq_len_array(ptr)\ndeclare i64 @qiq_len_map(ptr)\ndeclare void @qiq_array_check_index(ptr, i64)\ndeclare void @qiq_print_value(ptr, i64)\ndeclare ptr @qiq_describe_value(ptr, i64)\ndeclare void @qiq_print_space()\ndeclare void @qiq_print_newline()\ndeclare i64 @qiq_double_to_int(double)\ndeclare zeroext i8 @qiq_int_to_byte(i64)\ndeclare i64 @qiq_string_to_int(ptr)\ndeclare double @qiq_string_to_double(ptr)\ndeclare ptr @qiq_int_to_string(i64)\ndeclare ptr @qiq_double_to_string(double)\n",
         );
         ir.push_str(&extern_declarations);
         ir.push('\n');
@@ -4516,7 +4599,7 @@ impl Emitter {
         // starts (or after the last one), after any labels it ended with.
         let mut scope_open = false;
 
-        for statement in statements {
+        for (statement_index, statement) in statements.iter().enumerate() {
             self.position = Some((statement.line, statement.column));
             if terminated {
                 return Err("unreachable statement after return, throw, break, or continue".to_string());
@@ -4535,9 +4618,10 @@ impl Emitter {
                         self.emit_expecting(expression, Some(*declared_type), &variables, &mut body)?;
                     if !self.is_assignable(*declared_type, value.value_type) {
                         return Err(format!(
-                            "cannot initialize {} variable '{name}' with {}",
+                            "cannot initialize {} variable '{name}' with {}{}",
                             self.type_name(*declared_type),
-                            self.type_name(value.value_type)
+                            self.type_name(value.value_type),
+                            self.null_hint(value.value_type)
                         ));
                     }
                     let value = Value {
@@ -4567,9 +4651,10 @@ impl Emitter {
                             self.emit_expecting(value_expression, Some(target.value_type), &variables, &mut body)?;
                         if !self.is_assignable(target.value_type, value.value_type) {
                             return Err(format!(
-                                "cannot assign {} to {} variable '{name}'",
+                                "cannot assign {} to {} variable '{name}'{}",
                                 self.type_name(value.value_type),
-                                self.type_name(target.value_type)
+                                self.type_name(target.value_type),
+                                self.null_hint(value.value_type)
                             ));
                         }
                         self.store_in_cell(&cell, target.value_type, value, &mut body)?;
@@ -4586,9 +4671,10 @@ impl Emitter {
                         self.emit_expecting(value_expression, Some(target.value_type), &variables, &mut body)?;
                     if !self.is_assignable(target.value_type, value.value_type) {
                         return Err(format!(
-                            "cannot assign {} to {} variable '{name}'",
+                            "cannot assign {} to {} variable '{name}'{}",
                             self.type_name(value.value_type),
-                            self.type_name(target.value_type)
+                            self.type_name(target.value_type),
+                            self.null_hint(value.value_type)
                         ));
                     }
                     if is_reference(target.value_type) {
@@ -4899,9 +4985,10 @@ impl Emitter {
                             let value = self.emit_expecting(expression, Some(expected), &variables, &mut body)?;
                             if !self.is_assignable(expected, value.value_type) {
                                 return Err(format!(
-                                    "return type mismatch: expected {}, found {}",
+                                    "return type mismatch: expected {}, found {}{}",
                                     self.type_name(expected),
-                                    self.type_name(value.value_type)
+                                    self.type_name(value.value_type),
+                                    self.null_hint(value.value_type)
                                 ));
                             }
                             // The caller gets one reference to the result.
@@ -5168,15 +5255,16 @@ impl Emitter {
                     }
                 }
                 StatementKind::If {
-                    condition,
+                    condition: condition_expression,
                     then_body,
                     else_body,
                 } => {
-                    let condition = self.emit_expression(condition, &variables, &mut body)?;
+                    let condition = self.emit_expression(condition_expression, &variables, &mut body)?;
                     if condition.value_type != ValueType::Bool {
                         return Err(format!(
-                            "if condition must be a bool, found {}",
-                            self.type_name(condition.value_type)
+                            "if condition must be a bool, found {}{}",
+                            self.type_name(condition.value_type),
+                            self.null_hint(condition.value_type)
                         ));
                     }
                     self.release_current(&mut body);
@@ -5190,16 +5278,20 @@ impl Emitter {
                         condition.operand
                     ));
 
+                    // In each branch, the nullable variables its condition
+                    // proves set are their scalars (see narrow).
+                    let then_variables = self.narrow(condition_expression, true, &variables, &[then_body], &mut body)?;
                     let (mut then_ir, then_terminated) =
-                        self.emit_block(then_body, &variables, return_type, is_main)?;
+                        self.emit_block(then_body, &then_variables, return_type, is_main)?;
                     if !then_terminated {
                         then_ir.push_str(&format!("  br label %{merge_label}\n"));
                     }
                     body.push_str(&then_ir);
                     body.push_str(&format!("{else_label}:\n"));
 
+                    let else_variables = self.narrow(condition_expression, false, &variables, &[else_body], &mut body)?;
                     let (mut else_ir, else_terminated) =
-                        self.emit_block(else_body, &variables, return_type, is_main)?;
+                        self.emit_block(else_body, &else_variables, return_type, is_main)?;
                     if !else_terminated {
                         else_ir.push_str(&format!("  br label %{merge_label}\n"));
                     }
@@ -5209,6 +5301,15 @@ impl Emitter {
                         terminated = true;
                     } else {
                         body.push_str(&format!("{merge_label}:\n"));
+                        // An early exit, `if (x == null) { return; }`: the
+                        // rest of the block runs only when the other branch
+                        // did, so what that branch's condition proves holds.
+                        let rest = &statements[statement_index + 1..];
+                        if then_terminated {
+                            variables = self.narrow(condition_expression, false, &variables, &[else_body, rest], &mut body)?;
+                        } else if else_terminated {
+                            variables = self.narrow(condition_expression, true, &variables, &[then_body, rest], &mut body)?;
+                        }
                     }
                 }
                 StatementKind::Switch { subject, cases, default } => {
@@ -5363,8 +5464,9 @@ impl Emitter {
                     let tested = self.emit_expression(condition, &variables, &mut body)?;
                     if tested.value_type != ValueType::Bool {
                         return Err(format!(
-                            "while condition must be a bool, found {}",
-                            self.type_name(tested.value_type)
+                            "while condition must be a bool, found {}{}",
+                            self.type_name(tested.value_type),
+                            self.null_hint(tested.value_type)
                         ));
                     }
                     self.release_current(&mut body);
@@ -5699,6 +5801,9 @@ impl Emitter {
                 slot: None,
             });
         }
+        if let Some(scalar) = left.value_type.non_null().or(right.value_type.non_null()) {
+            return self.emit_nullable_comparison(left, operator, right, scalar, body);
+        }
         if let (ValueType::Class(a), ValueType::Class(b)) = (left.value_type, right.value_type) {
             // `==` and `!=` on objects: the same object (PHP's ===), for two
             // values of the same class or of related ones (a class and its
@@ -5790,6 +5895,7 @@ impl Emitter {
                 return Err(format!("{} values can only be compared with null", self.type_name(left.value_type)));
             }
             ValueType::Class(_) => unreachable!("objects are compared above"),
+            ValueType::Nullable(_) => unreachable!("nullable scalars are compared above"),
             ValueType::Null => match operator {
                 CompareOp::Equal => "eq",
                 CompareOp::NotEqual => "ne",
@@ -5991,6 +6097,54 @@ impl Emitter {
         Ok(Value { value_type: ValueType::Bool, operand: different, slot: None })
     }
 
+    /// `==` and `!=` with a nullable scalar on one side and the same nullable
+    /// scalar, or the scalar itself, on the other: equal when both are null,
+    /// or neither is and the scalars are equal. Ordering needs a null check
+    /// first.
+    fn emit_nullable_comparison(&mut self, left: Value, operator: CompareOp, right: Value, scalar: ValueType, body: &mut String) -> Result<Value, String> {
+        let fits = |side: ValueType| side == scalar || side.non_null() == Some(scalar);
+        if !fits(left.value_type) || !fits(right.value_type) {
+            return Err(format!(
+                "comparison requires matching types, found {} and {}",
+                self.type_name(left.value_type),
+                self.type_name(right.value_type)
+            ));
+        }
+        if !matches!(operator, CompareOp::Equal | CompareOp::NotEqual) {
+            let nullable = if left.value_type.non_null().is_some() { &left } else { &right };
+            return Err(format!(
+                "a {} may be null, so it can't be compared with <, >, <=, or >=; check it with != null first, or give a fallback with ??",
+                self.type_name(nullable.value_type)
+            ));
+        }
+        // Put the nullable side first.
+        let (boxed, other) = if left.value_type.non_null().is_some() { (left, right) } else { (right, left) };
+        let result = self.new_register();
+        if other.value_type.non_null().is_some() {
+            // Both nullable: the runtime compares them as == does (map.c).
+            let descriptor = self.type_descriptor(boxed.value_type);
+            let descriptor = self.string_literal(descriptor.as_bytes());
+            body.push_str(&format!(
+                "  {result}.eq = call zeroext i1 @qiq_values_equal(ptr {descriptor}, ptr {}, ptr {})\n",
+                boxed.operand, other.operand
+            ));
+        } else {
+            let descriptor = self.type_descriptor(scalar);
+            let descriptor = self.string_literal(descriptor.as_bytes());
+            let bits = self.scalar_bits(&other, body);
+            body.push_str(&format!(
+                "  {result}.eq = call zeroext i1 @qiq_nullable_equals(ptr {descriptor}, ptr {}, i64 {bits})\n",
+                boxed.operand
+            ));
+        }
+        if matches!(operator, CompareOp::Equal) {
+            body.push_str(&format!("  {result} = add i1 {result}.eq, 0\n"));
+        } else {
+            body.push_str(&format!("  {result} = xor i1 {result}.eq, true\n"));
+        }
+        Ok(Value { value_type: ValueType::Bool, operand: result, slot: None })
+    }
+
     /// Whether `==` can compare values of this type: numbers, bools, strings,
     /// chars, and arrays and maps of those, at any depth.
     fn compares_by_contents(&self, value_type: ValueType) -> bool {
@@ -6001,6 +6155,7 @@ impl Emitter {
                 self.compares_by_contents(map.key_type) && self.compares_by_contents(map.value_type)
             }
             ValueType::Int | ValueType::Double | ValueType::Bool | ValueType::Byte | ValueType::String | ValueType::Char => true,
+            ValueType::Nullable(_) => true,
             ValueType::Class(_) | ValueType::Function(_) | ValueType::Null | ValueType::Void => false,
         }
     }
@@ -6189,6 +6344,100 @@ impl Emitter {
     /// The synthetic class of the cell that holds one captured value of
     /// `value_type`: an object with one field, so cells are reference
     /// counted and cycle collected like any object.
+    /// The class of the boxes that hold non-null `?scalar` values.
+    fn box_class(&self, scalar: Scalar) -> u32 {
+        self.box_classes[Scalar::ALL.iter().position(|candidate| *candidate == scalar).expect("every scalar has a box")]
+    }
+
+    /// `value`, a scalar, in a new box for a `?scalar` (one reference).
+    fn emit_box(&mut self, value: &Value, body: &mut String) -> Value {
+        let scalar = Scalar::of(value.value_type).expect("only scalars are boxed");
+        let class_id = self.box_class(scalar);
+        let bits = self.scalar_bits(value, body);
+        let object = self.new_register();
+        body.push_str(&format!(
+            "  {object} = call nonnull ptr @qiq_object_new(i64 {}, i64 {class_id})\n  {object}.value = getelementptr inbounds i64, ptr {object}, i64 1\n  store i64 {bits}, ptr {object}.value, align 8\n",
+            OBJECT_HEADER_FIELDS + 1
+        ));
+        self.own(Value { value_type: ValueType::Nullable(scalar), operand: object, slot: None })
+    }
+
+    /// For an error about using a value of type `found`: when it's a nullable
+    /// scalar, how to get the scalar out.
+    fn null_hint(&self, found: ValueType) -> String {
+        match found.non_null() {
+            Some(_) => format!(
+                "; a {} may be null: check it with != null first (then it's {} there), or give a fallback with ??",
+                self.type_name(found),
+                self.type_name(found.non_null().expect("checked above"))
+            ),
+            None => String::new(),
+        }
+    }
+
+    /// `variables`, with each nullable scalar variable that `condition`
+    /// being `when` proves isn't null (see proven_set) read once and unboxed,
+    /// so it's its scalar in the code that follows. Not for a variable that
+    /// `regions` (the code that sees it narrowed) assign, or that an
+    /// anonymous function captures, either of which could make it null again.
+    fn narrow(
+        &mut self,
+        condition: &Expr,
+        when: bool,
+        variables: &HashMap<String, Value>,
+        regions: &[&[Statement]],
+        body: &mut String,
+    ) -> Result<HashMap<String, Value>, String> {
+        let mut names = Vec::new();
+        proven_set(condition, when, &mut names);
+        let mut narrowed = variables.clone();
+        for name in names {
+            let Some(variable) = variables.get(&name) else { continue };
+            if variable.value_type.non_null().is_none() || self.boxed.contains(&name) {
+                continue;
+            }
+            if regions.iter().any(|statements| assigns(statements, &name)) {
+                continue;
+            }
+            let boxed = self.emit_expression(&Expr::Variable(name.clone()), variables, body)?;
+            let value = self.emit_unbox(&boxed, body);
+            narrowed.insert(name, value);
+        }
+        Ok(narrowed)
+    }
+
+    /// A scalar's value as the 64 bits a box (or the runtime) holds.
+    fn scalar_bits(&mut self, value: &Value, body: &mut String) -> String {
+        let operand = &value.operand;
+        let bits = self.new_register();
+        body.push_str(&match value.value_type {
+            ValueType::Double => format!("  {bits} = bitcast double {operand} to i64\n"),
+            ValueType::Bool => format!("  {bits} = zext i1 {operand} to i64\n"),
+            ValueType::Byte => format!("  {bits} = zext i8 {operand} to i64\n"),
+            _ => format!("  {bits} = add i64 {operand}, 0\n"),
+        });
+        bits
+    }
+
+    /// The scalar in `boxed`, a `?scalar` known not to be null.
+    fn emit_unbox(&mut self, boxed: &Value, body: &mut String) -> Value {
+        let value_type = boxed.value_type.non_null().expect("only nullable scalars are unboxed");
+        let operand = boxed.operand.clone();
+        let address = self.new_register();
+        let bits = self.new_register();
+        let value = self.new_register();
+        body.push_str(&format!(
+            "  {address} = getelementptr inbounds i64, ptr {operand}, i64 1\n  {bits} = load i64, ptr {address}, align 8\n"
+        ));
+        body.push_str(&match value_type {
+            ValueType::Int => format!("  {value} = add i64 {bits}, 0\n"),
+            ValueType::Double => format!("  {value} = bitcast i64 {bits} to double\n"),
+            ValueType::Bool => format!("  {value} = trunc i64 {bits} to i1\n"),
+            _ => format!("  {value} = trunc i64 {bits} to i8\n"),
+        });
+        Value { value_type, operand: value, slot: None }
+    }
+
     fn cell_class(&mut self, value_type: ValueType) -> u32 {
         if let Some((_, class_id)) = self.cell_classes.iter().find(|(candidate, _)| *candidate == value_type) {
             return *class_id;
@@ -6617,8 +6866,9 @@ impl Emitter {
                 this.type_name(found)
             ))
         };
+        // A ?int property's default can be an int.
         let scalar = |this: &Self, found: ValueType| {
-            if this.is_assignable(expected, found) { Ok(()) } else { mismatch(this, found) }
+            if this.is_assignable(expected, found) || expected.non_null() == Some(found) { Ok(()) } else { mismatch(this, found) }
         };
         match default {
             Expr::Number(number) if expected == ValueType::Byte => {
@@ -7050,9 +7300,10 @@ impl Emitter {
             }
             if !self.is_assignable(parameter.value_type, value.value_type) {
                 return Err(format!(
-                    "{mismatch}: expected {}, found {}",
+                    "{mismatch}: expected {}, found {}{}",
                     self.type_name(parameter.value_type),
-                    self.type_name(value.value_type)
+                    self.type_name(value.value_type),
+                    self.null_hint(value.value_type)
                 ));
             }
             values[*index] = Some(value);
@@ -7063,7 +7314,7 @@ impl Emitter {
                 Some(value) => value,
                 None if fill_defaults => {
                     let default = parameter.default.as_ref().expect("omitted parameters have defaults");
-                    self.emit_expression(default, variables, body)?
+                    self.emit_expecting(default, Some(parameter.value_type), variables, body)?
                 }
                 None => continue,
             };
@@ -7107,7 +7358,7 @@ impl Emitter {
                 let default = parameter.default.as_ref().ok_or_else(|| {
                     format!("method '{method_name}' has no default for parameter '{}'", parameter.name)
                 })?;
-                let value = self.emit_expression(default, &HashMap::new(), &mut body)?;
+                let value = self.emit_expecting(default, Some(parameter.value_type), &HashMap::new(), &mut body)?;
                 operands.push(format!("{llvm} {}", value.operand));
             }
         }
@@ -7199,6 +7450,33 @@ impl Emitter {
             ],
         );
         self.emit_expression(&check, &scope, body).map(Some)
+    }
+
+    /// to_string of a nullable scalar: "null", or its scalar as to_string
+    /// writes it. f-strings use this too.
+    fn emit_nullable_to_string(&mut self, value: &Value, scalar: ValueType, variables: &HashMap<String, Value>, body: &mut String) -> Result<Value, String> {
+        let id = self.next_label;
+        self.next_label += 1;
+        let slot = self.new_register();
+        self.entry_allocas.push_str(&format!("  {slot} = alloca ptr, align 8\n"));
+        let null_text = self.string_literal(b"null");
+        let is_null = self.new_register();
+        body.push_str(&format!(
+            "  {is_null} = icmp eq ptr {}, null\n  store ptr {null_text}, ptr {slot}, align 8\n  br i1 {is_null}, label %nulltext.end{id}, label %nulltext.set{id}\nnulltext.set{id}:\n",
+            value.operand
+        ));
+        let unboxed = self.emit_unbox(value, body);
+        let mut scope = variables.clone();
+        scope.insert("#to_string.value".to_string(), Value { value_type: scalar, ..unboxed });
+        self.open_scope();
+        let text = self.emit_expression(&Expr::Call("to_string".to_string(), vec![Expr::Variable("#to_string.value".to_string())]), &scope, body)?;
+        let text = self.take(&text, body);
+        self.close_scope(body);
+        let result = self.new_register();
+        body.push_str(&format!(
+            "  store ptr {text}, ptr {slot}, align 8\n  br label %nulltext.end{id}\nnulltext.end{id}:\n  {result} = load ptr, ptr {slot}, align 8\n"
+        ));
+        Ok(self.own(Value { value_type: ValueType::String, operand: result, slot: None }))
     }
 
     /// `value` as text, as print writes it inside an array (strings quoted),
@@ -7490,6 +7768,9 @@ impl Emitter {
             }
             register
         };
+        if let (true, Some(scalar)) = (name == "to_string", from.non_null()) {
+            return self.emit_nullable_to_string(&value, scalar, variables, body);
+        }
         let operand = &value.operand;
         let converted = match (name, from) {
             ("to_int", ValueType::Int)
@@ -7762,12 +8043,15 @@ impl Emitter {
                 ValueType::Int => ("getInt", Some("getIntOr")),
                 ValueType::Double => ("getDouble", Some("getDoubleOr")),
                 ValueType::Bool => ("getBool", Some("getBoolOr")),
+                ValueType::Nullable(Scalar::Int) => ("getIntOrNull", None),
+                ValueType::Nullable(Scalar::Double) => ("getDoubleOrNull", None),
+                ValueType::Nullable(Scalar::Bool) => ("getBoolOrNull", None),
                 ValueType::String => ("getString", None),
                 ValueType::Class(class_id) if this.stdlib_class("DateTime") == Some(class_id) => ("getDateTime", None),
                 other if this.element_of(other) == Some(ValueType::Byte) => ("getBytes", None),
                 other => {
                     return Err(format!(
-                        "{method_name} can't read {what} of {class_name}, a {}, from a column: columns give an int, double, bool, string, byte[], or DateTime",
+                        "{method_name} can't read {what} of {class_name}, a {}, from a column: columns give an int, double, bool (or their ? forms), string, byte[], or DateTime",
                         this.type_name(other)
                     ))
                 }
@@ -7933,6 +8217,13 @@ impl Emitter {
                     datetime = true;
                 }
             }
+            // `N` and the scalar's letter: NULL, or the scalar (see sql.c).
+            if let Some(scalar) = value.value_type.non_null() {
+                types.push('N');
+                types.push_str(&self.type_descriptor(scalar));
+                payloads.push(self.encode_payload(&value, body)?);
+                continue;
+            }
             let code = match value.value_type {
                 ValueType::String if datetime => 'T',
                 ValueType::Int => 'i',
@@ -7944,7 +8235,7 @@ impl Emitter {
                 other if self.element_of(other) == Some(ValueType::Byte) => 'a',
                 other => {
                     return Err(format!(
-                        "{method_name}: value {} for the query must be an int, double, bool, byte, string, char, byte[], DateTime, or null, found {}",
+                        "{method_name}: value {} for the query must be an int, double, bool, byte (or their ? forms), string, char, byte[], DateTime, or null, found {}",
                         index + 1,
                         self.type_name(other)
                     ))
@@ -8047,7 +8338,7 @@ impl Emitter {
                 let value = self.emit_expression(left, variables, body)?;
                 if !is_reference(value.value_type) {
                     return Err(format!(
-                        "'??' needs a map or array element, or a value that can be null (a string, char, array, map, or object); found {}",
+                        "'??' needs a map or array element, or a value that can be null (a ?int or other nullable scalar, string, char, array, map, or object); found {}",
                         self.type_name(value.value_type)
                     ));
                 }
@@ -8085,11 +8376,30 @@ impl Emitter {
             value_type.llvm()
         ));
         self.open_scope();
-        let fallback = self.emit_expecting(right, Some(value_type), variables, body)?;
+        // For a ?scalar, a scalar fallback makes the result never null: it's
+        // the scalar (unboxed below), as in `count ?? 0`.
+        let mut unboxed = false;
+        let fallback = match value_type.non_null() {
+            Some(scalar) => {
+                let raw = self.emit_expecting(right, Some(scalar), variables, body)?;
+                if raw.value_type == scalar {
+                    unboxed = true;
+                    self.emit_box(&raw, body)
+                } else if raw.value_type == ValueType::Null {
+                    Value { value_type, operand: "null".to_string(), slot: None }
+                } else {
+                    raw
+                }
+            }
+            None => self.emit_expecting(right, Some(value_type), variables, body)?,
+        };
         if !self.is_assignable(value_type, fallback.value_type) {
+            let wanted = match value_type.non_null() {
+                Some(scalar) => format!("{} or {}", self.type_name(scalar), self.type_name(value_type)),
+                None => self.type_name(value_type),
+            };
             return Err(format!(
-                "the right side of '??' must be {}, found {}",
-                self.type_name(value_type),
+                "the right side of '??' must be {wanted}, found {}",
                 self.type_name(fallback.value_type)
             ));
         }
@@ -8101,7 +8411,11 @@ impl Emitter {
             value_type.llvm(),
             value_type.llvm()
         ));
-        Ok(self.own(Value { value_type, operand: result, slot: None }))
+        let result = self.own(Value { value_type, operand: result, slot: None });
+        if unboxed {
+            return Ok(self.emit_unbox(&result, body));
+        }
+        Ok(result)
     }
 
     /// `condition ? then : otherwise`. Only the branch chosen runs; its
@@ -8119,7 +8433,8 @@ impl Emitter {
         variables: &HashMap<String, Value>,
         body: &mut String,
     ) -> Result<Value, String> {
-        let condition = self.emit_expression(condition, variables, body)?;
+        let condition_expression = condition;
+        let condition = self.emit_expression(condition_expression, variables, body)?;
         if condition.value_type != ValueType::Bool {
             return Err(format!("the condition of '?:' must be a bool, found {}", self.type_name(condition.value_type)));
         }
@@ -8147,7 +8462,8 @@ impl Emitter {
             body.push_str(&format!("{label}:\n"));
             let hint = expected.or(branches.first().map(|branch| branch.0).filter(|first| *first != ValueType::Null));
             self.open_scope();
-            let value = self.emit_expecting(expression, hint, variables, body)?;
+            let branch_variables = self.narrow(condition_expression, label == &then_label, variables, &[], body)?;
+            let value = self.emit_expecting(expression, hint, &branch_variables, body)?;
             // A call to a void function gives a null value; it's not one.
             if value.value_type == ValueType::Void || (value.value_type == ValueType::Null && !matches!(expression, Expr::Null | Expr::Ternary(..))) {
                 return Err("a branch of '?:' has no value (it calls a void function)".to_string());
@@ -8759,6 +9075,12 @@ impl Emitter {
         let array = self.emit_expression(array_expression, variables, body)?;
         let Some(element) = self.element_of(array.value_type) else {
             return Err(format!("{name} expects an array, found {}", self.type_name(array.value_type)));
+        };
+        // Looking for an int (or null) among ?ints.
+        let value = match (value, element) {
+            (Some(value), ValueType::Nullable(scalar)) if value.value_type == scalar.value_type() => Some(self.emit_box(&value, body)),
+            (Some(value), ValueType::Nullable(_)) if value.value_type == ValueType::Null => Some(Value { value_type: element, ..value }),
+            (value, _) => value,
         };
         let size = element.size_bytes();
         let flags = self.contents_flags(element);
@@ -9553,6 +9875,7 @@ impl Emitter {
     fn json_descriptor(&self, value_type: ValueType) -> String {
         match value_type {
             ValueType::Class(class_id) => format!("o{class_id};"),
+            ValueType::Nullable(scalar) => format!("N{}", self.type_descriptor(scalar.value_type())),
             ValueType::Array(_) => format!("a{}", self.json_descriptor(self.element_of(value_type).expect("array type"))),
             ValueType::Map(type_id) => {
                 let map = self.map_types[type_id as usize];
@@ -9639,7 +9962,7 @@ impl Emitter {
             ValueType::Null => body.push_str(
                 "  call i32 (ptr, ...) @printf(ptr @.fmt.string, ptr @.str.null)\n",
             ),
-            ValueType::Void | ValueType::Array(_) | ValueType::Map(_) | ValueType::Class(_) | ValueType::Function(_) => {
+            ValueType::Void | ValueType::Array(_) | ValueType::Map(_) | ValueType::Class(_) | ValueType::Function(_) | ValueType::Nullable(_) => {
                 unreachable!("only scalars and null take the printf path")
             }
         }
@@ -9657,6 +9980,8 @@ impl Emitter {
             ValueType::Null | ValueType::Void => "n".to_string(),
             // Function values are objects too, printed as "Closure".
             ValueType::Class(_) | ValueType::Function(_) => "o".to_string(),
+            // A nullable scalar: null, or a box holding the scalar.
+            ValueType::Nullable(scalar) => format!("N{}", self.type_descriptor(scalar.value_type())),
             ValueType::Array(_) => format!(
                 "a{}",
                 self.type_descriptor(self.element_of(value_type).expect("array type"))
@@ -9691,6 +10016,23 @@ impl Emitter {
         variables: &HashMap<String, Value>,
         body: &mut String,
     ) -> Result<Value, String> {
+        // A scalar where its nullable form is expected goes in a box.
+        if let Some(ValueType::Nullable(scalar)) = expected {
+            match expression {
+                Expr::Null => return Ok(Value { value_type: ValueType::Nullable(scalar), operand: "null".to_string(), slot: None }),
+                // Each branch is boxed (or null) by itself.
+                Expr::Ternary(condition, then, otherwise) => {
+                    return self.emit_ternary(condition, then, otherwise, expected, variables, body);
+                }
+                _ => {
+                    let value = self.emit_expecting(expression, Some(scalar.value_type()), variables, body)?;
+                    if value.value_type == scalar.value_type() {
+                        return Ok(self.emit_box(&value, body));
+                    }
+                    return Ok(value);
+                }
+            }
+        }
         match expression {
             Expr::Number(number) if expected == Some(ValueType::Byte) => {
                 if !(0..=255).contains(number) {
@@ -9823,8 +10165,13 @@ impl Emitter {
             let value = self.emit_expecting(element, element_type, variables, body)?;
             let required = *element_type.get_or_insert(value.value_type);
             if !self.is_assignable(required, value.value_type) {
+                let hint = if value.value_type == ValueType::Null && Scalar::of(required).is_some() {
+                    format!("; for an array that can hold null, declare it as ?{}[]", self.type_name(required))
+                } else {
+                    String::new()
+                };
                 return Err(format!(
-                    "array elements must all be {}, found {}",
+                    "array elements must all be {}, found {}{hint}",
                     self.type_name(required),
                     self.type_name(value.value_type)
                 ));
@@ -10402,6 +10749,13 @@ impl Emitter {
             "@qiq_class_names = unnamed_addr constant [{} x ptr] [{}], align 8\n",
             entries.len(),
             entries.join(", ")
+        ));
+        // The box classes of ?int, ?double, ?bool, and ?byte, for json_decode.
+        let boxes: Vec<String> = self.box_classes.iter().map(|class_id| format!("i64 {class_id}")).collect();
+        ir.push_str(&format!(
+            "@qiq_box_classes = unnamed_addr constant [{} x i64] [{}], align 8\n",
+            boxes.len(),
+            boxes.join(", ")
         ));
         // Which classes are enums, whose objects print as Enum::Case.
         let enums: Vec<String> = self.classes.iter().map(|class| format!("i8 {}", u8::from(class.enumeration.is_some()))).collect();
@@ -11519,7 +11873,7 @@ impl Emitter {
                     match left.value_type {
                         ValueType::Int => Value { value_type: ValueType::Int, operand: "1".to_string(), slot: None },
                         ValueType::Double => Value { value_type: ValueType::Double, operand: format!("{:.17e}", 1.0f64), slot: None },
-                        other => return Err(format!("'++' and '--' work on int and double values, found {}", self.type_name(other))),
+                        other => return Err(format!("'++' and '--' work on int and double values, found {}{}", self.type_name(other), self.null_hint(other))),
                     }
                 } else {
                     self.emit_borrowed(right, None, variables, body)?
@@ -11577,10 +11931,11 @@ impl Emitter {
                         ""
                     };
                     return Err(format!(
-                        "'{}' requires two ints or two doubles{also_text}; found {} and {}{byte_hint}",
+                        "'{}' requires two ints or two doubles{also_text}; found {} and {}{byte_hint}{}",
                         operator.symbol(),
                         self.type_name(left.value_type),
-                        self.type_name(right.value_type)
+                        self.type_name(right.value_type),
+                        self.null_hint(if left.value_type.non_null().is_some() { left.value_type } else { right.value_type })
                     ));
                 }
                 let register = self.new_register();
@@ -11744,12 +12099,12 @@ impl Emitter {
                 let callee = self.emit_expression(callee, variables, body)?;
                 self.emit_value_call(callee, arguments, variables, body)
             }
-            Expr::Logical(operator, left, right) => {
+            Expr::Logical(operator, left_expression, right) => {
                 // Short-circuit: the right side runs only when it decides the
                 // result. The result goes through a stack slot, so no phi needs
                 // to know which block each side ended in.
                 let symbol = if *operator == LogicalOp::And { "&&" } else { "||" };
-                let left = self.emit_expression(left, variables, body)?;
+                let left = self.emit_expression(left_expression, variables, body)?;
                 if left.value_type != ValueType::Bool {
                     return Err(format!("'{symbol}' requires bools, found {}", self.type_name(left.value_type)));
                 }
@@ -11770,7 +12125,10 @@ impl Emitter {
                     left.operand, left.operand
                 ));
                 self.open_scope();
-                let right = self.emit_expression(right, variables, body)?;
+                // `x != null && x > 0`: the right side runs only when the left
+                // side is true (for ||, false), which may prove x set.
+                let right_variables = self.narrow(left_expression, *operator == LogicalOp::And, variables, &[], body)?;
+                let right = self.emit_expression(right, &right_variables, body)?;
                 if right.value_type != ValueType::Bool {
                     return Err(format!("'{symbol}' requires bools, found {}", self.type_name(right.value_type)));
                 }
@@ -11872,6 +12230,7 @@ impl Emitter {
             | ValueType::Array(_)
             | ValueType::Map(_)
             | ValueType::Class(_)
+            | ValueType::Nullable(_)
             | ValueType::Function(_) => body.push_str(&format!(
                 "  {encoded} = ptrtoint ptr {} to i64\n",
                 value.operand
@@ -11908,6 +12267,7 @@ impl Emitter {
             | ValueType::Array(_)
             | ValueType::Map(_)
             | ValueType::Class(_)
+            | ValueType::Nullable(_)
             | ValueType::Function(_) => body.push_str(&format!(
                 "  {decoded} = inttoptr i64 {encoded} to ptr\n"
             )),
@@ -12072,6 +12432,7 @@ fn is_reference(value_type: ValueType) -> bool {
             | ValueType::Map(_)
             | ValueType::Class(_)
             | ValueType::Function(_)
+            | ValueType::Nullable(_)
     )
 }
 
@@ -12287,6 +12648,38 @@ fn expression_names(expression: &Expr, used: &mut std::collections::BTreeSet<Str
                 used.insert(name);
             }
         }
+    }
+}
+
+/// The variables that `condition` evaluating to `when` proves aren't null:
+/// `x != null` (or `null != x`) when true, `x == null` when false, and the
+/// parts of `a && b` when true, `a || b` when false, and `!a`.
+fn proven_set(condition: &Expr, when: bool, names: &mut Vec<String>) {
+    match condition {
+        Expr::Compare(operator, left, right) => {
+            let name = match (&**left, &**right) {
+                (Expr::Variable(name), Expr::Null) | (Expr::Null, Expr::Variable(name)) => name,
+                _ => return,
+            };
+            let proves = match operator {
+                CompareOp::NotEqual => when,
+                CompareOp::Equal => !when,
+                _ => false,
+            };
+            if proves && !names.contains(name) {
+                names.push(name.clone());
+            }
+        }
+        Expr::Logical(LogicalOp::And, left, right) if when => {
+            proven_set(left, true, names);
+            proven_set(right, true, names);
+        }
+        Expr::Logical(LogicalOp::Or, left, right) if !when => {
+            proven_set(left, false, names);
+            proven_set(right, false, names);
+        }
+        Expr::Not(inner) => proven_set(inner, !when, names),
+        _ => {}
     }
 }
 
@@ -14916,7 +15309,7 @@ mod tests {
         let computed = compile_source("import Database from \"std/sql\"; string url = \"sqlite::memory:\"; Database db = Database::open(url);").unwrap();
         assert!(computed.contains("@qiq_sql_postgres = constant ptr @qiq_postgres_driver") && computed.contains("@qiq_sql_mysql = constant ptr @qiq_mysql_driver"));
         for (source, error) in [
-            ("import Database from \"std/sql\"; Database db = Database::open(\"x\"); db->execute(\"select ?\", [1, 2]);", "value 1 for the query must be an int, double, bool, byte, string, char, byte[], DateTime, or null, found int[]"),
+            ("import Database from \"std/sql\"; Database db = Database::open(\"x\"); db->execute(\"select ?\", [1, 2]);", "value 1 for the query must be an int, double, bool, byte (or their ? forms), string, char, byte[], DateTime, or null, found int[]"),
             ("class A { function f(string s, ...): void {} }", "'...' parameters are only for standard library methods"),
         ] {
             let message = compile_source(source).unwrap_err();
@@ -15457,6 +15850,48 @@ mod tests {
         // Naming only a leading prefix reuses the positional adapter.
         let prefix = compile_source("interface T { function r(int a, int b = 1): int; } class A implements T { function r(int a, int b = 10): int { return a; } } function show(T t): void { print(t->r(a: 0)); } show(new A());").unwrap();
         assert!(prefix.contains("define i64 @qiq_A_r.1(ptr %this, i64 %arg0)"));
+    }
+
+    #[test]
+    fn rejects_unchecked_nullable_scalars() {
+        let hint = "may be null: check it with != null first (then it's int there), or give a fallback with ??";
+        let cases = [
+            ("?int a = 1; print(a + 1);", hint),
+            ("?int a = 1; int b = a;", "cannot initialize int variable 'b' with ?int; a ?int"),
+            ("function f(int x): void {} ?int a = 1; f(a);", "argument type mismatch calling 'f': expected int, found ?int; a ?int"),
+            ("function f(?int a): int { return a; }", "return type mismatch: expected int, found ?int; a ?int"),
+            ("?int a = 1; a++;", "'++' and '--' work on int and double values, found ?int; a ?int"),
+            ("?bool f = true; if (f) { print(1); }", "if condition must be a bool, found ?bool; a ?bool"),
+            ("?int a = 1; print(a < 2);", "a ?int may be null, so it can't be compared with <, >, <=, or >="),
+            ("?int a = 1; print(a == \"x\");", "comparison requires matching types, found ?int and string"),
+            // Reassigned where it's checked, it isn't narrowed.
+            ("?int a = 1; if (a != null) { a = null; print(a + 1); }", hint),
+            // Captured by an anonymous function, which could set it to null.
+            ("?int a = 1; function(): void f = function(): void { a = null; }; if (a != null) { print(a + 1); }", hint),
+            ("?string s = \"x\";", "a string can already be null, so write string, not ?string"),
+            ("class U {} ?U u = null;", "a U can already be null, so write U, not ?U"),
+            ("map[?int, int] m = {};", "map keys must use a scalar type"),
+            ("print(sort([1, null]));", "array elements must all be int, found null; for an array that can hold null, declare it as ?int[]"),
+            ("?int a = 1; switch (a) { case 1: print(1); }", "switch requires an int, double, bool, byte, string, char, or enum, found ?int"),
+            ("int x = 1; print(x ?? 0);", "'??' needs a map or array element, or a value that can be null (a ?int or other nullable scalar"),
+            ("?int a = null; int b = a ?? \"x\";", "the right side of '??' must be int or ?int, found string"),
+        ];
+        for (code, message) in cases {
+            let error = compile_source(code).unwrap_err();
+            assert!(error.contains(message), "{code}: expected '{message}', got '{error}'");
+        }
+    }
+
+    #[test]
+    fn nullable_scalars_are_boxed_only_where_declared() {
+        let ir = compile_source("?int a = 5; int b = 6; print(a ?? 0, b + 1);").unwrap();
+        let main = main_ir(&ir);
+        // One box, for a; b stays a plain i64.
+        assert_eq!(main.matches("call nonnull ptr @qiq_object_new(i64 2, i64").count(), 2, "{main}");
+        assert!(ir.contains("@qiq_box_classes = unnamed_addr constant [4 x i64]"), "{ir}");
+        // A program without nullable scalars allocates no boxes.
+        let plain = compile_source("int b = 6; print(b + 1);").unwrap();
+        assert!(!main_ir(&plain).contains("qiq_object_new"));
     }
 
     #[test]

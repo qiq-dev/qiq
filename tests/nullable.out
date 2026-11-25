@@ -1,0 +1,15 @@
+5 null 0.5 null 200
+count=5, missing=null null
+true true true false true
+5 5
+age unknown next year: 42
+big 10
+true 6
+10 4 true 2
+5 null 0 4 9
+null 0
+{"ada" => 10, "lin" => null} -1 -1
+{"sensor":"north","value":21.5,"retries":0} [3,null,7,null]
+south null 3
+[1, null]
+[3, -1, 7, -1]

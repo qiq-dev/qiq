@@ -61,7 +61,58 @@ PNG signature
 <p>A <code>string</code> is UTF-8 text and a <code>char</code> is one Unicode character. See <a href="strings.html">Strings and chars</a>.</p>
 
 <h2>null</h2>
-<p><code>null</code> is what a <code>void</code> function call evaluates to (see <a href="functions.html">Functions</a>). It can be stored wherever a string, char, array, map, or object is expected, meaning "no value", but not in an <code>int</code>, <code>double</code>, <code>bool</code>, or <code>byte</code>. Strings, arrays, maps, and objects that haven't been given a value, such as the elements of <code>new string[3]</code>, are null too. Using a null value throws <code>RuntimeException</code>; test for it with <code>== null</code> (see <a href="operators.html">Operators</a> and <a href="variables.html">Variables</a>).</p>
+<p><code>null</code> is what a <code>void</code> function call evaluates to (see <a href="functions.html">Functions</a>). It can be stored wherever a string, char, array, map, or object is expected, meaning "no value", but not in an <code>int</code>, <code>double</code>, <code>bool</code>, or <code>byte</code>: for those, use their <a href="#nullable">nullable forms</a>, such as <code>?int</code>. Strings, arrays, maps, and objects that haven't been given a value, such as the elements of <code>new string[3]</code>, are null too. Using a null value throws <code>RuntimeException</code>; test for it with <code>== null</code> (see <a href="operators.html">Operators</a> and <a href="variables.html">Variables</a>).</p>
+
+<h2 id="nullable">Nullable scalars: ?int, ?double, ?bool, ?byte</h2>
+<p>Writing <code>?</code> before <code>int</code>, <code>double</code>, <code>bool</code>, or <code>byte</code> makes a type that holds that scalar or <code>null</code>: an optional field, a lookup that may find nothing, or a number from JSON or a database that may be missing. A plain value converts to its nullable type automatically, so an <code>int</code> can be assigned or passed wherever an <code>?int</code> is expected.</p>
+
+```qiq
+?int age = null;
+?double score = 9.5;
+print(age, score, age == null, score == 9.5);
+
+age = 41;
+int next = (age ?? 0) + 1;
+print(next);
+```
+```output
+null 9.5 true true
+42
+```
+
+<p>A nullable value can be compared with <code>==</code> and <code>!=</code> (with <code>null</code>, with its scalar, or with another value of the same nullable type), printed, put in strings and f-strings (as <code>null</code> when it's null), and stored in arrays, maps, and properties. <code>json_encode</code> writes it as its value or <code>null</code>, and <code>json_decode</code> accepts either. Everything else, such as arithmetic and <code>&lt;</code>, needs the scalar: give a fallback with <code>??</code>, or check for null first.</p>
+
+<h3>Checking for null</h3>
+<p>After a check, the compiler knows the variable isn't null, and treats it as its scalar where the check holds:</p>
+<ul>
+<li>inside <code>if (x != null) { ... }</code>, and in the <code>else</code> of <code>if (x == null)</code>;</li>
+<li>after <code>if (x == null) { return; }</code> (or <code>throw</code>, <code>break</code>, or <code>continue</code>), for the rest of the block;</li>
+<li>on the right of <code>x != null &amp;&amp; ...</code> and <code>x == null || ...</code>, and in the branches of <code>x != null ? ... : ...</code>.</li>
+</ul>
+
+```qiq
+function describe(?int age): string {
+    if (age == null) {
+        return "unknown";
+    }
+    return to_string(age + 1);
+}
+
+?int[] readings = [3, null, 7];
+int total = 0;
+foreach (readings as reading) {
+    if (reading != null && reading > 2) {
+        total += reading;
+    }
+}
+print(describe(null), describe(41), total);
+```
+```output
+unknown 42 10
+```
+
+<p>This works for local variables and parameters that the checked code doesn't assign to, and that no anonymous function captures (either could make them null again). For a property, copy it into a variable first. Using a nullable value unchecked is a compile error that says how to fix it: <code>'+' requires two ints or two doubles, or strings and chars to concatenate; found ?int and int; a ?int may be null: check it with != null first (then it's int there), or give a fallback with ??</code>.</p>
+<p>Strings, chars, arrays, maps, and objects can already be null, so <code>?string</code> and <code>?User</code> are errors: write <code>string</code> and <code>User</code>. Map keys can't be nullable.</p>
 
 <h2>Arrays, maps, objects, and functions</h2>
 <p>Arrays, maps, objects, and function values are references: assigning one to another variable, or passing it to a function, shares the same underlying value rather than copying it.</p>
