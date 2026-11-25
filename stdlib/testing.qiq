@@ -182,6 +182,9 @@ function __testing_run(string name, function(T): void test): void {
     } catch (Exception e) {
         status = "FAIL";
         reason = f"uncaught {e::class}: {e->getMessage()}";
+        if (e->getLine() > 0) {
+            reason = f"{e->getFile()}:{e->getLine()}: {reason}";
+        }
     }
     string time = sprintf("%.2fs", to_double(hrtime() - start) / 1000000000.0);
     if (status == "PASS") {

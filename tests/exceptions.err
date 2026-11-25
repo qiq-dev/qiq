@@ -1,1 +1,1 @@
-qiq: uncaught ConfigException: nobody catches this
+qiq: tests/exceptions.qiq:168: uncaught ConfigException: nobody catches this

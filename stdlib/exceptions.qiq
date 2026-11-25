@@ -29,6 +29,10 @@
 class Exception {
     protected string message;
     protected int code;
+    // Where the exception was thrown: the first place in the program's own
+    // code (not the standard library's) it was thrown from or passed through.
+    protected string file = "";
+    protected int line = 0;
 
     function __construct(string message = "", int code = 0) {
         this->message = message;
@@ -41,6 +45,25 @@ class Exception {
 
     function getCode(): int {
         return this->code;
+    }
+
+    // The source file the exception was thrown in, or "" if unknown.
+    function getFile(): string {
+        return this->file;
+    }
+
+    // The line it was thrown on, or 0 if unknown.
+    function getLine(): int {
+        return this->line;
+    }
+
+    // Called by compiled code wherever the exception is thrown or passes
+    // through the program's own code; only the first place counts.
+    function __locate(string file, int line): void {
+        if (this->line == 0) {
+            this->file = file;
+            this->line = line;
+        }
     }
 }
 

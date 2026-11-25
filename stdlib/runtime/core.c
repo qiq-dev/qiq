@@ -132,13 +132,18 @@ _Noreturn void qiq_throwf(QiqExceptionKind kind, const char *format, ...) {
     longjmp(*guard, 1);
 }
 
-// Called by `main` when an exception reaches the top level.
-_Noreturn void qiq_uncaught(const char *class_name, const char *message) {
+// Called by `main` when an exception reaches the top level, with where it
+// was thrown (file is "" and line 0 when that isn't known).
+_Noreturn void qiq_uncaught(const char *class_name, const char *message, const char *file, int64_t line) {
     fflush(stdout);
+    fputs("qiq: ", stderr);
+    if (file != NULL && file[0] != 0 && line > 0) {
+        fprintf(stderr, "%s:%lld: ", file, (long long)line);
+    }
     if (message != NULL && message[0] != 0) {
-        fprintf(stderr, "qiq: uncaught %s: %s\n", class_name, message);
+        fprintf(stderr, "uncaught %s: %s\n", class_name, message);
     } else {
-        fprintf(stderr, "qiq: uncaught %s\n", class_name);
+        fprintf(stderr, "uncaught %s\n", class_name);
     }
     exit(1);
 }

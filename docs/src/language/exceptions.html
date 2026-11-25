@@ -83,14 +83,14 @@ caught a RuntimeException
 ```
 
 <h2>Uncaught exceptions</h2>
-<p>An exception that is never caught stops the program with exit status 1 and a message on standard error:</p>
+<p>An exception that is never caught stops the program with exit status 1 and a message on standard error, giving the file and line it was thrown from:</p>
 
 ```text
-qiq: uncaught ConfigException: port is empty
+qiq: config.qiq:12: uncaught ConfigException: port is empty
 ```
 
 <h2>Exception classes</h2>
-<p>The built-in exception classes are available in every file without an import. Your own exceptions extend one of them and inherit the constructor <code>__construct(string message = "", int code = 0)</code> and the methods <code>getMessage()</code> and <code>getCode()</code>. The full hierarchy is listed in <a href="exception-classes.html">Exception classes</a>.</p>
+<p>The built-in exception classes are available in every file without an import. Your own exceptions extend one of them and inherit the constructor <code>__construct(string message = "", int code = 0)</code> and the methods <code>getMessage()</code>, <code>getCode()</code>, <code>getFile()</code> and <code>getLine()</code>. The full hierarchy is listed in <a href="exception-classes.html">Exception classes</a>.</p>
 
 ```qiq
 class ApiException extends Exception {}

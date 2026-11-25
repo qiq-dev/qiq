@@ -1,1 +1,1 @@
-qiq: uncaught KeyNotFoundException: map key not found
+qiq: tests/map_missing_key.qiq:5: uncaught KeyNotFoundException: map key not found

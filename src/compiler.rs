@@ -3981,7 +3981,7 @@ impl Emitter {
             ir.push_str(&self.emit_dispatch_table(*owner, method_name, Some(supplied)));
         }
         ir.push_str(
-            "\ndeclare i32 @printf(ptr, ...)\ndeclare i32 @strcmp(ptr, ptr)\ndeclare ptr @calloc(i64, i64)\ndeclare ptr @qiq_map_new(i32, i32)\ndeclare void @qiq_retain(ptr)\ndeclare void @qiq_release(ptr)\ndeclare ptr @qiq_object_new(i64, i64)\ndeclare void @qiq_map_set(ptr, i64, i64)\ndeclare i64 @qiq_map_get(ptr, i64)\ndeclare i64 @qiq_map_iteration_end(ptr)\ndeclare i64 @qiq_map_version(ptr)\ndeclare zeroext i1 @qiq_map_entry_live(ptr, i64, i64)\ndeclare zeroext i1 @qiq_map_find(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_map_has(ptr, i64)\ndeclare void @qiq_map_remove(ptr, i64)\ndeclare ptr @qiq_map_keys(ptr, i64, i32)\ndeclare ptr @qiq_map_values(ptr, i64, i32)\ndeclare zeroext i1 @qiq_map_contains_value(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_values_equal(ptr, ptr, ptr)\ndeclare i64 @qiq_map_key_at(ptr, i64)\ndeclare i64 @qiq_map_value_at(ptr, i64)\ndeclare ptr @qiq_map_merge(ptr, ptr)\ndeclare ptr @qiq_array_sort(ptr, i64, i32, i32, i1 zeroext)\ndeclare ptr @qiq_array_usort(ptr, i64, i32, ptr, ptr)\ndeclare i64 @qiq_array_index_of(ptr, i64, ptr, i64)\ndeclare ptr @qiq_array_slice(ptr, i64, i32, i64, i64, i1 zeroext)\ndeclare ptr @qiq_array_reverse(ptr, i64, i32)\ndeclare ptr @qiq_array_unique(ptr, i64, i32, ptr)\ndeclare i64 @qiq_array_sum_int(ptr)\ndeclare double @qiq_array_sum_double(ptr)\ndeclare ptr @qiq_map_filter_keys(ptr, ptr, i1 zeroext)\ndeclare ptr @qiq_map_filter_entries(ptr, ptr, ptr, i1 zeroext)\ndeclare ptr @qiq_map_flip(ptr, i32, i32)\ndeclare i64 @qiq_string_len(ptr)\ndeclare ptr @qiq_sprintf(ptr, ptr, ptr, i64)\ndeclare void @qiq_bind_values(ptr, ptr, i64)\ndeclare ptr @qiq_json_encode(ptr, i64, i1 zeroext)\ndeclare i64 @qiq_json_decode(ptr, ptr)\ndeclare i64 @qiq_csv_decode(ptr, ptr, ptr)\ndeclare ptr @qiq_csv_encode(ptr, ptr, ptr, ptr)\ndeclare i32 @qiq_string_equality(ptr, ptr)\ndeclare i32 @qiq_string_compare(ptr, ptr)\ndeclare ptr @qiq_string_char_at(ptr, i64)\ndeclare ptr @qiq_string_concat(ptr, ptr)\ndeclare i64 @qiq_int_divide(i64, i64)\ndeclare i64 @qiq_int_modulo(i64, i64)\ndeclare i64 @qiq_int_power(i64, i64)\ndeclare i64 @qiq_int_power_unchecked(i64, i64)\ndeclare i64 @qiq_int_shift_left(i64, i64)\ndeclare i64 @qiq_int_shift_right(i64, i64)\ndeclare double @llvm.pow.f64(double, double)\ndeclare double @llvm.fabs.f64(double)\ndeclare i64 @qiq_math_min_int(ptr)\ndeclare i64 @qiq_math_max_int(ptr)\ndeclare double @qiq_math_min_double(ptr)\ndeclare double @qiq_math_max_double(ptr)\ndeclare i64 @qiq_math_clamp_int(i64, i64, i64)\ndeclare double @qiq_math_clamp_double(double, double, double)\ndeclare void @qiq_uncaught(ptr, ptr)\ndeclare ptr @qiq_array_new(i64, i64, i32)\ndeclare void @qiq_set_arguments(i32, ptr)\ndeclare void @qiq_check_callable(ptr)\ndeclare void @qiq_array_push(ptr, i64, i64)\ndeclare i64 @qiq_range_plan(i64, i64, i64, i1 zeroext, ptr)\ndeclare ptr @qiq_range_int(i64, i64, i64, i1 zeroext)\ndeclare ptr @qiq_range_count(i64)\ndeclare ptr @qiq_range_double(double, double, double, i1 zeroext)\ndeclare ptr @qiq_range_char(ptr, ptr, i64, i1 zeroext)\ndeclare i64 @qiq_array_pop(ptr, i64)\ndeclare i64 @qiq_array_shift(ptr, i64)\ndeclare void @qiq_array_insert(ptr, i64, i64, i64)\ndeclare ptr @qiq_array_splice(ptr, i64, i64, i64, i1 zeroext, ptr)\ndeclare i64 @qiq_array_length(ptr)\ndeclare i64 @qiq_len_string(ptr)\ndeclare i64 @qiq_len_array(ptr)\ndeclare i64 @qiq_len_map(ptr)\ndeclare void @qiq_array_check_index(ptr, i64)\ndeclare void @qiq_print_value(ptr, i64)\ndeclare ptr @qiq_describe_value(ptr, i64)\ndeclare void @qiq_print_space()\ndeclare void @qiq_print_newline()\ndeclare i64 @qiq_double_to_int(double)\ndeclare zeroext i8 @qiq_int_to_byte(i64)\ndeclare i64 @qiq_string_to_int(ptr)\ndeclare double @qiq_string_to_double(ptr)\ndeclare ptr @qiq_int_to_string(i64)\ndeclare ptr @qiq_double_to_string(double)\n",
+            "\ndeclare i32 @printf(ptr, ...)\ndeclare i32 @strcmp(ptr, ptr)\ndeclare ptr @calloc(i64, i64)\ndeclare ptr @qiq_map_new(i32, i32)\ndeclare void @qiq_retain(ptr)\ndeclare void @qiq_release(ptr)\ndeclare ptr @qiq_object_new(i64, i64)\ndeclare void @qiq_map_set(ptr, i64, i64)\ndeclare i64 @qiq_map_get(ptr, i64)\ndeclare i64 @qiq_map_iteration_end(ptr)\ndeclare i64 @qiq_map_version(ptr)\ndeclare zeroext i1 @qiq_map_entry_live(ptr, i64, i64)\ndeclare zeroext i1 @qiq_map_find(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_map_has(ptr, i64)\ndeclare void @qiq_map_remove(ptr, i64)\ndeclare ptr @qiq_map_keys(ptr, i64, i32)\ndeclare ptr @qiq_map_values(ptr, i64, i32)\ndeclare zeroext i1 @qiq_map_contains_value(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_values_equal(ptr, ptr, ptr)\ndeclare i64 @qiq_map_key_at(ptr, i64)\ndeclare i64 @qiq_map_value_at(ptr, i64)\ndeclare ptr @qiq_map_merge(ptr, ptr)\ndeclare ptr @qiq_array_sort(ptr, i64, i32, i32, i1 zeroext)\ndeclare ptr @qiq_array_usort(ptr, i64, i32, ptr, ptr)\ndeclare i64 @qiq_array_index_of(ptr, i64, ptr, i64)\ndeclare ptr @qiq_array_slice(ptr, i64, i32, i64, i64, i1 zeroext)\ndeclare ptr @qiq_array_reverse(ptr, i64, i32)\ndeclare ptr @qiq_array_unique(ptr, i64, i32, ptr)\ndeclare i64 @qiq_array_sum_int(ptr)\ndeclare double @qiq_array_sum_double(ptr)\ndeclare ptr @qiq_map_filter_keys(ptr, ptr, i1 zeroext)\ndeclare ptr @qiq_map_filter_entries(ptr, ptr, ptr, i1 zeroext)\ndeclare ptr @qiq_map_flip(ptr, i32, i32)\ndeclare i64 @qiq_string_len(ptr)\ndeclare ptr @qiq_sprintf(ptr, ptr, ptr, i64)\ndeclare void @qiq_bind_values(ptr, ptr, i64)\ndeclare ptr @qiq_json_encode(ptr, i64, i1 zeroext)\ndeclare i64 @qiq_json_decode(ptr, ptr)\ndeclare i64 @qiq_csv_decode(ptr, ptr, ptr)\ndeclare ptr @qiq_csv_encode(ptr, ptr, ptr, ptr)\ndeclare i32 @qiq_string_equality(ptr, ptr)\ndeclare i32 @qiq_string_compare(ptr, ptr)\ndeclare ptr @qiq_string_char_at(ptr, i64)\ndeclare ptr @qiq_string_concat(ptr, ptr)\ndeclare i64 @qiq_int_divide(i64, i64)\ndeclare i64 @qiq_int_modulo(i64, i64)\ndeclare i64 @qiq_int_power(i64, i64)\ndeclare i64 @qiq_int_power_unchecked(i64, i64)\ndeclare i64 @qiq_int_shift_left(i64, i64)\ndeclare i64 @qiq_int_shift_right(i64, i64)\ndeclare double @llvm.pow.f64(double, double)\ndeclare double @llvm.fabs.f64(double)\ndeclare i64 @qiq_math_min_int(ptr)\ndeclare i64 @qiq_math_max_int(ptr)\ndeclare double @qiq_math_min_double(ptr)\ndeclare double @qiq_math_max_double(ptr)\ndeclare i64 @qiq_math_clamp_int(i64, i64, i64)\ndeclare double @qiq_math_clamp_double(double, double, double)\ndeclare void @qiq_uncaught(ptr, ptr, ptr, i64)\ndeclare ptr @qiq_array_new(i64, i64, i32)\ndeclare void @qiq_set_arguments(i32, ptr)\ndeclare void @qiq_check_callable(ptr)\ndeclare void @qiq_array_push(ptr, i64, i64)\ndeclare i64 @qiq_range_plan(i64, i64, i64, i1 zeroext, ptr)\ndeclare ptr @qiq_range_int(i64, i64, i64, i1 zeroext)\ndeclare ptr @qiq_range_count(i64)\ndeclare ptr @qiq_range_double(double, double, double, i1 zeroext)\ndeclare ptr @qiq_range_char(ptr, ptr, i64, i1 zeroext)\ndeclare i64 @qiq_array_pop(ptr, i64)\ndeclare i64 @qiq_array_shift(ptr, i64)\ndeclare void @qiq_array_insert(ptr, i64, i64, i64)\ndeclare ptr @qiq_array_splice(ptr, i64, i64, i64, i1 zeroext, ptr)\ndeclare i64 @qiq_array_length(ptr)\ndeclare i64 @qiq_len_string(ptr)\ndeclare i64 @qiq_len_array(ptr)\ndeclare i64 @qiq_len_map(ptr)\ndeclare void @qiq_array_check_index(ptr, i64)\ndeclare void @qiq_print_value(ptr, i64)\ndeclare ptr @qiq_describe_value(ptr, i64)\ndeclare void @qiq_print_space()\ndeclare void @qiq_print_newline()\ndeclare i64 @qiq_double_to_int(double)\ndeclare zeroext i8 @qiq_int_to_byte(i64)\ndeclare i64 @qiq_string_to_int(ptr)\ndeclare double @qiq_string_to_double(ptr)\ndeclare ptr @qiq_int_to_string(i64)\ndeclare ptr @qiq_double_to_string(double)\n",
         );
         ir.push_str(&extern_declarations);
         ir.push('\n');
@@ -3996,7 +3996,7 @@ impl Emitter {
         }
         // An exception reached the top level: report it and exit.
         ir.push_str(&format!(
-            "unwind:\n  %uncaught = load ptr, ptr @qiq_pending_exception, align 8\n  %uncaught.class = load i64, ptr %uncaught, align 8\n  %uncaught.slot = getelementptr inbounds ptr, ptr @qiq_class_names, i64 %uncaught.class\n  %uncaught.name = load ptr, ptr %uncaught.slot, align 8\n  %uncaught.message = call ptr @qiq_{}_getMessage(ptr %uncaught)\n  call void @qiq_uncaught(ptr %uncaught.name, ptr %uncaught.message)\n  unreachable\n}}\n",
+            "unwind:\n  %uncaught = load ptr, ptr @qiq_pending_exception, align 8\n  %uncaught.class = load i64, ptr %uncaught, align 8\n  %uncaught.slot = getelementptr inbounds ptr, ptr @qiq_class_names, i64 %uncaught.class\n  %uncaught.name = load ptr, ptr %uncaught.slot, align 8\n  %uncaught.message = call ptr @qiq_{0}_getMessage(ptr %uncaught)\n  %uncaught.file = call ptr @qiq_{0}_getFile(ptr %uncaught)\n  %uncaught.line = call i64 @qiq_{0}_getLine(ptr %uncaught)\n  call void @qiq_uncaught(ptr %uncaught.name, ptr %uncaught.message, ptr %uncaught.file, i64 %uncaught.line)\n  unreachable\n}}\n",
             exception_symbol
         ));
         // Each class's name as a string literal, by class id, for
@@ -4707,6 +4707,9 @@ impl Emitter {
                         }
                     }
                     let operand = self.take(&value, &mut body);
+                    if let Some(locate) = self.locate_exception(&operand) {
+                        body.push_str(&locate);
+                    }
                     let (handler, cleanup) = self.handler_cleanup();
                     body.push_str(&cleanup);
                     body.push_str(&format!(
@@ -9510,7 +9513,11 @@ impl Emitter {
         let (handler, cleanup) = self.handler_cleanup();
         let id = self.next_label;
         self.next_label += 1;
-        if cleanup.is_empty() {
+        if let Some(locate) = self.locate_exception(&format!("%pending{id}")) {
+            body.push_str(&format!(
+                "  %pending{id} = load ptr, ptr @qiq_pending_exception, align 8\n  %thrown{id} = icmp ne ptr %pending{id}, null\n  br i1 %thrown{id}, label %locate{id}, label %ok{id}\nlocate{id}:\n{locate}{cleanup}  br label %{handler}\nok{id}:\n"
+            ));
+        } else if cleanup.is_empty() {
             body.push_str(&format!(
                 "  %pending{id} = load ptr, ptr @qiq_pending_exception, align 8\n  %thrown{id} = icmp ne ptr %pending{id}, null\n  br i1 %thrown{id}, label %{handler}, label %ok{id}\nok{id}:\n"
             ));
@@ -9519,6 +9526,21 @@ impl Emitter {
                 "  %pending{id} = load ptr, ptr @qiq_pending_exception, align 8\n  %thrown{id} = icmp ne ptr %pending{id}, null\n  br i1 %thrown{id}, label %cleanup{id}, label %ok{id}\ncleanup{id}:\n{cleanup}  br label %{handler}\nok{id}:\n"
             ));
         }
+    }
+
+    /// The call that records the statement being compiled as where the
+    /// exception in `exception` was thrown, unless it already has a place
+    /// (Exception::__locate). None in the standard library, whose exceptions
+    /// are placed where the program's own code called it.
+    fn locate_exception(&mut self, exception: &str) -> Option<String> {
+        if self.module_is_stdlib.get(self.current_module).copied().unwrap_or(true) {
+            return None;
+        }
+        let (line, _) = self.position?;
+        let symbol = self.classes[self.exception_class().ok()? as usize].symbol.clone();
+        let file = self.module_paths.get(self.current_module).cloned().unwrap_or_default();
+        let file = self.string_literal(file.as_bytes());
+        Some(format!("  call void @qiq_{symbol}___locate(ptr {exception}, ptr {file}, i64 {line})\n"))
     }
 
     /// The innermost handler, and the releases an exception going there
@@ -9739,8 +9761,13 @@ impl Emitter {
             if kind > 0 {
                 cases.push_str(&format!(" i32 {kind}, label %kind{kind}"));
             }
+            let defaults = if self.has_property_defaults(class_id) {
+                format!("  call void @qiq_defaults.{}(ptr %object{kind})\n", self.classes[class_id as usize].symbol)
+            } else {
+                String::new()
+            };
             blocks.push_str(&format!(
-                "kind{kind}:\n  %object{kind} = call nonnull ptr @qiq_object_new(i64 {field_count}, i64 {class_id})\n  call void @qiq_{}___construct(ptr %object{kind}, ptr %message, i64 0)\n  store ptr %object{kind}, ptr @qiq_pending_exception, align 8\n  ret void\n",
+                "kind{kind}:\n  %object{kind} = call nonnull ptr @qiq_object_new(i64 {field_count}, i64 {class_id})\n{defaults}  call void @qiq_{}___construct(ptr %object{kind}, ptr %message, i64 0)\n  store ptr %object{kind}, ptr @qiq_pending_exception, align 8\n  ret void\n",
                 self.classes[owner as usize].symbol
             ));
         }
@@ -13080,7 +13107,8 @@ mod tests {
         assert!(ir.contains("define i64 @max(i64 %arg0, i64 %arg1)"));
         assert!(ir.contains("%v5 = load i64, ptr %v0, align 8\n  ret i64 %v5"));
         assert!(ir.contains("%v6 = load i64, ptr %v1, align 8\n  ret i64 %v6"));
-        assert!(!ir.contains("if.end0:"));
+        let max = &ir[ir.find("define i64 @max(").unwrap()..];
+        assert!(!max[..max.find("\n}").unwrap()].contains("if.end0:"));
     }
 
     #[test]
@@ -13775,8 +13803,9 @@ mod tests {
     #[test]
     fn exceptions_release_temporaries_of_code_inside_the_handler() {
         let main = main_ir(&compile_source("function f(string s): int { return 1; } int n = 0; try { n = f(\"a\" + \"b\"); } catch (Exception e) { n = 2; }").unwrap()).to_string();
-        assert!(main.contains("label %cleanup"), "{main}");
-        let cleanup = &main[main.find("\ncleanup").unwrap()..];
+        // The exception is placed at the call, then the temporaries released.
+        let cleanup = &main[main.find("\nlocate").unwrap()..];
+        assert!(cleanup.contains("call void @qiq_stdlib.exceptions.Exception___locate(ptr %pending"), "{main}");
         assert!(cleanup.contains("call void @qiq_release(ptr %v") && cleanup.contains("br label %try.dispatch0"), "{main}");
     }
 
@@ -14828,10 +14857,12 @@ mod tests {
     fn calls_are_followed_by_exception_checks() {
         let ir = compile_source("function f(): int { return 1; } print(f());").unwrap();
         let main = main_ir(&ir);
-        assert!(main.contains("%v0 = call i64 @f()\n  %pending0 = load ptr, ptr @qiq_pending_exception, align 8\n  %thrown0 = icmp ne ptr %pending0, null\n  br i1 %thrown0, label %unwind, label %ok0\nok0:\n"), "{main}");
+        // An exception is placed at the call (line 1 of the source string) on its way to the handler.
+        assert!(main.contains("%v0 = call i64 @f()\n  %pending0 = load ptr, ptr @qiq_pending_exception, align 8\n  %thrown0 = icmp ne ptr %pending0, null\n  br i1 %thrown0, label %locate0, label %ok0\nlocate0:\n  call void @qiq_stdlib.exceptions.Exception___locate(ptr %pending0, ptr getelementptr"), "{main}");
+        assert!(main.contains(", i64 1)\n  br label %unwind\nok0:\n"), "{main}");
         // main reports uncaught exceptions; other functions return to their caller.
         assert!(main.contains("unwind:\n  %uncaught = load ptr, ptr @qiq_pending_exception"));
-        assert!(main.contains("call void @qiq_uncaught(ptr %uncaught.name, ptr %uncaught.message)\n  unreachable"));
+        assert!(main.contains("call void @qiq_uncaught(ptr %uncaught.name, ptr %uncaught.message, ptr %uncaught.file, i64 %uncaught.line)\n  unreachable"));
         assert!(ir.contains("define i64 @f() {\nentry:\n  ret i64 1\nunwind:\n  ret i64 0\n}"), "{ir}");
         // Runtime calls that can fail are checked too; plain arithmetic is not.
         let runtime = compile_source("int a = 1; int b = 2; print(a / b); print(a + b);").unwrap();
