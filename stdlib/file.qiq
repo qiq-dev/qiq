@@ -39,6 +39,95 @@ extern function file_get_bytes(string path): byte[];
 extern function file_put_bytes(string path, byte[] data, bool append = false): int;
 
 // ---------------------------------------------------------------------------
+// Paths. These work on the text alone, without looking at the disk (except
+// realpath), with "/" between the parts.
+
+// The last part of the path, ignoring trailing slashes: "c" for "/a/b/c/";
+// "/" for "/", and "." for "".
+extern function basename(string path): string;
+
+// Everything but the last part, cleaned as path_clean does: "/a/b" for
+// "/a/b/c/", and "." for "c". path_join(dirname(p), basename(p)) is
+// path_clean(p).
+extern function dirname(string path): string;
+
+// The last part's extension, from its last ".": ".gz" for "backup.tar.gz",
+// and "" for "README", or a name that starts with its only dot, ".bashrc".
+extern function path_ext(string path): string;
+
+// The parts joined with "/", then cleaned; empty parts are skipped, and ""
+// when all of them are. An absolute part doesn't start the path again:
+// path_join("a", "/b") is "a/b".
+extern function path_join(string ...parts): string;
+
+// The shortest path to the same place, by the text alone: a single "/"
+// between parts, no "." parts, and each ".." removed with the part before
+// it. "a//b/./../c/" is "a/c", "/../x" is "/x", and "" is ".".
+extern function path_clean(string path): string;
+
+// Whether the path starts at the root, "/".
+extern function path_is_absolute(string path): bool;
+
+// A relative path that leads from `base` to `target`: "../c" from "a/b" to
+// "a/c", or "." when they're the same. Both are compared as text, so they
+// must both be absolute or both relative. Throws InvalidArgumentException
+// when there's no such path, as from ".." to "a".
+extern function path_rel(string base, string target): string;
+
+// The absolute path, with symbolic links, ".", and ".." resolved. The path
+// must exist.
+extern function realpath(string path): string;
+
+// ---------------------------------------------------------------------------
+// Directories and file operations
+
+// Creates the directory. With `recursive`, it also creates the missing
+// directories above it, and it's not an error if the directory exists.
+extern function mkdir(string path, bool recursive = false): void;
+
+// Removes the directory, which must be empty. With `recursive`, it removes
+// everything in it first; symbolic links inside are removed, not followed.
+extern function rmdir(string path, bool recursive = false): void;
+
+// Deletes a file. Directories are removed with rmdir.
+extern function unlink(string path): void;
+
+// Moves or renames a file or directory, replacing a file already at `to`.
+// Both must be on the same file system.
+extern function rename(string from, string to): void;
+
+// Copies a file's contents and permissions to `to`, replacing a file
+// already there.
+extern function copy(string from, string to): void;
+
+// The file's size in bytes.
+extern function filesize(string path): int;
+
+// When the file was last changed, as a timestamp (seconds since 1970) for
+// DateTime::fromTimestamp in std/time.
+extern function filemtime(string path): int;
+
+// The directory the program runs in, which relative paths start from.
+extern function getcwd(): string;
+
+// Makes `path` the directory the program runs in.
+extern function chdir(string path): void;
+
+// The directory for temporary files: $TMPDIR, or /tmp.
+extern function temp_dir(): string;
+
+// Creates a new, empty file in temp_dir() that only you can read and write,
+// named `prefix` and six random characters, and returns its path. Delete it
+// with unlink when you're done.
+extern function temp_file(string prefix = ""): string;
+
+// The paths that match a wildcard pattern, sorted: "*" matches any run of
+// characters within a part, "?" one character, and "[abc]" one of those.
+// Names starting with "." match only a pattern part that starts with ".".
+// [] when nothing matches.
+extern function glob(string pattern): string[];
+
+// ---------------------------------------------------------------------------
 // Open files. Functions whose names start with "__" are visible only inside
 // the standard library; programs use the File class below.
 

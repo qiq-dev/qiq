@@ -7,8 +7,12 @@ errors, examples (title, code, output: what the program prints, checked by
 """
 
 
-def param(name, type_, description, default=None):
-    return {"name": name, "type": type_, "description": description, "default": default}
+def param(name, type_, description, default=None, variadic=False):
+    """A parameter; a variadic one (`type ...name`) gives its element type."""
+    entry = {"name": name, "type": type_, "description": description, "default": default}
+    if variadic:
+        entry["variadic"] = True
+    return entry
 
 
 NULL_STRING = "<code>RuntimeException</code> if a string argument is <code>null</code> (for example an unset element of a <code>new string[n]</code> array)."
@@ -20,7 +24,7 @@ OVERVIEW = (
     "redeclared: declaring your own <code>substr</code> is a compile error. The rest is in modules that you "
     "import by name, like Go's packages:</p>\n"
     "<table><thead><tr><th>Import path</th><th>Contents</th></tr></thead><tbody>"
-    "<tr><td><code>std/file</code></td><td><a href=\"ref.files.html\">Files</a> and the <a href=\"class.file.html\">File</a> class</td></tr>"
+    "<tr><td><code>std/file</code></td><td><a href=\"ref.files.html\">Files</a> (reading and writing them, paths, and directories) and the <a href=\"class.file.html\">File</a> class</td></tr>"
     "<tr><td><code>std/time</code></td><td><a href=\"ref.datetime.html\">Date and time</a>, and the <a href=\"class.datetime.html\">DateTime</a> and <a href=\"class.duration.html\">Duration</a> classes</td></tr>"
     "<tr><td><code>std/os</code></td><td>The <a href=\"ref.program.html\">program</a>: arguments, exit status, environment, and running other commands</td></tr>"
     "<tr><td><code>std/memory</code></td><td><a href=\"function.gc-collect-cycles.html\">gc_collect_cycles</a></td></tr>"
@@ -440,8 +444,11 @@ FILES = {
     "slug": "files",
     "title": "Files",
     "intro": (
-        "Functions for reading and writing files and directories. Paths are relative to the directory the "
-        "program runs in, not to the source file. Failures throw exceptions; see "
+        "Functions for reading and writing files, working with paths, and managing directories. Paths are "
+        "relative to the directory the program runs in, not to the source file. The path functions "
+        "(<code>basename</code>, <code>dirname</code>, <code>path_ext</code>, <code>path_join</code>, "
+        "<code>path_clean</code>, <code>path_is_absolute</code>, and <code>path_rel</code>) work on the text "
+        "alone, with <code>/</code> between parts, and don't look at the disk. Failures throw exceptions; see "
         "<a href=\"exception-classes.html\">Exception classes</a>."
     ),
     "details": """<p>Text functions such as <code>file_get_contents</code> require UTF-8 content, because every qiq string is UTF-8. To read or write anything else, such as images or text in another encoding, use <code>file_get_bytes</code> and <code>file_put_bytes</code>.</p>
@@ -613,6 +620,257 @@ no config file, using defaults
                 }
             ],
             "see_also": ["file_get_bytes", "string_to_bytes"],
+        },
+        {
+            "name": "basename",
+            "purpose": "The last part of a path",
+            "params": [param("path", "string", "The path.")],
+            "returns": "string",
+            "description": "Gives the name at the end of <code>path</code>, ignoring trailing slashes. It works on the text alone and doesn't look at the disk.",
+            "return_description": "The last part: <code>c</code> for <code>/a/b/c/</code>. <code>/</code> for <code>/</code>, and <code>.</code> for an empty path.",
+            "errors": ["<code>RuntimeException</code> if <code>path</code> is <code>null</code>."],
+            "examples": [{"title": "Basic use", "code": 'print(basename("/home/ada/notes.txt"), basename("src/"), basename("/"));', "output": "notes.txt src /"}],
+            "notes": ["Unlike PHP's <code>basename</code>, there's no suffix parameter; take the extension off with <code>path_ext</code>."],
+            "see_also": ["dirname", "path_ext", "path_join"],
+        },
+        {
+            "name": "dirname",
+            "purpose": "A path without its last part",
+            "params": [param("path", "string", "The path.")],
+            "returns": "string",
+            "description": "Gives the directory part of <code>path</code>: everything before the last part, ignoring trailing slashes, cleaned as <code>path_clean</code> does. It works on the text alone.",
+            "return_description": "The directory: <code>/a/b</code> for <code>/a/b/c/</code>, <code>/</code> for <code>/a</code>, and <code>.</code> for a path with one part. <code>path_join(dirname(p), basename(p))</code> is <code>path_clean(p)</code>.",
+            "errors": ["<code>RuntimeException</code> if <code>path</code> is <code>null</code>."],
+            "examples": [{"title": "Basic use", "code": 'print(dirname("/home/ada/notes.txt"), dirname("src/main.qiq"), dirname("main.qiq"));', "output": "/home/ada src ."}],
+            "see_also": ["basename", "path_join", "path_clean"],
+        },
+        {
+            "name": "path_ext",
+            "purpose": "A path's file extension",
+            "params": [param("path", "string", "The path.")],
+            "returns": "string",
+            "description": "Gives the extension of the last part of <code>path</code>: from its last <code>.</code> to the end.",
+            "return_description": "The extension with its dot, such as <code>.gz</code> for <code>backup.tar.gz</code>; <code>\"\"</code> when there's none, or when the name's only dot is its first character, as in <code>.bashrc</code>.",
+            "errors": ["<code>RuntimeException</code> if <code>path</code> is <code>null</code>."],
+            "examples": [
+                {
+                    "title": "Basic use",
+                    "code": 'print(path_ext("photo.JPG"), path_ext("backup.tar.gz"));\nprint(len(path_ext("README")), len(path_ext(".bashrc")));',
+                    "output": ".JPG .gz\n0 0",
+                },
+                {
+                    "title": "The name without its extension",
+                    "code": 'string name = basename("docs/report.pdf");\nprint(substr(name, 0, len(name) - len(path_ext(name))));',
+                    "output": "report",
+                },
+            ],
+            "see_also": ["basename"],
+        },
+        {
+            "name": "path_join",
+            "purpose": "Join parts into one path",
+            "params": [param("parts", "string", "The parts, in order. Pass an array with <code>...parts</code>.", variadic=True)],
+            "returns": "string",
+            "description": "Joins the parts with <code>/</code> and cleans the result as <code>path_clean</code> does. Empty parts are skipped. An absolute part doesn't start the path again: <code>path_join(\"a\", \"/b\")</code> is <code>a/b</code>.",
+            "return_description": "The joined path, or <code>\"\"</code> when every part is empty (or there are none).",
+            "errors": ["<code>RuntimeException</code> if a part is <code>null</code>."],
+            "examples": [
+                {
+                    "title": "Basic use",
+                    "code": 'print(path_join("/var/www/", "assets", "logo.png"));\nprint(path_join("a/b", "../c"));\nstring[] parts = ["usr", "local", "bin"];\nprint(path_join(...parts));',
+                    "output": "/var/www/assets/logo.png\na/c\nusr/local/bin",
+                }
+            ],
+            "notes": ["Like Go's <code>filepath.Join</code>, and unlike Python's <code>os.path.join</code>, which starts again at an absolute part."],
+            "see_also": ["path_clean", "dirname", "basename"],
+        },
+        {
+            "name": "path_clean",
+            "purpose": "Simplify a path",
+            "params": [param("path", "string", "The path.")],
+            "returns": "string",
+            "description": "Gives the shortest path to the same place, by the text alone: one <code>/</code> between parts, no <code>.</code> parts, no trailing slash, and each <code>..</code> removed along with the part before it. At the root, <code>..</code> stays at the root; a relative path keeps the <code>..</code> parts it can't remove.",
+            "return_description": "The cleaned path; <code>.</code> for an empty one.",
+            "errors": ["<code>RuntimeException</code> if <code>path</code> is <code>null</code>."],
+            "examples": [{"title": "Basic use", "code": 'print(path_clean("a//b/./../c/"), path_clean("/../x"), path_clean("../../a"), path_clean(""));', "output": "a/c /x ../../a ."}],
+            "notes": ["The text alone decides, so <code>a/..</code> becomes <code>.</code> even when <code>a</code> is a symbolic link elsewhere. To resolve links, use <code>realpath</code>."],
+            "see_also": ["path_join", "realpath", "path_rel"],
+        },
+        {
+            "name": "path_is_absolute",
+            "purpose": "Check whether a path starts at the root",
+            "params": [param("path", "string", "The path.")],
+            "returns": "bool",
+            "description": "Checks whether <code>path</code> starts with <code>/</code>.",
+            "return_description": "<code>true</code> for an absolute path; <code>false</code> for a relative one, which starts from the current directory.",
+            "errors": ["<code>RuntimeException</code> if <code>path</code> is <code>null</code>."],
+            "examples": [{"title": "Basic use", "code": 'print(path_is_absolute("/etc/hosts"), path_is_absolute("notes.txt"));', "output": "true false"}],
+            "see_also": ["realpath", "getcwd"],
+        },
+        {
+            "name": "path_rel",
+            "purpose": "The relative path from one path to another",
+            "params": [param("base", "string", "Where the relative path starts."), param("target", "string", "Where it leads.")],
+            "returns": "string",
+            "description": "Gives a relative path that leads from <code>base</code> to <code>target</code>, so that <code>path_join(base, path_rel(base, target))</code> is <code>path_clean(target)</code>. Only the text is compared.",
+            "return_description": "The relative path, such as <code>../c</code> from <code>a/b</code> to <code>a/c</code>; <code>.</code> when they're the same.",
+            "errors": [
+                "<code>InvalidArgumentException</code> if one path is absolute and the other relative, or if <code>base</code> climbs above where it starts (as <code>..</code> does), so no relative path leads from it.",
+                "<code>RuntimeException</code> if a path is <code>null</code>.",
+            ],
+            "examples": [{"title": "Basic use", "code": 'print(path_rel("/srv/app", "/srv/app/static/site.css"));\nprint(path_rel("/srv/app/static", "/srv/data"));', "output": "static/site.css\n../../data"}],
+            "see_also": ["path_join", "realpath"],
+        },
+        {
+            "name": "realpath",
+            "purpose": "The absolute path, with links resolved",
+            "params": [param("path", "string", "An existing file or directory.")],
+            "returns": "string",
+            "description": "Resolves <code>path</code> on the disk: makes it absolute from the current directory, and resolves <code>.</code>, <code>..</code>, and symbolic links.",
+            "return_description": "The absolute path.",
+            "errors": FILE_ERRORS + ["<code>InvalidUtf8Exception</code> if the path isn't valid UTF-8."],
+            "examples": [{"title": "Basic use", "code": 'mkdir("site");\nprint(realpath("site/..") == getcwd(), path_is_absolute(realpath("site")));', "output": "true true"}],
+            "see_also": ["path_clean", "getcwd"],
+        },
+        {
+            "name": "mkdir",
+            "purpose": "Create a directory",
+            "params": [
+                param("path", "string", "The directory to create."),
+                param("recursive", "bool", "When <code>true</code>, also create the missing directories above it, and don't fail if it already exists.", "false"),
+            ],
+            "returns": "void",
+            "description": "Creates the directory <code>path</code>, which anyone can read and enter (as the system's umask allows).",
+            "return_description": "Nothing.",
+            "errors": FILE_ERRORS + ["<code>IOException</code> if the path already exists (without <code>recursive</code>), or exists as a file."],
+            "examples": [{"title": "Creating nested directories", "code": 'mkdir("build/assets/img", recursive: true);\nmkdir("build/assets/img", recursive: true);\nprint(is_dir("build/assets/img"));', "output": "true"}],
+            "see_also": ["rmdir", "is_dir", "temp_dir"],
+        },
+        {
+            "name": "rmdir",
+            "purpose": "Remove a directory",
+            "params": [
+                param("path", "string", "The directory to remove."),
+                param("recursive", "bool", "When <code>true</code>, remove everything in it first.", "false"),
+            ],
+            "returns": "void",
+            "description": "Removes the directory <code>path</code>. Without <code>recursive</code> it must be empty. With it, the files and directories inside are removed too; symbolic links inside are removed, not followed.",
+            "return_description": "Nothing.",
+            "errors": FILE_ERRORS + ["<code>IOException</code> if the directory isn't empty (without <code>recursive</code>), or <code>path</code> isn't a directory."],
+            "examples": [{"title": "Removing a directory tree", "code": 'mkdir("out/logs", recursive: true);\nint n = file_put_contents("out/logs/today.log", "ok");\nrmdir("out", recursive: true);\nprint(file_exists("out"));', "output": "false"}],
+            "notes": ["<code>recursive</code> deletes without asking; check the path you pass it."],
+            "see_also": ["mkdir", "unlink"],
+        },
+        {
+            "name": "unlink",
+            "purpose": "Delete a file",
+            "params": [param("path", "string", "The file to delete.")],
+            "returns": "void",
+            "description": "Deletes the file (or symbolic link) at <code>path</code>. A program that still has the file open can go on using it.",
+            "return_description": "Nothing.",
+            "errors": FILE_ERRORS + ["<code>IOException</code> if <code>path</code> is a directory; remove those with <code>rmdir</code>."],
+            "examples": [{"title": "Basic use", "code": 'int n = file_put_contents("old.txt", "x");\nunlink("old.txt");\nprint(file_exists("old.txt"));', "output": "false"}],
+            "see_also": ["rmdir", "rename"],
+        },
+        {
+            "name": "rename",
+            "purpose": "Move or rename a file or directory",
+            "params": [param("from", "string", "The file or directory to move."), param("to", "string", "Its new path.")],
+            "returns": "void",
+            "description": "Moves <code>from</code> to <code>to</code> in one step, replacing a file already at <code>to</code>. Writing a new file and renaming it over the old one replaces a file so that readers never see it half written.",
+            "return_description": "Nothing.",
+            "errors": FILE_ERRORS + ["<code>IOException</code> if the two paths are on different file systems; <code>copy</code> then <code>unlink</code> instead."],
+            "examples": [{"title": "Replacing a file safely", "code": 'int n = file_put_contents("config.json.new", "{}");\nrename("config.json.new", "config.json");\nprint(file_get_contents("config.json"), file_exists("config.json.new"));', "output": "{} false"}],
+            "see_also": ["copy", "unlink"],
+        },
+        {
+            "name": "copy",
+            "purpose": "Copy a file",
+            "params": [param("from", "string", "The file to copy."), param("to", "string", "Where to put the copy.")],
+            "returns": "void",
+            "description": "Copies the contents and permissions of the file <code>from</code> to <code>to</code>, replacing a file already there.",
+            "return_description": "Nothing.",
+            "errors": FILE_ERRORS + ["<code>IOException</code> if <code>from</code> is a directory, or <code>from</code> and <code>to</code> are the same file."],
+            "examples": [{"title": "Basic use", "code": 'int n = file_put_contents("a.txt", "hello");\ncopy("a.txt", "b.txt");\nprint(file_get_contents("b.txt"));', "output": "hello"}],
+            "see_also": ["rename", "file_get_bytes"],
+        },
+        {
+            "name": "filesize",
+            "purpose": "A file's size",
+            "params": [param("path", "string", "The file.")],
+            "returns": "int",
+            "description": "Gives the size of the file at <code>path</code>.",
+            "return_description": "The size in bytes.",
+            "errors": FILE_ERRORS,
+            "examples": [{"title": "Basic use", "code": 'int n = file_put_contents("hi.txt", "héllo");\nprint(filesize("hi.txt"));', "output": "6"}],
+            "see_also": ["filemtime", "file_exists"],
+        },
+        {
+            "name": "filemtime",
+            "purpose": "When a file was last changed",
+            "params": [param("path", "string", "The file or directory.")],
+            "returns": "int",
+            "description": "Gives the time the contents of <code>path</code> last changed.",
+            "return_description": "A timestamp: seconds since 1970-01-01 00:00:00 UTC, as <code>time()</code> gives and <code>DateTime::fromTimestamp</code> takes (both in <code>std/time</code>).",
+            "errors": FILE_ERRORS,
+            "examples": [{"title": "Basic use", "code": 'int n = file_put_contents("log.txt", "x");\nprint(time() - filemtime("log.txt") < 60);', "output": "true"}],
+            "see_also": ["filesize"],
+        },
+        {
+            "name": "getcwd",
+            "purpose": "The current directory",
+            "params": [],
+            "returns": "string",
+            "description": "Gives the directory the program is running in. Relative paths start from it.",
+            "return_description": "The absolute path of the current directory.",
+            "errors": ["<code>IOException</code> if the current directory has been removed or can't be read."],
+            "examples": [{"title": "Basic use", "code": 'print(path_is_absolute(getcwd()));', "output": "true"}],
+            "see_also": ["chdir", "realpath"],
+        },
+        {
+            "name": "chdir",
+            "purpose": "Change the current directory",
+            "params": [param("path", "string", "The new current directory.")],
+            "returns": "void",
+            "description": "Makes <code>path</code> the directory the program runs in, so relative paths start from there. It also changes the directory of programs started afterwards with <code>exec</code> and <code>shell</code> (unless they're given a <code>cwd</code>).",
+            "return_description": "Nothing.",
+            "errors": FILE_ERRORS + ["<code>IOException</code> if <code>path</code> isn't a directory."],
+            "examples": [{"title": "Basic use", "code": 'mkdir("data");\nint n = file_put_contents("data/a.txt", "inside");\nchdir("data");\nprint(file_get_contents("a.txt"));', "output": "inside"}],
+            "see_also": ["getcwd"],
+        },
+        {
+            "name": "temp_dir",
+            "purpose": "The directory for temporary files",
+            "params": [],
+            "returns": "string",
+            "description": "Gives the directory for temporary files: the <code>TMPDIR</code> environment variable, or <code>/tmp</code> when it isn't set.",
+            "return_description": "The directory's path. It isn't checked to exist.",
+            "errors": ["<code>InvalidUtf8Exception</code> if <code>TMPDIR</code> isn't valid UTF-8."],
+            "examples": [{"title": "A scratch directory", "code": 'string work = path_join(temp_dir(), "qiq-example-" + to_string(getpid()));\nmkdir(work, recursive: true);\nprint(is_dir(work));\nrmdir(work, recursive: true);', "output": "true"}],
+            "see_also": ["temp_file", "mkdir"],
+        },
+        {
+            "name": "temp_file",
+            "purpose": "Create a new temporary file",
+            "params": [param("prefix", "string", "The start of the file's name.", "\"\"")],
+            "returns": "string",
+            "description": "Creates a new, empty file in <code>temp_dir()</code>, named <code>prefix</code> followed by six random characters, that only the user running the program can read and write. The name is chosen so that it can't clash with an existing file.",
+            "return_description": "The new file's path. Delete it with <code>unlink</code> when you're done.",
+            "errors": FILE_ERRORS + ["<code>InvalidArgumentException</code> if <code>prefix</code> contains <code>/</code>."],
+            "examples": [{"title": "Basic use", "code": 'string path = temp_file("report-");\nint n = file_put_contents(path, "draft");\nprint(str_starts_with(basename(path), "report-"), file_get_contents(path));\nunlink(path);', "output": "true draft"}],
+            "see_also": ["temp_dir", "unlink"],
+        },
+        {
+            "name": "glob",
+            "purpose": "Find paths that match a pattern",
+            "params": [param("pattern", "string", "A path with wildcards.")],
+            "returns": "string[]",
+            "description": "Finds the files and directories that match <code>pattern</code>: <code>*</code> matches any run of characters within one part of a path, <code>?</code> one character, and <code>[abc]</code> one of the characters listed (<code>[a-z]</code> one in a range). A name starting with <code>.</code> matches only a pattern part that starts with <code>.</code>.",
+            "return_description": "The matching paths, sorted, written as the pattern writes them; <code>[]</code> when nothing matches.",
+            "errors": ["<code>IOException</code> if a directory can't be read.", "<code>InvalidUtf8Exception</code> if a matching name isn't valid UTF-8."],
+            "examples": [{"title": "Basic use", "code": 'mkdir("logs");\nforeach (["b.log", "a.log", "notes.txt", ".hidden.log"] as name) {\n    int n = file_put_contents(path_join("logs", name), "");\n}\nprint(glob("logs/*.log"));\nprint(glob("logs/*.csv"));', "output": "[\"logs/a.log\", \"logs/b.log\"]\n[]"}],
+            "notes": ["<code>*</code> doesn't cross a <code>/</code>, so <code>logs/*.log</code> doesn't look in directories inside <code>logs</code>."],
+            "see_also": ["scandir", "is_dir"],
         },
     ],
 }

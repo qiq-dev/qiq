@@ -1,0 +1,22 @@
+true true
+FileNotFoundException
+true
+exists: IOException
+5
+true
+hello
+["b", "notes.txt"]
+["c", "moved.txt"]
+same file: IOException
+missing: FileNotFoundException
+["a/b", "a/notes.txt", "a/z.log"]
+["a/z.log"]
+[]
+unlink a directory: IOException
+rmdir a full directory: IOException
+rmdir a file: IOException
+false
+.
+hello
+a
+false

@@ -1,13 +1,17 @@
-// Files: whole-file reading and writing, and existence checks. Paths are
-// relative to the directory the program runs in. Failures raise
-// FileNotFoundException, PermissionDeniedException, or IOException.
+// Files: whole-file reading and writing, existence checks, paths, and
+// directories. Paths are relative to the directory the program runs in.
+// Failures raise FileNotFoundException, PermissionDeniedException, or
+// IOException.
 #include <dirent.h>
 #include <errno.h>
+#include <fcntl.h>
+#include <glob.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <unistd.h>
 
 #include "qiq_runtime.h"
 
@@ -39,7 +43,11 @@ static const char *qiq_require_path(const char *path) {
 // Raises the exception matching `error` (an errno value) for `action` on `path`.
 _Noreturn static void qiq_throw_file_error(int error, const char *action, const char *path) {
     QiqExceptionKind kind = QIQ_IO_EXCEPTION;
-    if (error == ENOENT || (error == ENOTDIR && strcmp(action, "list") != 0)) kind = QIQ_FILE_NOT_FOUND_EXCEPTION;
+    // ENOTDIR is a missing path (a part of it is a file), except where the
+    // path itself had to be a directory.
+    bool needs_directory = strcmp(action, "list") == 0 || strcmp(action, "remove directory") == 0
+        || strcmp(action, "change to directory") == 0;
+    if (error == ENOENT || (error == ENOTDIR && !needs_directory)) kind = QIQ_FILE_NOT_FOUND_EXCEPTION;
     if (error == EACCES || error == EPERM) kind = QIQ_PERMISSION_DENIED_EXCEPTION;
     qiq_throwf(kind, "cannot %s %s: %s", action, path, strerror(error));
 }
@@ -455,4 +463,475 @@ QIQ_GUARDED_VOID(qiq_stdlib___file_close, (int64_t handle), (handle)) {
     FILE *stream = file->stream;
     file->stream = NULL;
     if (fclose(stream) != 0) qiq_throw_file_error(errno, "write", file->path);
+}
+
+// ---------------------------------------------------------------------------
+// Paths, taken apart and put together as text: these don't look at the disk.
+// The rules are Go's path/filepath on Unix: "/" separates the parts, and
+// empty parts, "." and ".." are resolved by qiq_clean.
+
+// A copy of path[0..length) as a malloc'd C string.
+static char *qiq_path_copy(const char *path, size_t length) {
+    char *copy = malloc(length + 1);
+    if (copy == NULL) qiq_fatal("out of memory");
+    memcpy(copy, path, length);
+    copy[length] = '\0';
+    return copy;
+}
+
+// The shortest path naming the same place as path[0..length), as Go's
+// filepath.Clean: one "/" between parts, no "." parts, and each ".." removed
+// with the part before it (at the root, ".." is the root). "" is ".".
+// Malloc'd.
+static char *qiq_clean(const char *path, size_t length) {
+    if (length == 0) return qiq_path_copy(".", 1);
+    bool rooted = path[0] == '/';
+    char *out = malloc(length + 2);
+    if (out == NULL) qiq_fatal("out of memory");
+    size_t read = 0, written = 0, dotdot = 0;
+    if (rooted) {
+        out[written++] = '/';
+        read = 1;
+        dotdot = 1;
+    }
+    while (read < length) {
+        if (path[read] == '/') {
+            read++;
+        } else if (path[read] == '.' && (read + 1 == length || path[read + 1] == '/')) {
+            read++;
+        } else if (path[read] == '.' && path[read + 1] == '.' && (read + 2 == length || path[read + 2] == '/')) {
+            read += 2;
+            if (written > dotdot) {
+                // Take back the last part.
+                written--;
+                while (written > dotdot && out[written] != '/') written--;
+            } else if (!rooted) {
+                // Nothing to take back: keep the "..".
+                if (written > 0) out[written++] = '/';
+                out[written++] = '.';
+                out[written++] = '.';
+                dotdot = written;
+            }
+        } else {
+            if ((rooted && written != 1) || (!rooted && written != 0)) out[written++] = '/';
+            while (read < length && path[read] != '/') out[written++] = path[read++];
+        }
+    }
+    if (written == 0) out[written++] = '.';
+    out[written] = '\0';
+    return out;
+}
+
+// A malloc'd C string as a qiq string, freeing it.
+static char *qiq_path_result(char *path) {
+    char *result = qiq_string_from(path, strlen(path));
+    free(path);
+    return result;
+}
+
+// The length of `path` without trailing slashes, keeping a lone "/".
+static size_t qiq_trimmed_length(const char *path) {
+    size_t length = strlen(path);
+    while (length > 1 && path[length - 1] == '/') length--;
+    return length;
+}
+
+// The last part of the path, ignoring trailing slashes: "c" for "/a/b/c/".
+// "/" for "/", and "." for "".
+QIQ_GUARDED(char *, qiq_stdlib_basename, NULL, (const char *path), (path)) {
+    qiq_require_path(path);
+    if (path[0] == '\0') return qiq_string_from(".", 1);
+    size_t length = qiq_trimmed_length(path);
+    if (length == 1 && path[0] == '/') return qiq_string_from("/", 1);
+    size_t start = length;
+    while (start > 0 && path[start - 1] != '/') start--;
+    return qiq_string_from(path + start, length - start);
+}
+
+// Everything but the last part, cleaned: "/a/b" for "/a/b/c/", "." for "c".
+QIQ_GUARDED(char *, qiq_stdlib_dirname, NULL, (const char *path), (path)) {
+    qiq_require_path(path);
+    size_t length = qiq_trimmed_length(path);
+    size_t end = length;
+    while (end > 0 && path[end - 1] != '/') end--;
+    if (end == 0) return qiq_string_from(".", 1);
+    return qiq_path_result(qiq_clean(path, end));
+}
+
+// The last part's extension, from its last ".": ".gz" for "a.tar.gz", and
+// "" for "README", ".bashrc", or "..".
+QIQ_GUARDED(char *, qiq_stdlib_path_ext, NULL, (const char *path), (path)) {
+    qiq_require_path(path);
+    size_t length = qiq_trimmed_length(path);
+    size_t start = length;
+    while (start > 0 && path[start - 1] != '/') start--;
+    size_t dot = length;
+    while (dot > start && path[dot - 1] != '.') dot--;
+    // No dot, or only a leading one (a hidden file's name, or "..").
+    if (dot <= start + 1) return qiq_string_from("", 0);
+    bool only_dots = true;
+    for (size_t index = start; index < length; index++) {
+        if (path[index] != '.') only_dots = false;
+    }
+    if (only_dots) return qiq_string_from("", 0);
+    return qiq_string_from(path + dot - 1, length - (dot - 1));
+}
+
+// The parts joined with "/" and cleaned, skipping empty ones; "" when all are.
+// An absolute part doesn't restart the path: ("a", "/b") is "a/b".
+QIQ_GUARDED(char *, qiq_stdlib_path_join, NULL, (void *parts), (parts)) {
+    if (parts == NULL) qiq_throw(QIQ_RUNTIME_EXCEPTION, "array is null (declared without a value)");
+    int64_t count = QIQ_ARRAY_LENGTH(parts);
+    char **data = QIQ_ARRAY_DATA(parts);
+    size_t length = 0;
+    for (int64_t index = 0; index < count; index++) {
+        if (data[index] == NULL) qiq_throwf(QIQ_RUNTIME_EXCEPTION, "path_join: part %lld is null", (long long)index);
+        length += strlen(data[index]) + 1;
+    }
+    char *joined = malloc(length + 1);
+    if (joined == NULL) qiq_fatal("out of memory");
+    size_t written = 0;
+    for (int64_t index = 0; index < count; index++) {
+        size_t part_length = strlen(data[index]);
+        if (part_length == 0) continue;
+        if (written > 0) joined[written++] = '/';
+        memcpy(joined + written, data[index], part_length);
+        written += part_length;
+    }
+    if (written == 0) {
+        free(joined);
+        return qiq_string_from("", 0);
+    }
+    char *clean = qiq_clean(joined, written);
+    free(joined);
+    return qiq_path_result(clean);
+}
+
+QIQ_GUARDED(char *, qiq_stdlib_path_clean, NULL, (const char *path), (path)) {
+    qiq_require_path(path);
+    return qiq_path_result(qiq_clean(path, strlen(path)));
+}
+
+QIQ_GUARDED(bool, qiq_stdlib_path_is_absolute, false, (const char *path), (path)) {
+    return qiq_require_path(path)[0] == '/';
+}
+
+// The path that leads from `base` to `target`, as Go's filepath.Rel: "../c"
+// from "a/b" to "a/c". Only the text is compared, so both must be absolute
+// or both relative, and `base` can't climb above where it starts ("..").
+QIQ_GUARDED(char *, qiq_stdlib_path_rel, NULL, (const char *base_path, const char *target_path), (base_path, target_path)) {
+    qiq_require_path(base_path);
+    qiq_require_path(target_path);
+    char *base = qiq_clean(base_path, strlen(base_path));
+    char *target = qiq_clean(target_path, strlen(target_path));
+    if (strcmp(base, target) == 0) {
+        free(base);
+        free(target);
+        return qiq_string_from(".", 1);
+    }
+    const char *b = strcmp(base, ".") == 0 ? "" : base;
+    const char *t = target;
+    if ((b[0] == '/') != (t[0] == '/')) {
+        free(base);
+        free(target);
+        qiq_throwf(QIQ_INVALID_ARGUMENT_EXCEPTION, "path_rel: can't make %s relative to %s: one is absolute and the other isn't", target_path, base_path);
+    }
+    // Skip the parts they share.
+    size_t base_length = strlen(b), target_length = strlen(t);
+    size_t b0 = 0, bi = 0, t0 = 0, ti = 0;
+    for (;;) {
+        while (bi < base_length && b[bi] != '/') bi++;
+        while (ti < target_length && t[ti] != '/') ti++;
+        if (ti - t0 != bi - b0 || memcmp(t + t0, b + b0, bi - b0) != 0) break;
+        if (bi < base_length) bi++;
+        if (ti < target_length) ti++;
+        b0 = bi;
+        t0 = ti;
+    }
+    if (bi - b0 == 2 && b[b0] == '.' && b[b0 + 1] == '.') {
+        free(base);
+        free(target);
+        qiq_throwf(QIQ_INVALID_ARGUMENT_EXCEPTION, "path_rel: can't make %s relative to %s, which is above where it starts", target_path, base_path);
+    }
+    // Up one ".." for each of base's other parts, then down target's.
+    size_t ups = 0;
+    if (b0 != base_length) {
+        ups = 1;
+        for (size_t index = b0; index < base_length; index++) {
+            if (b[index] == '/') ups++;
+        }
+    }
+    size_t rest = target_length - t0;
+    char *relative = malloc(ups * 3 + rest + 2);
+    if (relative == NULL) qiq_fatal("out of memory");
+    size_t written = 0;
+    for (size_t up = 0; up < ups; up++) {
+        if (up > 0) relative[written++] = '/';
+        relative[written++] = '.';
+        relative[written++] = '.';
+    }
+    if (rest > 0) {
+        if (written > 0) relative[written++] = '/';
+        memcpy(relative + written, t + t0, rest);
+        written += rest;
+    }
+    free(base);
+    free(target);
+    char *clean = qiq_clean(relative, written);
+    free(relative);
+    return qiq_path_result(clean);
+}
+
+// A path from the system as a qiq string, which must be valid UTF-8.
+static char *qiq_system_path(const char *path) {
+    qiq_check_text((const unsigned char *)path, strlen(path), path);
+    return qiq_string_from(path, strlen(path));
+}
+
+// The absolute path with symbolic links, ".", and ".." resolved. The path
+// must exist.
+QIQ_GUARDED(char *, qiq_stdlib_realpath, NULL, (const char *path), (path)) {
+    qiq_require_path(path);
+    char *resolved = realpath(path, NULL);
+    if (resolved == NULL) qiq_throw_file_error(errno, "resolve", path);
+    char *result = qiq_system_path(resolved);
+    free(resolved);
+    return result;
+}
+
+// ---------------------------------------------------------------------------
+// Directories and file operations
+
+// Creates the directory; with `recursive`, also the missing directories above
+// it, and it's not an error if it already exists as a directory.
+QIQ_GUARDED_VOID(qiq_stdlib_mkdir, (const char *path, bool recursive), (path, recursive)) {
+    qiq_require_path(path);
+    if (!recursive) {
+        if (mkdir(path, 0777) != 0) qiq_throw_file_error(errno, "create directory", path);
+        return;
+    }
+    size_t length = strlen(path);
+    char *partial = qiq_path_copy(path, length);
+    for (size_t index = 1; index <= length; index++) {
+        if (index < length && partial[index] != '/') continue;
+        if (partial[index - 1] == '/') continue;
+        char saved = partial[index];
+        partial[index] = '\0';
+        if (mkdir(partial, 0777) != 0) {
+            int error = errno;
+            struct stat info;
+            if (error != EEXIST || stat(partial, &info) != 0 || !S_ISDIR(info.st_mode)) {
+                char *message = qiq_path_copy(partial, strlen(partial));
+                free(partial);
+                qiq_throw_file_error(error, "create directory", message);
+            }
+        }
+        partial[index] = saved;
+    }
+    free(partial);
+}
+
+// Removes `path` and, if it's a directory (not a link to one), everything in it.
+static void qiq_remove_tree(const char *path) {
+    struct stat info;
+    if (lstat(path, &info) != 0) qiq_throw_file_error(errno, "remove", path);
+    if (!S_ISDIR(info.st_mode)) {
+        if (unlink(path) != 0) qiq_throw_file_error(errno, "remove", path);
+        return;
+    }
+    DIR *directory = opendir(path);
+    if (directory == NULL) qiq_throw_file_error(errno, "remove directory", path);
+    size_t path_length = strlen(path);
+    struct dirent *entry;
+    while ((entry = readdir(directory)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) continue;
+        size_t name_length = strlen(entry->d_name);
+        char *child = malloc(path_length + name_length + 2);
+        if (child == NULL) qiq_fatal("out of memory");
+        memcpy(child, path, path_length);
+        size_t at = path_length;
+        if (at > 0 && child[at - 1] != '/') child[at++] = '/';
+        memcpy(child + at, entry->d_name, name_length + 1);
+        qiq_remove_tree(child);
+        free(child);
+    }
+    closedir(directory);
+    if (rmdir(path) != 0) qiq_throw_file_error(errno, "remove directory", path);
+}
+
+// Removes the directory, which must be empty; with `recursive`, everything in
+// it too. Links inside are removed, not followed.
+QIQ_GUARDED_VOID(qiq_stdlib_rmdir, (const char *path, bool recursive), (path, recursive)) {
+    qiq_require_path(path);
+    struct stat info;
+    if (lstat(path, &info) != 0) qiq_throw_file_error(errno, "remove directory", path);
+    if (!S_ISDIR(info.st_mode)) qiq_throw_file_error(ENOTDIR, "remove directory", path);
+    if (recursive) {
+        qiq_remove_tree(path);
+    } else if (rmdir(path) != 0) {
+        qiq_throw_file_error(errno, "remove directory", path);
+    }
+}
+
+// Deletes a file (or link); directories are removed with rmdir.
+QIQ_GUARDED_VOID(qiq_stdlib_unlink, (const char *path), (path)) {
+    qiq_require_path(path);
+    struct stat info;
+    if (lstat(path, &info) == 0 && S_ISDIR(info.st_mode)) qiq_throw_file_error(EISDIR, "delete", path);
+    if (unlink(path) != 0) qiq_throw_file_error(errno, "delete", path);
+}
+
+// "from to to", for messages about two paths.
+static char *qiq_two_paths(const char *from, const char *to) {
+    size_t length = strlen(from) + strlen(to) + 5;
+    char *text = malloc(length);
+    if (text == NULL) qiq_fatal("out of memory");
+    snprintf(text, length, "%s to %s", from, to);
+    return text;
+}
+
+// Moves or renames a file or directory, replacing a file at `to`.
+QIQ_GUARDED_VOID(qiq_stdlib_rename, (const char *from, const char *to), (from, to)) {
+    qiq_require_path(from);
+    qiq_require_path(to);
+    if (rename(from, to) != 0) {
+        int error = errno;
+        qiq_throw_file_error(error, "rename", qiq_two_paths(from, to));
+    }
+}
+
+// Copies a file's contents and permissions to `to`, replacing it.
+QIQ_GUARDED_VOID(qiq_stdlib_copy, (const char *from, const char *to), (from, to)) {
+    qiq_require_path(from);
+    qiq_require_path(to);
+    struct stat source_info, target_info;
+    if (stat(from, &source_info) != 0) qiq_throw_file_error(errno, "copy", qiq_two_paths(from, to));
+    if (S_ISDIR(source_info.st_mode)) qiq_throw_file_error(EISDIR, "copy", qiq_two_paths(from, to));
+    if (stat(to, &target_info) == 0 && target_info.st_dev == source_info.st_dev && target_info.st_ino == source_info.st_ino) {
+        qiq_throwf(QIQ_IO_EXCEPTION, "cannot copy %s to %s: they are the same file", from, to);
+    }
+    int source = open(from, O_RDONLY);
+    if (source < 0) qiq_throw_file_error(errno, "copy", qiq_two_paths(from, to));
+    int target = open(to, O_WRONLY | O_CREAT | O_TRUNC, source_info.st_mode & 0777);
+    if (target < 0) {
+        int error = errno;
+        close(source);
+        qiq_throw_file_error(error, "copy", qiq_two_paths(from, to));
+    }
+    char buffer[65536];
+    for (;;) {
+        ssize_t read_count = read(source, buffer, sizeof buffer);
+        if (read_count == 0) break;
+        if (read_count < 0) {
+            if (errno == EINTR) continue;
+            int error = errno;
+            close(source);
+            close(target);
+            qiq_throw_file_error(error, "copy", qiq_two_paths(from, to));
+        }
+        for (ssize_t done = 0; done < read_count;) {
+            ssize_t written = write(target, buffer + done, (size_t)(read_count - done));
+            if (written < 0) {
+                if (errno == EINTR) continue;
+                int error = errno;
+                close(source);
+                close(target);
+                qiq_throw_file_error(error, "copy", qiq_two_paths(from, to));
+            }
+            done += written;
+        }
+    }
+    close(source);
+    // Permissions as the source's, even when `to` already existed.
+    fchmod(target, source_info.st_mode & 07777);
+    if (close(target) != 0) qiq_throw_file_error(errno, "copy", qiq_two_paths(from, to));
+}
+
+// The file's size in bytes.
+QIQ_GUARDED(int64_t, qiq_stdlib_filesize, 0, (const char *path), (path)) {
+    struct stat info;
+    if (stat(qiq_require_path(path), &info) != 0) qiq_throw_file_error(errno, "get the size of", path);
+    return (int64_t)info.st_size;
+}
+
+// When the file was last changed, in seconds since 1970 (a timestamp, as
+// std/time's DateTime::fromTimestamp takes).
+QIQ_GUARDED(int64_t, qiq_stdlib_filemtime, 0, (const char *path), (path)) {
+    struct stat info;
+    if (stat(qiq_require_path(path), &info) != 0) qiq_throw_file_error(errno, "get the modification time of", path);
+    return (int64_t)info.st_mtime;
+}
+
+// The directory the program is running in, which relative paths start from.
+QIQ_GUARDED(char *, qiq_stdlib_getcwd, NULL, (void), ()) {
+    char *directory = getcwd(NULL, 0);
+    if (directory == NULL) qiq_throwf(QIQ_IO_EXCEPTION, "cannot get the current directory: %s", strerror(errno));
+    char *result = qiq_system_path(directory);
+    free(directory);
+    return result;
+}
+
+QIQ_GUARDED_VOID(qiq_stdlib_chdir, (const char *path), (path)) {
+    qiq_require_path(path);
+    if (chdir(path) != 0) qiq_throw_file_error(errno, "change to directory", path);
+}
+
+// $TMPDIR, or /tmp when it isn't set.
+static const char *qiq_temp_directory(void) {
+    const char *directory = getenv("TMPDIR");
+    return directory != NULL && directory[0] != '\0' ? directory : "/tmp";
+}
+
+QIQ_GUARDED(char *, qiq_stdlib_temp_dir, NULL, (void), ()) {
+    return qiq_system_path(qiq_temp_directory());
+}
+
+// Creates a new, empty file in temp_dir() that only this user can read and
+// write, named `prefix` and six random characters, and returns its path.
+QIQ_GUARDED(char *, qiq_stdlib_temp_file, NULL, (const char *prefix), (prefix)) {
+    if (prefix == NULL) prefix = "";
+    if (strchr(prefix, '/') != NULL) qiq_throwf(QIQ_INVALID_ARGUMENT_EXCEPTION, "temp_file: the prefix can't contain '/': %s", prefix);
+    const char *directory = qiq_temp_directory();
+    size_t directory_length = qiq_trimmed_length(directory);
+    size_t length = directory_length + strlen(prefix) + 8;
+    char *path = malloc(length);
+    if (path == NULL) qiq_fatal("out of memory");
+    snprintf(path, length, "%.*s%s%sXXXXXX", (int)directory_length, directory, directory_length == 1 && directory[0] == '/' ? "" : "/", prefix);
+    int descriptor = mkstemp(path);
+    if (descriptor < 0) {
+        int error = errno;
+        qiq_throw_file_error(error, "create a temporary file in", directory);
+    }
+    close(descriptor);
+    char *result = qiq_system_path(path);
+    free(path);
+    return result;
+}
+
+// The paths matching a shell wildcard pattern ("*" and "?" within a part,
+// "[abc]" for one of a set), sorted; [] when none do. Names starting with "."
+// only match a pattern part that starts with ".".
+QIQ_GUARDED(void *, qiq_stdlib_glob, NULL, (const char *pattern), (pattern)) {
+    if (pattern == NULL) qiq_throw(QIQ_RUNTIME_EXCEPTION, "pattern is null");
+    glob_t found;
+    int status = glob(pattern, 0, NULL, &found);
+    if (status == GLOB_NOMATCH) {
+        globfree(&found);
+        return qiq_array_create(0, sizeof(char *), 1);
+    }
+    if (status == GLOB_NOSPACE) qiq_fatal("out of memory");
+    if (status != 0) {
+        globfree(&found);
+        qiq_throwf(QIQ_IO_EXCEPTION, "glob: cannot read the directories for %s", pattern);
+    }
+    for (size_t index = 0; index < found.gl_pathc; index++) {
+        qiq_check_text((const unsigned char *)found.gl_pathv[index], strlen(found.gl_pathv[index]), found.gl_pathv[index]);
+    }
+    void *result = qiq_array_create((int64_t)found.gl_pathc, sizeof(char *), 1);
+    char **data = QIQ_ARRAY_DATA(result);
+    for (size_t index = 0; index < found.gl_pathc; index++) {
+        data[index] = qiq_string_from(found.gl_pathv[index], strlen(found.gl_pathv[index]));
+    }
+    globfree(&found);
+    return result;
 }

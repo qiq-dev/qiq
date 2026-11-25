@@ -283,8 +283,10 @@ def signature_html(function):
     params = []
     for param in function["params"]:
         default = f' = <span class="default">{html.escape(param["default"])}</span>' if param.get("default") else ""
+        # `string ...parts`: any number of strings.
+        spread = "..." if param.get("variadic") else ""
         params.append(
-            f'<span class="type">{html.escape(param["type"])}</span> <span class="param">{html.escape(param["name"])}</span>{default}'
+            f'<span class="type">{html.escape(param["type"])}</span> {spread}<span class="param">{html.escape(param["name"])}</span>{default}'
         )
     return (
         f'<div class="synopsis"><code><span class="fn">{function["name"]}</span>('

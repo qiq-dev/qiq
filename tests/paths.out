@@ -1,0 +1,38 @@
+"/a/b/c.txt" base: c.txt dir: /a/b ext: ".txt"
+"/a/b/c/" base: c dir: /a/b ext: ""
+"c" base: c dir: . ext: ""
+"" base: . dir: . ext: ""
+"/" base: / dir: / ext: ""
+"a//b" base: b dir: a ext: ""
+"../x" base: x dir: .. ext: ""
+"/a" base: a dir: / ext: ""
+".bashrc" base: .bashrc dir: . ext: ""
+"archive.tar.gz" base: archive.tar.gz dir: . ext: ".gz"
+"dir.d/file" base: file dir: dir.d ext: ""
+".." base: .. dir: . ext: ""
+"a." base: a. dir: . ext: "."
+usr/local/bin
+/usr/local/bin
+a/b
+"" ""
+../b
+/home/ada/notes.txt
+"a//b/./../c/" -> a/c
+"/../x" -> /x
+"" -> .
+"." -> .
+"./" -> .
+"../../a" -> ../../a
+"a/../.." -> ..
+"/a/b/../../.." -> /
+true false false
+../c
+c/d
+../..
+.
+a/b
+../..
+x/y
+../b
+path_rel: can't make b relative to /a: one is absolute and the other isn't
+path_rel: can't make a relative to .., which is above where it starts

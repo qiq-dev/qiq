@@ -1,0 +1,41 @@
+import basename, dirname, path_ext, path_join, path_clean, path_is_absolute, path_rel from "std/file";
+
+// Path functions work on the text alone.
+string[] paths = ["/a/b/c.txt", "/a/b/c/", "c", "", "/", "a//b", "../x", "/a", ".bashrc", "archive.tar.gz", "dir.d/file", "..", "a."];
+foreach (paths as path) {
+    print(f"\"{path}\"", "base:", basename(path), "dir:", dirname(path), "ext:", f"\"{path_ext(path)}\"");
+}
+
+print(path_join("usr", "local", "bin"));
+print(path_join("/usr/", "/local/", "bin/"));
+print(path_join("a", "", "b"));
+print(f"\"{path_join()}\"", f"\"{path_join("", "")}\"");
+print(path_join("a", "../../b"));
+string[] parts = ["/home", "ada", "notes.txt"];
+print(path_join(...parts));
+
+string[] messy = ["a//b/./../c/", "/../x", "", ".", "./", "../../a", "a/../..", "/a/b/../../.."];
+foreach (messy as path) {
+    print(f"\"{path}\"", "->", path_clean(path));
+}
+
+print(path_is_absolute("/etc"), path_is_absolute("etc"), path_is_absolute(""));
+
+print(path_rel("a/b", "a/c"));
+print(path_rel("/a/b", "/a/b/c/d"));
+print(path_rel("/a/b/c", "/a"));
+print(path_rel("a", "a"));
+print(path_rel(".", "a/b"));
+print(path_rel("a/b", "."));
+print(path_rel("/", "/x/y"));
+print(path_rel("../a", "../b"));
+try {
+    print(path_rel("/a", "b"));
+} catch (InvalidArgumentException e) {
+    print(e->getMessage());
+}
+try {
+    print(path_rel("..", "a"));
+} catch (InvalidArgumentException e) {
+    print(e->getMessage());
+}

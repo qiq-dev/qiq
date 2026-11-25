@@ -1,0 +1,92 @@
+import mkdir, rmdir, unlink, rename, copy, filesize, filemtime, getcwd, chdir, temp_dir, temp_file, glob, realpath, scandir, file_exists, is_dir, file_get_contents, file_put_contents, path_join, path_rel, basename from "std/file";
+import time from "std/time";
+
+// Work in a new directory under temp_dir(), named after a temporary file.
+string scratch = temp_file("qiq-test-");
+unlink(scratch);
+mkdir(scratch);
+print(is_dir(scratch), basename(scratch) != "");
+
+// Paths below are printed relative to the scratch directory.
+function shown(string base, string[] paths): string[] {
+    string[] relative = [];
+    foreach (paths as path) {
+        array_push(relative, path_rel(base, path));
+    }
+    return relative;
+}
+
+// mkdir: one level, or all the missing ones with `recursive`.
+string deep = path_join(scratch, "a", "b", "c");
+try {
+    mkdir(deep);
+} catch (FileNotFoundException e) {
+    print("FileNotFoundException");
+}
+mkdir(deep, recursive: true);
+mkdir(deep, recursive: true);
+print(is_dir(deep));
+try {
+    mkdir(deep);
+} catch (IOException e) {
+    print("exists:", e::class);
+}
+
+// Files: write, copy, rename, size.
+string notes = path_join(scratch, "a", "notes.txt");
+file_put_contents(notes, "hello");
+print(filesize(notes));
+print(filemtime(notes) > time() - 3600);
+copy(notes, path_join(scratch, "a", "copy.txt"));
+print(file_get_contents(path_join(scratch, "a", "copy.txt")));
+rename(path_join(scratch, "a", "copy.txt"), path_join(scratch, "a", "b", "moved.txt"));
+print(scandir(path_join(scratch, "a")));
+print(scandir(path_join(scratch, "a", "b")));
+try {
+    copy(notes, notes);
+} catch (IOException e) {
+    print("same file:", e::class);
+}
+try {
+    filesize(path_join(scratch, "missing"));
+} catch (FileNotFoundException e) {
+    print("missing:", e::class);
+}
+
+// glob: sorted matches, or [].
+file_put_contents(path_join(scratch, "a", "z.log"), "");
+file_put_contents(path_join(scratch, "a", ".hidden.log"), "");
+print(shown(scratch, glob(path_join(scratch, "a", "*"))));
+print(shown(scratch, glob(path_join(scratch, "a", "*.log"))));
+print(glob(path_join(scratch, "nothing", "*")));
+
+// unlink deletes files, rmdir directories.
+unlink(path_join(scratch, "a", "z.log"));
+try {
+    unlink(path_join(scratch, "a"));
+} catch (IOException e) {
+    print("unlink a directory:", e::class);
+}
+try {
+    rmdir(path_join(scratch, "a"));
+} catch (IOException e) {
+    print("rmdir a full directory:", e::class);
+}
+try {
+    rmdir(notes);
+} catch (IOException e) {
+    print("rmdir a file:", e::class);
+}
+rmdir(deep);
+print(file_exists(deep));
+
+// chdir and getcwd: relative paths start from the current directory.
+string start = getcwd();
+chdir(scratch);
+print(path_rel(realpath(scratch), getcwd()));
+print(file_get_contents("a/notes.txt"));
+print(path_rel(realpath(scratch), realpath("a/b/..")));
+chdir(start);
+
+rmdir(scratch, recursive: true);
+print(file_exists(scratch));
