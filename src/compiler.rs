@@ -4022,7 +4022,7 @@ impl Emitter {
             ir.push_str(&self.emit_dispatch_table(*owner, method_name, Some(supplied)));
         }
         ir.push_str(
-            "\ndeclare i32 @printf(ptr, ...)\ndeclare i32 @strcmp(ptr, ptr)\ndeclare ptr @calloc(i64, i64)\ndeclare ptr @qiq_map_new(i32, i32)\ndeclare void @qiq_retain(ptr)\ndeclare void @qiq_release(ptr)\ndeclare ptr @qiq_object_new(i64, i64)\ndeclare void @qiq_map_set(ptr, i64, i64)\ndeclare i64 @qiq_map_get(ptr, i64)\ndeclare i64 @qiq_map_iteration_end(ptr)\ndeclare i64 @qiq_map_version(ptr)\ndeclare zeroext i1 @qiq_map_entry_live(ptr, i64, i64)\ndeclare zeroext i1 @qiq_map_find(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_map_has(ptr, i64)\ndeclare void @qiq_map_remove(ptr, i64)\ndeclare ptr @qiq_map_keys(ptr, i64, i32)\ndeclare ptr @qiq_map_values(ptr, i64, i32)\ndeclare zeroext i1 @qiq_map_contains_value(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_values_equal(ptr, ptr, ptr)\ndeclare i64 @qiq_map_key_at(ptr, i64)\ndeclare i64 @qiq_map_value_at(ptr, i64)\ndeclare ptr @qiq_map_merge(ptr, ptr)\ndeclare ptr @qiq_array_sort(ptr, i64, i32, i32, i1 zeroext)\ndeclare ptr @qiq_array_usort(ptr, i64, i32, ptr, ptr)\ndeclare i64 @qiq_array_index_of(ptr, i64, ptr, i64)\ndeclare ptr @qiq_array_slice(ptr, i64, i32, i64, i64, i1 zeroext)\ndeclare ptr @qiq_array_reverse(ptr, i64, i32)\ndeclare ptr @qiq_array_unique(ptr, i64, i32, ptr)\ndeclare i64 @qiq_array_sum_int(ptr)\ndeclare double @qiq_array_sum_double(ptr)\ndeclare ptr @qiq_map_filter_keys(ptr, ptr, i1 zeroext)\ndeclare ptr @qiq_map_filter_entries(ptr, ptr, ptr, i1 zeroext)\ndeclare ptr @qiq_map_flip(ptr, i32, i32)\ndeclare i64 @qiq_string_len(ptr)\ndeclare ptr @qiq_sprintf(ptr, ptr, ptr, i64)\ndeclare void @qiq_bind_values(ptr, ptr, i64)\ndeclare ptr @qiq_json_encode(ptr, i64, i1 zeroext)\ndeclare i64 @qiq_json_decode(ptr, ptr)\ndeclare i64 @qiq_csv_decode(ptr, ptr, ptr)\ndeclare ptr @qiq_csv_encode(ptr, ptr, ptr, ptr)\ndeclare i32 @qiq_string_equality(ptr, ptr)\ndeclare i32 @qiq_string_compare(ptr, ptr)\ndeclare ptr @qiq_string_char_at(ptr, i64)\ndeclare ptr @qiq_string_concat(ptr, ptr)\ndeclare i64 @qiq_int_divide(i64, i64)\ndeclare i64 @qiq_int_modulo(i64, i64)\ndeclare i64 @qiq_int_power(i64, i64)\ndeclare i64 @qiq_int_power_unchecked(i64, i64)\ndeclare i64 @qiq_int_shift_left(i64, i64)\ndeclare i64 @qiq_int_shift_right(i64, i64)\ndeclare double @llvm.pow.f64(double, double)\ndeclare double @llvm.fabs.f64(double)\ndeclare i64 @qiq_math_min_int(ptr)\ndeclare i64 @qiq_math_max_int(ptr)\ndeclare double @qiq_math_min_double(ptr)\ndeclare double @qiq_math_max_double(ptr)\ndeclare i64 @qiq_math_clamp_int(i64, i64, i64)\ndeclare double @qiq_math_clamp_double(double, double, double)\ndeclare void @qiq_uncaught(ptr, ptr, ptr, i64)\ndeclare ptr @qiq_array_new(i64, i64, i32)\ndeclare void @qiq_set_arguments(i32, ptr)\ndeclare void @qiq_check_callable(ptr)\ndeclare void @qiq_array_push(ptr, i64, i64)\ndeclare i64 @qiq_range_plan(i64, i64, i64, i1 zeroext, ptr)\ndeclare ptr @qiq_range_int(i64, i64, i64, i1 zeroext)\ndeclare ptr @qiq_range_count(i64)\ndeclare ptr @qiq_range_double(double, double, double, i1 zeroext)\ndeclare ptr @qiq_range_char(ptr, ptr, i64, i1 zeroext)\ndeclare i64 @qiq_array_pop(ptr, i64)\ndeclare i64 @qiq_array_shift(ptr, i64)\ndeclare void @qiq_array_insert(ptr, i64, i64, i64)\ndeclare ptr @qiq_array_splice(ptr, i64, i64, i64, i1 zeroext, ptr)\ndeclare i64 @qiq_array_length(ptr)\ndeclare i64 @qiq_len_string(ptr)\ndeclare i64 @qiq_len_array(ptr)\ndeclare i64 @qiq_len_map(ptr)\ndeclare void @qiq_array_check_index(ptr, i64)\ndeclare void @qiq_print_value(ptr, i64)\ndeclare ptr @qiq_describe_value(ptr, i64)\ndeclare void @qiq_print_space()\ndeclare void @qiq_print_newline()\ndeclare i64 @qiq_double_to_int(double)\ndeclare zeroext i8 @qiq_int_to_byte(i64)\ndeclare i64 @qiq_string_to_int(ptr)\ndeclare double @qiq_string_to_double(ptr)\ndeclare ptr @qiq_int_to_string(i64)\ndeclare ptr @qiq_double_to_string(double)\n",
+            "\ndeclare i32 @printf(ptr, ...)\ndeclare i32 @strcmp(ptr, ptr)\ndeclare ptr @calloc(i64, i64)\ndeclare ptr @qiq_map_new(i32, i32)\ndeclare void @qiq_retain(ptr)\ndeclare void @qiq_release(ptr)\ndeclare ptr @qiq_object_new(i64, i64)\ndeclare void @qiq_map_set(ptr, i64, i64)\ndeclare i64 @qiq_map_get(ptr, i64)\ndeclare i64 @qiq_map_iteration_end(ptr)\ndeclare i64 @qiq_map_version(ptr)\ndeclare zeroext i1 @qiq_map_entry_live(ptr, i64, i64)\ndeclare zeroext i1 @qiq_map_find(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_map_has(ptr, i64)\ndeclare void @qiq_map_remove(ptr, i64)\ndeclare ptr @qiq_map_keys(ptr, i64, i32)\ndeclare ptr @qiq_map_values(ptr, i64, i32)\ndeclare zeroext i1 @qiq_map_contains_value(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_values_equal(ptr, ptr, ptr)\ndeclare i64 @qiq_map_key_at(ptr, i64)\ndeclare i64 @qiq_map_value_at(ptr, i64)\ndeclare ptr @qiq_map_merge(ptr, ptr)\ndeclare ptr @qiq_array_sort(ptr, i64, i32, i32, i1 zeroext)\ndeclare ptr @qiq_array_usort(ptr, i64, i32, ptr, ptr)\ndeclare i64 @qiq_array_index_of(ptr, i64, ptr, i64)\ndeclare ptr @qiq_array_slice(ptr, i64, i32, i64, i64, i1 zeroext)\ndeclare ptr @qiq_array_reverse(ptr, i64, i32)\ndeclare ptr @qiq_array_unique(ptr, i64, i32, ptr)\ndeclare i64 @qiq_array_sum_int(ptr)\ndeclare double @qiq_array_sum_double(ptr)\ndeclare ptr @qiq_map_filter_keys(ptr, ptr, i1 zeroext)\ndeclare ptr @qiq_map_filter_entries(ptr, ptr, ptr, i1 zeroext)\ndeclare ptr @qiq_map_flip(ptr, i32, i32)\ndeclare i64 @qiq_string_len(ptr)\ndeclare ptr @qiq_sprintf(ptr, ptr, ptr, i64)\ndeclare void @qiq_bind_values(ptr, ptr, i64)\ndeclare ptr @qiq_json_encode(ptr, i64, i1 zeroext)\ndeclare i64 @qiq_json_decode(ptr, ptr)\ndeclare i64 @qiq_csv_decode(ptr, ptr, ptr)\ndeclare ptr @qiq_csv_encode(ptr, ptr, ptr, ptr)\ndeclare i32 @qiq_string_equality(ptr, ptr)\ndeclare i32 @qiq_string_compare(ptr, ptr)\ndeclare ptr @qiq_string_char_at(ptr, i64)\ndeclare ptr @qiq_string_concat(ptr, ptr)\ndeclare i64 @qiq_int_divide(i64, i64)\ndeclare i64 @qiq_int_modulo(i64, i64)\ndeclare i64 @qiq_int_power(i64, i64)\ndeclare i64 @qiq_int_power_unchecked(i64, i64)\ndeclare i64 @qiq_int_shift_left(i64, i64)\ndeclare i64 @qiq_int_shift_right(i64, i64)\ndeclare double @llvm.pow.f64(double, double)\ndeclare double @llvm.fabs.f64(double)\ndeclare i64 @qiq_math_min_int(ptr)\ndeclare i64 @qiq_math_max_int(ptr)\ndeclare double @qiq_math_min_double(ptr)\ndeclare double @qiq_math_max_double(ptr)\ndeclare i64 @qiq_math_clamp_int(i64, i64, i64)\ndeclare double @qiq_math_clamp_double(double, double, double)\ndeclare void @qiq_uncaught(ptr, ptr, ptr, i64)\ndeclare ptr @qiq_array_new(i64, i64, i32)\ndeclare void @qiq_set_arguments(i32, ptr)\ndeclare void @qiq_check_callable(ptr)\ndeclare void @qiq_array_push(ptr, i64, i64)\ndeclare i64 @qiq_range_plan(i64, i64, i64, i1 zeroext, ptr)\ndeclare ptr @qiq_range_int(i64, i64, i64, i1 zeroext)\ndeclare ptr @qiq_range_count(i64)\ndeclare ptr @qiq_range_double(double, double, double, i1 zeroext)\ndeclare ptr @qiq_range_char(ptr, ptr, i64, i1 zeroext)\ndeclare i64 @qiq_array_pop(ptr, i64)\ndeclare i64 @qiq_array_shift(ptr, i64)\ndeclare void @qiq_array_insert(ptr, i64, i64, i64)\ndeclare ptr @qiq_array_splice(ptr, i64, i64, i64, i1 zeroext, ptr)\ndeclare ptr @qiq_array_with_tail(i64, ptr, i64, i32)\ndeclare i64 @qiq_array_length(ptr)\ndeclare i64 @qiq_len_string(ptr)\ndeclare i64 @qiq_len_array(ptr)\ndeclare i64 @qiq_len_map(ptr)\ndeclare void @qiq_array_check_index(ptr, i64)\ndeclare void @qiq_print_value(ptr, i64)\ndeclare ptr @qiq_describe_value(ptr, i64)\ndeclare void @qiq_print_space()\ndeclare void @qiq_print_newline()\ndeclare i64 @qiq_double_to_int(double)\ndeclare zeroext i8 @qiq_int_to_byte(i64)\ndeclare i64 @qiq_string_to_int(ptr)\ndeclare double @qiq_string_to_double(ptr)\ndeclare ptr @qiq_int_to_string(i64)\ndeclare ptr @qiq_double_to_string(double)\n",
         );
         ir.push_str(&extern_declarations);
         ir.push('\n');
@@ -9417,7 +9417,7 @@ impl Emitter {
     /// `[a, b, ...]`: the element type is the expected array type's, or else
     /// the first element's. The values packed for a variadic parameter (see
     /// pack_variadic_arguments) may end with a spread array, `[a, b, ...xs]`,
-    /// whose elements are added after the others.
+    /// whose elements go after the others (see qiq_array_with_tail).
     fn emit_array_literal(
         &mut self,
         elements: &[Expr],
@@ -9426,32 +9426,55 @@ impl Emitter {
         body: &mut String,
     ) -> Result<Value, String> {
         if let Some((Expr::Spread(spread), singles)) = elements.split_last() {
-            if singles.is_empty() {
-                return Err("an array literal can't be only a '...' spread".to_string());
+            let array_type = expected
+                .filter(|expected| self.element_of(*expected).is_some())
+                .ok_or("a '...' spread needs an array type to go into")?;
+            let element_type = self.element_of(array_type).expect("checked above");
+            // The single values, then the spread array, in the order written.
+            let mut values = Vec::new();
+            for element in singles {
+                let value = self.emit_expecting(element, Some(element_type), variables, body)?;
+                if !self.is_assignable(element_type, value.value_type) {
+                    return Err(format!(
+                        "array elements must all be {}, found {}",
+                        self.type_name(element_type),
+                        self.type_name(value.value_type)
+                    ));
+                }
+                values.push(value);
             }
-            let array = self.emit_array_literal(singles, expected, variables, body)?;
-            let added = self.emit_expecting(spread, Some(array.value_type), variables, body)?;
-            if !self.is_assignable(array.value_type, added.value_type) {
+            let added = self.emit_expecting(spread, Some(array_type), variables, body)?;
+            if !self.is_assignable(array_type, added.value_type) {
                 return Err(format!(
                     "a '...' argument must be a {}, found {}",
-                    self.type_name(array.value_type),
+                    self.type_name(array_type),
                     self.type_name(added.value_type)
                 ));
             }
-            let element_type = self.element_of(array.value_type).expect("an array literal's type is an array");
-            let removed = self.new_register();
+            // One array, with the spread array's elements already at its end.
+            let array = self.new_register();
             body.push_str(&format!(
-                "  {removed} = call ptr @qiq_array_splice(ptr {}, i64 {}, i64 {}, i64 0, i1 zeroext true, ptr {})
-",
-                array.operand,
+                "  {array} = call ptr @qiq_array_with_tail(i64 {}, ptr {}, i64 {}, i32 {})\n",
+                values.len(),
+                added.operand,
                 element_type.size_bytes(),
-                singles.len(),
-                added.operand
+                self.contents_flags(element_type)
             ));
             self.emit_exception_check(body);
-            body.push_str(&format!("  call void @qiq_release(ptr {removed})
-"));
-            return Ok(array);
+            let element_llvm = element_type.llvm();
+            let data = self.new_register();
+            body.push_str(&format!(
+                "  {data}.at = getelementptr inbounds i8, ptr {array}, i64 {ARRAY_DATA_OFFSET}\n  {data} = load ptr, ptr {data}.at, align 8\n"
+            ));
+            let values: Vec<String> = values.iter().map(|value| self.take(value, body)).collect();
+            for (index, value) in values.iter().enumerate() {
+                let address = self.new_register();
+                body.push_str(&format!(
+                    "  {address} = getelementptr inbounds {element_llvm}, ptr {data}, i64 {index}\n  store {element_llvm} {value}, ptr {address}, align {}\n",
+                    element_type.alignment()
+                ));
+            }
+            return Ok(self.own(Value { value_type: array_type, operand: array, slot: None }));
         }
         let mut element_type = expected.and_then(|expected| self.element_of(expected));
         if let (Some(expected), None, true) = (expected, element_type, elements.is_empty()) {

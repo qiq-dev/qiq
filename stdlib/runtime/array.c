@@ -53,6 +53,26 @@ static void *qiq_require_array(void *array) {
     return array;
 }
 
+// The array a variadic parameter gets from single values followed by a
+// spread, `f(a, b, ...tail)`: `head` elements at the start for the compiled
+// code to store the values in, then the elements of `tail` (with a reference
+// to each, when they're references). One allocation; `tail` is unchanged.
+QIQ_GUARDED(void *, qiq_array_with_tail, NULL, (int64_t head, void *tail, int64_t element_size, int32_t references),
+            (head, tail, element_size, references)) {
+    if (tail == NULL) qiq_throw(QIQ_RUNTIME_EXCEPTION, "the array spread with '...' is null");
+    int64_t count = QIQ_ARRAY_LENGTH(tail);
+    void *array = qiq_array_create(head + count, element_size, references);
+    char *data = QIQ_ARRAY_DATA(array);
+    memcpy(data + head * element_size, QIQ_ARRAY_DATA(tail), (size_t)(count * element_size));
+    if ((uint32_t)references & QIQ_ELEMENTS_ARE_REFERENCES) {
+        void **elements = (void **)data;
+        for (int64_t index = head; index < head + count; index++) {
+            if (elements[index] != NULL) qiq_retain(elements[index]);
+        }
+    }
+    return array;
+}
+
 // Length of an array, for foreach.
 QIQ_GUARDED(int64_t, qiq_array_length, 0, (void *array), (array)) {
     return QIQ_ARRAY_LENGTH(qiq_require_array(array));
