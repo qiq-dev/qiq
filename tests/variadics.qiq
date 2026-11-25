@@ -8,9 +8,14 @@ print(join("/", "usr", "local", "bin"));
 print(join("/"));
 print(len(join("/")));
 
-// `...array` passes an existing array as the values.
+// `...array` passes an existing array as the values, alone or after
+// single values.
 string[] path = ["home", "ada"];
 print(join("/", ...path));
+print(join("/", "", "root", ...path));
+print(path);
+string[] none = [];
+print(join("/", "only", ...none));
 
 // The parameters before it can be named; the variadic one can't.
 print(join(separator: ", "));
@@ -65,7 +70,12 @@ function trace(int value): int {
     print("evaluated", value);
     return value;
 }
+function traced(int[] values): int[] {
+    print("evaluated", values);
+    return values;
+}
 print(Tally::sum(trace(1), trace(2), trace(3)));
+print(Tally::sum(trace(1), ...traced([2, 3])));
 
 // As a value, a variadic function takes its parameter as an array.
 function(string, string[]): string joiner = join;

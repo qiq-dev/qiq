@@ -6587,8 +6587,8 @@ impl Emitter {
 
     /// The arguments of a call to a function with a variadic parameter (see
     /// Parameter::variadic), with the values given for it packed into an
-    /// array literal, or the array spread with `...` passed as it is; with no
-    /// values, an empty array. Other calls' arguments are returned unchanged,
+    /// array literal, which may end with the array spread with `...` (only a
+    /// spread is passed as it is); with no values, an empty array. Other calls' arguments are returned unchanged,
     /// once it's checked that they spread nothing.
     fn pack_variadic_arguments<'e>(parameters: &[Parameter], arguments: &'e [Expr], callee: &str) -> Result<Cow<'e, [Expr]>, String> {
         let spreads = arguments.iter().any(|argument| matches!(argument, Expr::Spread(..)));
@@ -6610,13 +6610,8 @@ impl Emitter {
         if positional > fixed {
             match &arguments[fixed..positional] {
                 [Expr::Spread(array)] => packed.push((**array).clone()),
-                values if spreads => {
-                    return Err(format!(
-                        "{callee}: a '...' argument gives all of variadic parameter '{}', so it can't come after {} other value(s) for it",
-                        variadic.name,
-                        values.len() - 1
-                    ));
-                }
+                // Single values, then possibly a spread array added after
+                // them (see emit_array_literal).
                 values => packed.push(Expr::ArrayLiteral(values.to_vec())),
             }
             packed.extend_from_slice(&arguments[positional..]);
@@ -6715,6 +6710,7 @@ impl Emitter {
                             "{mismatch}: variadic parameter '{}' takes {expected} values, found {found}",
                             parameter.name
                         ),
+                        None if error.starts_with("a '...' argument must be") => format!("{mismatch}: {error}"),
                         None => error,
                     });
                 }
@@ -9419,7 +9415,9 @@ impl Emitter {
     }
 
     /// `[a, b, ...]`: the element type is the expected array type's, or else
-    /// the first element's.
+    /// the first element's. The values packed for a variadic parameter (see
+    /// pack_variadic_arguments) may end with a spread array, `[a, b, ...xs]`,
+    /// whose elements are added after the others.
     fn emit_array_literal(
         &mut self,
         elements: &[Expr],
@@ -9427,6 +9425,34 @@ impl Emitter {
         variables: &HashMap<String, Value>,
         body: &mut String,
     ) -> Result<Value, String> {
+        if let Some((Expr::Spread(spread), singles)) = elements.split_last() {
+            if singles.is_empty() {
+                return Err("an array literal can't be only a '...' spread".to_string());
+            }
+            let array = self.emit_array_literal(singles, expected, variables, body)?;
+            let added = self.emit_expecting(spread, Some(array.value_type), variables, body)?;
+            if !self.is_assignable(array.value_type, added.value_type) {
+                return Err(format!(
+                    "a '...' argument must be a {}, found {}",
+                    self.type_name(array.value_type),
+                    self.type_name(added.value_type)
+                ));
+            }
+            let element_type = self.element_of(array.value_type).expect("an array literal's type is an array");
+            let removed = self.new_register();
+            body.push_str(&format!(
+                "  {removed} = call ptr @qiq_array_splice(ptr {}, i64 {}, i64 {}, i64 0, i1 zeroext true, ptr {})
+",
+                array.operand,
+                element_type.size_bytes(),
+                singles.len(),
+                added.operand
+            ));
+            self.emit_exception_check(body);
+            body.push_str(&format!("  call void @qiq_release(ptr {removed})
+"));
+            return Ok(array);
+        }
         let mut element_type = expected.and_then(|expected| self.element_of(expected));
         if let (Some(expected), None, true) = (expected, element_type, elements.is_empty()) {
             return Err(format!("an array literal cannot be used as {}", self.type_name(expected)));
@@ -14955,7 +14981,8 @@ mod tests {
             ("j(\",\", \"a\", 2);", "argument type mismatch calling 'j': variadic parameter 'parts' takes string values, found int"),
             ("j(\",\", ...5);", "variadic parameter 'parts' takes string values (or a string[] spread with '...'), found int"),
             ("j(\",\", ...[\"a\"], \"b\");", "a spread '...' argument must be the last one"),
-            ("j(\",\", \"a\", ...[\"b\"]);", "function 'j': a '...' argument gives all of variadic parameter 'parts', so it can't come after 1 other value(s) for it"),
+            ("int[] xs = [1]; j(\",\", \"a\", ...xs);", "argument type mismatch calling 'j': a '...' argument must be a string[], found int[]"),
+            ("j(\",\", 1, ...[\"b\"]);", "variadic parameter 'parts' takes string values, found int"),
             ("j(...[\"a\"]);", "function 'j': a '...' argument can only fill variadic parameter 'parts'; give the parameters before it first"),
             ("j(\",\", parts: [\"a\"]);", "function 'j': variadic parameter 'parts' can't be named; give its values last, by position"),
             ("j();", "function 'j': missing argument for required parameter 'separator'"),

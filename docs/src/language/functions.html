@@ -106,7 +106,7 @@ home/ada
 
 <ul>
 <li>Only the last parameter can be variadic, and it can't have a default: with no values it's an empty array.</li>
-<li>A spread <code>...values</code> must be an array of the parameter's type, and it gives all of the values: it can't be mixed with single ones, as in <code>join("/", "a", ...path)</code>.</li>
+<li>A spread <code>...values</code> must be an array of the parameter's type. It can follow single values, as in <code>join("/", "root", ...path)</code>, but it must be the last argument, and there can be only one.</li>
 <li>Parameters before the variadic one can be named; the variadic one itself can't.</li>
 <li>Methods, static methods, and constructors can be variadic. A method that overrides one keeps its parameter variadic.</li>
 <li>Used as a value, a variadic function takes the parameter as an array: <code>join</code> is a <code>function(string, string[]): string</code>. Anonymous functions can't be variadic.</li>

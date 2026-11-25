@@ -677,8 +677,8 @@ no config file, using defaults
             "examples": [
                 {
                     "title": "Basic use",
-                    "code": 'print(path_join("/var/www/", "assets", "logo.png"));\nprint(path_join("a/b", "../c"));\nstring[] parts = ["usr", "local", "bin"];\nprint(path_join(...parts));',
-                    "output": "/var/www/assets/logo.png\na/c\nusr/local/bin",
+                    "code": 'print(path_join("/var/www/", "assets", "logo.png"));\nprint(path_join("a/b", "../c"));\nstring[] parts = ["local", "bin"];\nprint(path_join("/usr", ...parts));',
+                    "output": "/var/www/assets/logo.png\na/c\n/usr/local/bin",
                 }
             ],
             "notes": ["Like Go's <code>filepath.Join</code>, and unlike Python's <code>os.path.join</code>, which starts again at an absolute part."],

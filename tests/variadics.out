@@ -2,6 +2,9 @@ usr/local/bin
 
 0
 home/ada
+/root/home/ada
+["home", "ada"]
+only
 
 [3, 4]
 15
@@ -10,5 +13,8 @@ circle red small
 evaluated 1
 evaluated 2
 evaluated 3
+6
+evaluated 1
+evaluated [2, 3]
 6
 a-b

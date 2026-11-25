@@ -13,6 +13,8 @@ print(f"\"{path_join()}\"", f"\"{path_join("", "")}\"");
 print(path_join("a", "../../b"));
 string[] parts = ["/home", "ada", "notes.txt"];
 print(path_join(...parts));
+string[] below = ["src", "main.qiq"];
+print(path_join("/srv/app", ...below));
 
 string[] messy = ["a//b/./../c/", "/../x", "", ".", "./", "../../a", "a/../..", "/a/b/../../.."];
 foreach (messy as path) {

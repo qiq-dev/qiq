@@ -17,6 +17,7 @@ a/b
 "" ""
 ../b
 /home/ada/notes.txt
+/srv/app/src/main.qiq
 "a//b/./../c/" -> a/c
 "/../x" -> /x
 "" -> .
