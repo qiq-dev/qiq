@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
 use crate::fetch::{self, Sums, SUM_FILE};
@@ -995,6 +996,11 @@ struct Parameter {
     /// Default value (a literal) that makes the parameter optional. Optional
     /// parameters always follow the required ones.
     default: Option<Expr>,
+    /// `T ...name`, always the last parameter: takes any number of T values,
+    /// or one T[] spread with `...values`, and is a T[] (its value_type)
+    /// inside the function. Calls pack the values into an array (see
+    /// pack_variadic_arguments), so it's an ordinary array parameter after that.
+    variadic: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1222,6 +1228,10 @@ enum Expr {
     MapLiteral(Vec<(Expr, Expr)>),
     /// `name: value` in a call's argument list; only valid there.
     NamedArgument(String, Box<Expr>),
+    /// `...values` in a call's argument list: an array passed as the values
+    /// of a variadic parameter. Only valid as the last positional argument
+    /// of a call to a function with one (see pack_variadic_arguments).
+    Spread(Box<Expr>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1698,7 +1708,15 @@ impl Parser {
                 if promotes && is_abstract {
                     return Err(format!("{modifier_line}:{modifier_column}: an abstract constructor's parameters can't be properties"));
                 }
-                let value_type = self.parse_value_type()?;
+                let mut value_type = self.parse_value_type()?;
+                let variadic = matches!(self.current().kind, TokenKind::Ellipsis);
+                if variadic {
+                    if value_type == ValueType::Void {
+                        return Err(self.error("a variadic parameter can't be void"));
+                    }
+                    self.advance();
+                    value_type = self.array_of(value_type);
+                }
                 let (parameter_line, parameter_column) = (self.current().line, self.current().column);
                 let parameter_name = self.expect_identifier("expected parameter name")?;
                 if promotes {
@@ -1712,6 +1730,11 @@ impl Parser {
                     });
                 }
                 let default = if matches!(self.current().kind, TokenKind::Equals) {
+                    if variadic {
+                        return Err(self.error(&format!(
+                            "variadic parameter '{parameter_name}' can't have a default; it's an empty array when no values are given"
+                        )));
+                    }
                     self.advance();
                     Some(self.parse_parameter_default(value_type, &parameter_name)?)
                 } else {
@@ -1725,11 +1748,15 @@ impl Parser {
                 };
                 parameters.push(Parameter {
                     value_type,
-                    name: parameter_name,
+                    name: parameter_name.clone(),
                     default,
+                    variadic,
                 });
                 if !matches!(self.current().kind, TokenKind::Comma) {
                     break;
+                }
+                if variadic {
+                    return Err(self.error(&format!("variadic parameter '{parameter_name}' must be the last parameter")));
                 }
                 self.advance();
             }
@@ -2269,6 +2296,9 @@ impl Parser {
                 let mut values = Vec::new();
                 if !matches!(self.current().kind, TokenKind::RightParen) {
                     loop {
+                        if matches!(self.current().kind, TokenKind::Ellipsis) {
+                            return Err(self.error(&format!("{name} doesn't take '...' arguments; pass the array itself, or loop over it")));
+                        }
                         values.push(self.parse_expression()?);
                         if !matches!(self.current().kind, TokenKind::Comma) {
                             break;
@@ -3215,7 +3245,15 @@ impl Parser {
                 if arguments.iter().any(|argument| matches!(argument, Expr::NamedArgument(..))) {
                     return Err(self.error("positional arguments cannot follow named arguments"));
                 }
-                arguments.push(self.parse_expression()?);
+                if arguments.iter().any(|argument| matches!(argument, Expr::Spread(..))) {
+                    return Err(self.error("a spread '...' argument must be the last one"));
+                }
+                if matches!(self.current().kind, TokenKind::Ellipsis) {
+                    self.advance();
+                    arguments.push(Expr::Spread(Box::new(self.parse_expression()?)));
+                } else {
+                    arguments.push(self.parse_expression()?);
+                }
             }
             if !matches!(self.current().kind, TokenKind::Comma) {
                 return Ok(arguments);
@@ -3382,6 +3420,9 @@ impl Parser {
                 let untyped = matches!(self.current().kind, TokenKind::Identifier(_))
                     && matches!(self.tokens.get(self.cursor + 1).map(|token| &token.kind), Some(TokenKind::Comma | TokenKind::RightParen));
                 let value_type = if untyped { ValueType::Void } else { self.parse_value_type()? };
+                if matches!(self.current().kind, TokenKind::Ellipsis) {
+                    return Err(self.error("anonymous functions can't have variadic parameters; take an array instead"));
+                }
                 let name = self.expect_identifier("expected parameter name")?;
                 if matches!(self.current().kind, TokenKind::Equals) {
                     return Err(self.error("anonymous function parameters can't have defaults"));
@@ -3389,7 +3430,7 @@ impl Parser {
                 if parameters.iter().any(|parameter| parameter.name == name) {
                     return Err(self.error(&format!("parameter '{name}' is declared more than once")));
                 }
-                parameters.push(Parameter { value_type, name, default: None });
+                parameters.push(Parameter { value_type, name, default: None, variadic: false });
                 if !matches!(self.current().kind, TokenKind::Comma) {
                     break;
                 }
@@ -6523,8 +6564,17 @@ impl Emitter {
     /// An overriding or implementing method may change defaults and may make a
     /// required parameter optional, but must not make an optional one required:
     /// a call that omits it through the parent type would have no value for it.
+    /// It must also keep a variadic parameter variadic, and not make an array
+    /// parameter variadic, since calls through either type are packed the same way.
     fn check_keeps_optional(class: &ClassDef, method: &Function, inherited: &[Parameter]) -> Result<(), String> {
         for (own, parent) in method.parameters.iter().zip(inherited) {
+            if own.variadic != parent.variadic {
+                let (was, is) = if parent.variadic { ("variadic", "an array") } else { ("an array", "variadic") };
+                return Err(format!(
+                    "method '{}::{}' cannot make {was} parameter '{}' {is}",
+                    class.name, method.name, own.name
+                ));
+            }
             if parent.default.is_some() && own.default.is_none() {
                 return Err(format!(
                     "method '{}::{}' cannot make optional parameter '{}' required",
@@ -6533,6 +6583,54 @@ impl Emitter {
             }
         }
         Ok(())
+    }
+
+    /// The arguments of a call to a function with a variadic parameter (see
+    /// Parameter::variadic), with the values given for it packed into an
+    /// array literal, or the array spread with `...` passed as it is; with no
+    /// values, an empty array. Other calls' arguments are returned unchanged,
+    /// once it's checked that they spread nothing.
+    fn pack_variadic_arguments<'e>(parameters: &[Parameter], arguments: &'e [Expr], callee: &str) -> Result<Cow<'e, [Expr]>, String> {
+        let spreads = arguments.iter().any(|argument| matches!(argument, Expr::Spread(..)));
+        let Some(variadic) = parameters.last().filter(|parameter| parameter.variadic) else {
+            if spreads {
+                return Err(format!("{callee} has no variadic parameter for a '...' argument to fill"));
+            }
+            return Ok(Cow::Borrowed(arguments));
+        };
+        if arguments.iter().any(|argument| matches!(argument, Expr::NamedArgument(name, _) if *name == variadic.name)) {
+            return Err(format!(
+                "{callee}: variadic parameter '{}' can't be named; give its values last, by position",
+                variadic.name
+            ));
+        }
+        let fixed = parameters.len() - 1;
+        let positional = arguments.iter().take_while(|argument| !matches!(argument, Expr::NamedArgument(..))).count();
+        let mut packed: Vec<Expr> = arguments[..positional.min(fixed)].to_vec();
+        if positional > fixed {
+            match &arguments[fixed..positional] {
+                [Expr::Spread(array)] => packed.push((**array).clone()),
+                values if spreads => {
+                    return Err(format!(
+                        "{callee}: a '...' argument gives all of variadic parameter '{}', so it can't come after {} other value(s) for it",
+                        variadic.name,
+                        values.len() - 1
+                    ));
+                }
+                values => packed.push(Expr::ArrayLiteral(values.to_vec())),
+            }
+            packed.extend_from_slice(&arguments[positional..]);
+        } else {
+            if spreads {
+                return Err(format!(
+                    "{callee}: a '...' argument can only fill variadic parameter '{}'; give the parameters before it first",
+                    variadic.name
+                ));
+            }
+            packed.extend_from_slice(&arguments[positional..]);
+            packed.push(Expr::NamedArgument(variadic.name.clone(), Box::new(Expr::ArrayLiteral(Vec::new()))));
+        }
+        Ok(Cow::Owned(packed))
     }
 
     /// Matches a call's arguments to `parameters`: positional arguments by
@@ -6607,7 +6705,32 @@ impl Emitter {
         let mut values: Vec<Option<Value>> = vec![None; parameters.len()];
         for (index, expression) in resolved {
             let parameter = &parameters[*index];
-            let value = self.emit_expecting(expression, Some(parameter.value_type), variables, body)?;
+            let value = match self.emit_expecting(expression, Some(parameter.value_type), variables, body) {
+                Ok(value) => value,
+                // A value of the wrong type among the variadic parameter's.
+                Err(error) if parameter.variadic && matches!(expression, Expr::ArrayLiteral(_)) => {
+                    let expected = self.element_of(parameter.value_type).map(|element| self.type_name(element)).unwrap_or_default();
+                    return Err(match error.strip_prefix(&format!("array elements must all be {expected}, found ")) {
+                        Some(found) => format!(
+                            "{mismatch}: variadic parameter '{}' takes {expected} values, found {found}",
+                            parameter.name
+                        ),
+                        None => error,
+                    });
+                }
+                Err(error) => return Err(error),
+            };
+            if !self.is_assignable(parameter.value_type, value.value_type) && parameter.variadic {
+                let expected = self.element_of(parameter.value_type).map(|element| self.type_name(element)).unwrap_or_default();
+                let found = match (expression, self.element_of(value.value_type)) {
+                    (Expr::ArrayLiteral(_), Some(element)) => format!("{} values", self.type_name(element)),
+                    _ => self.type_name(value.value_type),
+                };
+                return Err(format!(
+                    "{mismatch}: variadic parameter '{}' takes {expected} values (or a {expected}[] spread with '...'), found {found}",
+                    parameter.name
+                ));
+            }
             if !self.is_assignable(parameter.value_type, value.value_type) {
                 return Err(format!(
                     "{mismatch}: expected {}, found {}",
@@ -7413,7 +7536,7 @@ impl Emitter {
                 }),
                 statement(StatementKind::Return(Some(Expr::Variable("#result".to_string())))),
             ];
-            (Parameter { value_type: rows_type, name: "#rows".to_string(), default: None }, result_type, statements)
+            (Parameter { value_type: rows_type, name: "#rows".to_string(), default: None, variadic: false }, result_type, statements)
         } else {
             let mut statements = vec![statement(StatementKind::If {
                 condition: Expr::Compare(CompareOp::Equal, row(), Box::new(Expr::Null)),
@@ -7422,7 +7545,7 @@ impl Emitter {
             })];
             statements.extend(steps);
             statements.push(statement(StatementKind::Return(Some(Expr::Variable("#object".to_string())))));
-            (Parameter { value_type: row_type, name: "#row".to_string(), default: None }, object, statements)
+            (Parameter { value_type: row_type, name: "#row".to_string(), default: None, variadic: false }, object, statements)
         };
         let symbol = format!(
             "qiq.{}.{}",
@@ -10354,7 +10477,8 @@ impl Emitter {
                     (&arguments[..], &[][..])
                 };
                 let callee_name = format!("method '{method_name}'");
-                let resolved = Self::resolve_arguments(&parameters, arguments, &callee_name)?;
+                let arguments = Self::pack_variadic_arguments(&parameters, arguments, &callee_name)?;
+                let resolved = Self::resolve_arguments(&parameters, &arguments, &callee_name)?;
                 // An abstract method (declared by an interface or abstract class),
                 // or one a subclass overrides, is looked up at run time in a
                 // dispatch table indexed by the class id in the object's header,
@@ -10545,7 +10669,8 @@ impl Emitter {
                     }
                     operands.push("ptr %this".to_string());
                 }
-                let resolved = Self::resolve_arguments(&method.parameters, arguments, &callee_name)?;
+                let arguments = Self::pack_variadic_arguments(&method.parameters, arguments, &callee_name)?;
+                let resolved = Self::resolve_arguments(&method.parameters, &arguments, &callee_name)?;
                 operands.extend(self.emit_arguments(
                     &method.parameters,
                     &resolved,
@@ -10631,7 +10756,8 @@ impl Emitter {
                     }
                 }
                 let callee_name = format!("constructor '{enclosing_name}'");
-                let resolved = Self::resolve_arguments(&parameters, arguments, &callee_name)?;
+                let arguments = Self::pack_variadic_arguments(&parameters, arguments, &callee_name)?;
+                let resolved = Self::resolve_arguments(&parameters, &arguments, &callee_name)?;
                 let operands = self.emit_arguments(
                     &parameters,
                     &resolved,
@@ -10707,7 +10833,8 @@ impl Emitter {
                     }
                     let constructor_parameters = constructor.parameters.clone();
                     let callee_name = format!("constructor '{class}'");
-                    let resolved = Self::resolve_arguments(&constructor_parameters, arguments, &callee_name)?;
+                    let arguments = Self::pack_variadic_arguments(&constructor_parameters, arguments, &callee_name)?;
+                    let resolved = Self::resolve_arguments(&constructor_parameters, &arguments, &callee_name)?;
                     let mut operands = vec![format!("ptr {object}")];
                     operands.extend(self.emit_arguments(
                         &constructor_parameters,
@@ -10833,7 +10960,8 @@ impl Emitter {
                 let parameters = signature.parameters.clone();
                 let return_type = signature.return_type;
                 let callee_name = format!("function '{name}'");
-                let resolved = Self::resolve_arguments(&parameters, arguments, &callee_name)?;
+                let arguments = Self::pack_variadic_arguments(&parameters, arguments, &callee_name)?;
+                let resolved = Self::resolve_arguments(&parameters, &arguments, &callee_name)?;
                 if let Some(function) = symbol.strip_prefix("qiq.stdlib.regex.") {
                     check_regex_literals(function, &resolved)?;
                 }
@@ -11069,6 +11197,9 @@ impl Emitter {
             Expr::NamedArgument(name, _) => {
                 Err(format!("named argument '{name}' is only valid in a call"))
             }
+            Expr::Spread(_) => Err(
+                "a '...' argument can only fill the variadic parameter of a function, method, or constructor declared with one".to_string(),
+            ),
             Expr::Compare(operator, left, right) => {
                 // An int literal on one side takes the other side's type when
                 // that is a byte, so `data[0] == 137` compares bytes.
@@ -11603,7 +11734,7 @@ fn expression_names(expression: &Expr, used: &mut std::collections::BTreeSet<Str
         Expr::Binary(_, a, b) | Expr::Compare(_, a, b) | Expr::Logical(_, a, b) | Expr::Coalesce(a, b) | Expr::Index(a, b) => {
             each(&[a, b], used, declared)
         }
-        Expr::Negate(a) | Expr::BitNot(a) | Expr::Not(a) | Expr::Member(a, _) | Expr::NewArray(_, a) | Expr::NamedArgument(_, a) => {
+        Expr::Negate(a) | Expr::BitNot(a) | Expr::Not(a) | Expr::Member(a, _) | Expr::NewArray(_, a) | Expr::NamedArgument(_, a) | Expr::Spread(a) => {
             each(&[a], used, declared)
         }
         Expr::MethodCall(object, _, arguments) | Expr::CallValue(object, arguments) => {
@@ -14815,6 +14946,41 @@ mod tests {
         // Naming only a leading prefix reuses the positional adapter.
         let prefix = compile_source("interface T { function r(int a, int b = 1): int; } class A implements T { function r(int a, int b = 10): int { return a; } } function show(T t): void { print(t->r(a: 0)); } show(new A());").unwrap();
         assert!(prefix.contains("define i64 @qiq_A_r.1(ptr %this, i64 %arg0)"));
+    }
+
+    #[test]
+    fn rejects_invalid_variadic_parameters_and_calls() {
+        let j = "function j(string separator, string ...parts): string { return separator; } ";
+        let cases = [
+            ("j(\",\", \"a\", 2);", "argument type mismatch calling 'j': variadic parameter 'parts' takes string values, found int"),
+            ("j(\",\", ...5);", "variadic parameter 'parts' takes string values (or a string[] spread with '...'), found int"),
+            ("j(\",\", ...[\"a\"], \"b\");", "a spread '...' argument must be the last one"),
+            ("j(\",\", \"a\", ...[\"b\"]);", "function 'j': a '...' argument gives all of variadic parameter 'parts', so it can't come after 1 other value(s) for it"),
+            ("j(...[\"a\"]);", "function 'j': a '...' argument can only fill variadic parameter 'parts'; give the parameters before it first"),
+            ("j(\",\", parts: [\"a\"]);", "function 'j': variadic parameter 'parts' can't be named; give its values last, by position"),
+            ("j();", "function 'j': missing argument for required parameter 'separator'"),
+            ("function k(int a): int { return a; } k(...[1]);", "function 'k' has no variadic parameter for a '...' argument to fill"),
+            ("string s = sprintf(\"%s\", ...[\"a\"]);", "a '...' argument can only fill the variadic parameter of a function"),
+            ("println(...[\"a\"]);", "println doesn't take '...' arguments"),
+            ("function m(int ...a, int b): void {}", "variadic parameter 'a' must be the last parameter"),
+            ("function m(int ...a = []): void {}", "variadic parameter 'a' can't have a default"),
+            ("function(int[]): void f = function(int ...a): void {};", "anonymous functions can't have variadic parameters"),
+            ("class A { function f(int ...a): void {} } class B extends A { function f(int[] a): void {} }", "method 'B::f' cannot make variadic parameter 'a' an array"),
+            ("class A { function f(int[] a): void {} } class B extends A { function f(int ...a): void {} }", "method 'B::f' cannot make an array parameter 'a' variadic"),
+        ];
+        for (code, message) in cases {
+            let source = format!("{j}{code}");
+            let error = compile_source(&source).unwrap_err();
+            assert!(error.contains(message), "{code}: expected '{message}', got '{error}'");
+        }
+    }
+
+    #[test]
+    fn variadic_values_are_packed_into_an_array_at_the_call() {
+        let ir = compile_source("function n(int ...xs): int { return len(xs); } print(n(1, 2) + n());").unwrap();
+        assert!(ir.contains("define i64 @n(ptr %arg0)"), "{ir}");
+        let main = main_ir(&ir);
+        assert_eq!(main.matches("call nonnull ptr @qiq_array_new(").count() + main.matches("call ptr @qiq_array_new(").count(), 2, "{main}");
     }
 
     #[test]

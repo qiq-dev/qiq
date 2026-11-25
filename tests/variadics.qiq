@@ -1,0 +1,72 @@
+// A variadic parameter, `T ...name`, takes any number of T values (or none)
+// and is a T[] inside the function. It must be the last parameter.
+function join(string separator, string ...parts): string {
+    return implode(separator, parts);
+}
+
+print(join("/", "usr", "local", "bin"));
+print(join("/"));
+print(len(join("/")));
+
+// `...array` passes an existing array as the values.
+string[] path = ["home", "ada"];
+print(join("/", ...path));
+
+// The parameters before it can be named; the variadic one can't.
+print(join(separator: ", "));
+
+// Methods, static methods, and constructors take them too, and a
+// constructor's variadic parameter can be a property.
+class Tally {
+    function __construct(public string name, public int ...counts) {}
+
+    function add(int ...more): Tally {
+        foreach (more as count) {
+            array_push(this->counts, count);
+        }
+        return this;
+    }
+
+    function total(): int {
+        return Tally::sum(...this->counts);
+    }
+
+    static function sum(int ...values): int {
+        int total = 0;
+        foreach (values as value) {
+            total += value;
+        }
+        return total;
+    }
+}
+
+Tally tally = new Tally("votes", 3, 4);
+print(tally->counts);
+print(tally->add(5)->add()->add(...[1, 2])->total());
+print(Tally::sum());
+
+// An override keeps the parameter variadic; calls through the parent type
+// reach it.
+class Shape {
+    function describe(string ...tags): string {
+        return "shape";
+    }
+}
+class Circle extends Shape {
+    function describe(string ...tags): string {
+        return "circle " + implode(" ", tags);
+    }
+}
+Shape shape = new Circle();
+print(shape->describe("red", "small"));
+
+// The values are evaluated in the order written.
+function trace(int value): int {
+    print("evaluated", value);
+    return value;
+}
+print(Tally::sum(trace(1), trace(2), trace(3)));
+
+// As a value, a variadic function takes its parameter as an array.
+function(string, string[]): string joiner = join;
+print(joiner("-", ["a", "b"]));
