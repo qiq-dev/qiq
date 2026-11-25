@@ -86,6 +86,7 @@ ada 36
 <li><code>Iterator&lt;T&gt;</code>, with <code>hasNext(): bool</code> and <code>next(): T</code>, gives values one at a time; <code>foreach</code> calls <code>next()</code> while <code>hasNext()</code> returns true.</li>
 <li><code>Iterable&lt;T&gt;</code>, with <code>iterator(): Iterator&lt;T&gt;</code>, is a collection: <code>foreach</code> asks it for a new iterator each time, so it can be looped over more than once.</li>
 </ul>
+<p>Their reference is <a href="class.iterator.html">The Iterator and Iterable interfaces</a>.</p>
 
 ```qiq
 class Countdown implements Iterator<int> {

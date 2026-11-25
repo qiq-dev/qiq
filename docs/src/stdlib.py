@@ -33,7 +33,7 @@ OVERVIEW = (
     "<tr><td><code>std/net/http/server</code></td><td>The <a href=\"ref.http-server.html\">HTTP server</a></td></tr>"
     "<tr><td><code>std/crypto</code></td><td><a href=\"ref.crypto.html\">Hashing and encoding</a>: MD5, SHA-1, SHA-2, HMAC, hex, base64, and password hashing</td></tr>"
     "<tr><td><code>std/csv</code></td><td><a href=\"ref.csv.html\">CSV</a>: reading and writing CSV as rows, by column name, as objects, or a row at a time</td></tr>"
-    "<tr><td><code>std/testing</code></td><td>The <code>Test</code> class that <a href=\"testing.html\">tests</a> take, for <code>qiq test</code></td></tr>"
+    "<tr><td><code>std/testing</code></td><td>The <a href=\"class.test.html\"><code>Test</code></a> class that <a href=\"testing.html\">tests</a> take, for <code>qiq test</code></td></tr>"
     "<tr><td><code>std/math</code></td><td><a href=\"ref.math.html\">Math</a>: rounding, roots, logarithms, trigonometry, <code>number_format</code>, and secure random numbers</td></tr>"
     "<tr><td><code>std/regex</code></td><td><a href=\"ref.regex.html\">Regular expressions</a>, with PHP's <code>preg_*</code> functions, and the <a href=\"class.regexmatch.html\">RegexMatch</a> class</td></tr>"
     "<tr><td><code>std/sql</code></td><td>SQL databases (SQLite, PostgreSQL, MySQL, and MariaDB): the <a href=\"class.database.html\">Database</a>, <a href=\"class.row.html\">Row</a>, and <a href=\"class.cursor.html\">Cursor</a> classes</td></tr>"
@@ -3395,8 +3395,9 @@ CSV = {
 CSVREADER_CLASS = r"""<h1>The CsvReader class</h1>
 <p>Reads a CSV file a record at a time, so a file of any size takes little memory. Import it from <code>std/csv</code>. It reads as <a href="function.csv-parse.html">csv_parse</a> does.</p>
 <h2>Class synopsis</h2>
-<div class="synopsis"><code><span class="kw">final class</span> <span class="cls">CsvReader</span> {<br>
+<div class="synopsis"><code><span class="kw">final class</span> <span class="cls">CsvReader</span> <span class="kw">implements</span> <span class="cls">Iterator</span>&lt;<span class="type">string[]</span>&gt; {<br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">static function</span> <span class="fn">open</span>(<span class="type">string</span> path, <span class="type">string</span> delimiter = <span class="default">","</span>): <span class="cls">CsvReader</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">hasNext</span>(): <span class="type">bool</span><br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">next</span>(): <span class="type">string[]</span><br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">line</span>(): <span class="type">int</span><br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">close</span>(): <span class="type">void</span><br>
@@ -3454,7 +3455,7 @@ CATEGORIES = [GENERAL, STRINGS, REGEX, MATH, ARRAYS, MAPS, FILES, CSV, DATES, JS
 FILE_CLASS = """<h1>The File class</h1>
 <p>A <code>File</code> reads or writes a file a piece at a time: a line, or a chunk of bytes. Use it for files too large to load at once, for files you build up gradually, and for standard input and output. To read or write a whole file in one call, the <a href="ref.files.html">file functions</a> are simpler.</p>
 <h2>Class synopsis</h2>
-<div class="synopsis"><code><span class="kw">final class</span> <span class="cls">File</span> {<br>
+<div class="synopsis"><code><span class="kw">final class</span> <span class="cls">File</span> <span class="kw">implements</span> <span class="cls">Iterator</span>&lt;<span class="type">string</span>&gt; {<br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">static function</span> <span class="fn">open</span>(<span class="type">string</span> path, <span class="type">string</span> mode = <span class="default">"r"</span>): <span class="cls">File</span><br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">static function</span> <span class="fn">stdin</span>(): <span class="cls">File</span><br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">static function</span> <span class="fn">stdout</span>(): <span class="cls">File</span><br>
@@ -3464,6 +3465,8 @@ FILE_CLASS = """<h1>The File class</h1>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">write</span>(<span class="type">string</span> text): <span class="type">void</span><br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">writeBytes</span>(<span class="type">byte[]</span> data): <span class="type">void</span><br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">eof</span>(): <span class="type">bool</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">hasNext</span>(): <span class="type">bool</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">next</span>(): <span class="type">string</span><br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">flush</span>(): <span class="type">void</span><br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">close</span>(): <span class="type">void</span><br>
 }</code></div>
@@ -4006,7 +4009,8 @@ column 'stock' is NULL; check with isNull first, or read it with a fallback, as 
 CURSOR_CLASS = """<h1>The Cursor class</h1>
 <p>The rows of a query, read a batch at a time rather than all at once, from <a href="class.database.html">Database</a>'s <code>cursor</code>. Use it for results too big to hold in memory: reading a million rows with <code>query</code> took 190 MB, and with a cursor under 1 MB.</p>
 <h2>Class synopsis</h2>
-<div class="synopsis"><code><span class="kw">final class</span> <span class="cls">Cursor</span> {<br>
+<div class="synopsis"><code><span class="kw">final class</span> <span class="cls">Cursor</span> <span class="kw">implements</span> <span class="cls">Iterator</span>&lt;<span class="cls">Row</span>&gt; {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">hasNext</span>(): <span class="type">bool</span><br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">next</span>(): <span class="cls">Row</span><br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">fetch</span>(<span class="type">int</span> count): <span class="cls">Row</span>[]<br>
 &nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">nextAs</span>(): <span class="cls">T</span><br>
@@ -4321,6 +4325,142 @@ string commit = trim(exec(["git", "rev-parse", "HEAD"])-&gt;check()-&gt;stdout);
 """
 
 # Pages for standard library classes: (href, title, summary, html).
+TEST_CLASS = r"""<h1>The Test class</h1>
+<p>The handle each test receives, for checking results and reporting: a test is a function named <code>test_...</code>, or a public method of a test class, that takes a <code>Test</code> and returns nothing, and <code>qiq test</code> runs it. Import it from <code>std/testing</code>. How to write and run tests, test classes, and table-driven tests is in <a href="testing.html">Testing</a>.</p>
+<h2>Class synopsis</h2>
+<div class="synopsis"><code><span class="kw">final class</span> <span class="cls">Test</span> {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">name</span>(): <span class="type">string</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">equal</span>(<span class="cls">T</span> actual, <span class="cls">T</span> expected, <span class="type">string</span> at = <span class="default">""</span>): <span class="type">void</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">notEqual</span>(<span class="cls">T</span> actual, <span class="cls">T</span> unexpected, <span class="type">string</span> at = <span class="default">""</span>): <span class="type">void</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">isTrue</span>(<span class="type">bool</span> condition, <span class="type">string</span> message = <span class="default">""</span>, <span class="type">string</span> at = <span class="default">""</span>): <span class="type">void</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">isFalse</span>(<span class="type">bool</span> condition, <span class="type">string</span> message = <span class="default">""</span>, <span class="type">string</span> at = <span class="default">""</span>): <span class="type">void</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">near</span>(<span class="type">double</span> actual, <span class="type">double</span> expected, <span class="type">double</span> tolerance = <span class="default">0.000000001</span>, <span class="type">string</span> at = <span class="default">""</span>): <span class="type">void</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">throws</span>(<span class="type">function(): void</span> body, <span class="type">string</span> exception = <span class="default">&quot;Exception&quot;</span>, <span class="type">string</span> at = <span class="default">""</span>): <span class="type">void</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">fail</span>(<span class="type">string</span> message, <span class="type">string</span> at = <span class="default">""</span>): <span class="type">void</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">skip</span>(<span class="type">string</span> reason = <span class="default">""</span>, <span class="type">string</span> at = <span class="default">""</span>): <span class="type">void</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">log</span>(<span class="type">string</span> message, <span class="type">string</span> at = <span class="default">""</span>): <span class="type">void</span><br>
+}</code></div>
+<p>Tests get a <code>Test</code> from <code>qiq test</code>; a program can't create one. <code>equal</code> and <code>notEqual</code> take any two values of the same type <code>T</code>, which the compiler checks.</p>
+<h2>Methods</h2>
+<table>
+<thead><tr><th>Method</th><th>Fails the test when</th></tr></thead>
+<tbody>
+<tr><td><code>equal(actual, expected)</code></td><td>The values differ, as <code>==</code> compares them: numbers, bools, strings, and chars by value; arrays and maps by their contents; objects by identity. Values of different types are a compile error.</td></tr>
+<tr><td><code>notEqual(actual, unexpected)</code></td><td>The values are equal.</td></tr>
+<tr><td><code>isTrue(condition, message)</code>, <code>isFalse(condition, message)</code></td><td>The condition isn't true (or false). The message, if given, is shown with the failure.</td></tr>
+<tr><td><code>near(actual, expected, tolerance)</code></td><td>Two doubles differ by more than the tolerance (10<sup>-9</sup> by default), for the results of arithmetic, such as <code>0.1 + 0.2</code>.</td></tr>
+<tr><td><code>throws(body, exception)</code></td><td>Calling <code>body</code> doesn't throw an exception of the class named <code>exception</code> (or a subclass); with the default, <code>"Exception"</code>, any exception will do.</td></tr>
+<tr><td><code>fail(message)</code></td><td>Always: for a check the other methods don't cover.</td></tr>
+</tbody>
+</table>
+<table>
+<thead><tr><th>Method</th><th>Does</th></tr></thead>
+<tbody>
+<tr><td><code>skip(reason)</code></td><td>Stops the test, which counts as skipped, not failed, with the reason shown: for a test that can't run here, such as one that needs a database server.</td></tr>
+<tr><td><code>log(message)</code></td><td>Notes a message, shown if the test fails, or with <code>qiq test -v</code>.</td></tr>
+<tr><td><code>name()</code></td><td>The test's name: its function's name, or <code>Class::method</code> for a method.</td></tr>
+</tbody>
+</table>
+<p>A failed assertion stops its test; the other tests still run. A test that throws an exception it doesn't catch fails too, with the exception and its <a href="exceptions.html">stack trace</a>.</p>
+<h2>Where a failure is</h2>
+<p>Each method's last parameter, <code>at</code>, is where the call is: the compiler passes the caller's file and line, so a failure says which assertion failed, as in <code>money_test.qiq:12: expected "$5.00", found "$4.99"</code>. Pass it yourself only from a helper that checks things for several tests, so a failure points at the test rather than the helper.</p>
+<h2>Example</h2>
+<pre class="code">import Test from "std/testing";
+
+function test_parse_money(Test t): void {
+    t-&gt;equal(parse_money("$4.99"), 499);
+    t-&gt;near(0.1 + 0.2, 0.3);
+    t-&gt;throws(fn() =&gt; parse_money("4.99"), "InvalidArgumentException");
+}</pre>
+<p>Failures are reported as Go's <code>go test</code> does:</p>
+<pre class="code">--- FAIL: test_parse_money (0.00s)
+    money_test.qiq:4: expected 499, found 500
+0 passed, 1 failed</pre>
+"""
+
+ITERATOR_INTERFACES = r"""<h1>The Iterator and Iterable interfaces</h1>
+<p>The two interfaces that let <a href="control-structures.html#iterating-objects">foreach</a> loop over objects. They're <a href="generics.html">generic</a>, and available in every file without an import.</p>
+<h2>Interface synopsis</h2>
+<div class="synopsis"><code><span class="kw">interface</span> <span class="cls">Iterator</span>&lt;<span class="cls">T</span>&gt; {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">hasNext</span>(): <span class="type">bool</span><br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">next</span>(): <span class="cls">T</span><br>
+}<br>
+<br>
+<span class="kw">interface</span> <span class="cls">Iterable</span>&lt;<span class="cls">T</span>&gt; {<br>
+&nbsp;&nbsp;&nbsp;&nbsp;<span class="kw">function</span> <span class="fn">iterator</span>(): <span class="cls">Iterator</span>&lt;<span class="cls">T</span>&gt;<br>
+}</code></div>
+<table>
+<thead><tr><th>Method</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>Iterator::hasNext()</code></td><td>Whether there's another value.</td></tr>
+<tr><td><code>Iterator::next()</code></td><td>The next value. <code>foreach</code> calls it only after <code>hasNext()</code> returns true.</td></tr>
+<tr><td><code>Iterable::iterator()</code></td><td>A new iterator over the values, from the start: <code>foreach</code> asks for one each time it loops, so an <code>Iterable</code> can be looped over again.</td></tr>
+</tbody>
+</table>
+<h2>In foreach</h2>
+<p><code>foreach (object as value)</code> works on an object whose class implements either interface: for an <code>Iterable&lt;T&gt;</code>, it calls <code>iterator()</code> once, then <code>next()</code> while <code>hasNext()</code> is true; an <code>Iterator&lt;T&gt;</code> is used as it is, so it's read once, from where it is. The loop variable is a <code>T</code>, and <code>foreach (object as i =&gt; value)</code> counts <code>i</code> from 0. <code>break</code>, <code>continue</code>, and <code>return</code> work as in any loop, so an iterator can be endless.</p>
+```qiq
+class Counter implements Iterator<int> {
+    private int at;
+    private int to;
+
+    function __construct(int from, int to) {
+        this->at = from;
+        this->to = to;
+    }
+
+    function hasNext(): bool {
+        return this->at <= this->to;
+    }
+
+    function next(): int {
+        this->at++;
+        return this->at - 1;
+    }
+}
+
+class Range implements Iterable<int> {
+    private int from;
+    private int to;
+
+    function __construct(int from, int to) {
+        this->from = from;
+        this->to = to;
+    }
+
+    function iterator(): Iterator<int> {
+        return new Counter(this->from, this->to);
+    }
+}
+
+Range digits = new Range(1, 3);
+foreach (digits as i => digit) {
+    print(i, digit);
+}
+foreach (digits as digit) {
+    print(digit * 10);
+}
+```
+```output
+0 1
+1 2
+2 3
+10
+20
+30
+```
+<h2>In the standard library</h2>
+<table>
+<thead><tr><th>Class</th><th>Is an</th><th>Gives</th></tr></thead>
+<tbody>
+<tr><td><a href="class.file.html">File</a></td><td><code>Iterator&lt;string&gt;</code></td><td>Its lines, as <code>readLine()</code> reads them</td></tr>
+<tr><td><a href="class.csvreader.html">CsvReader</a></td><td><code>Iterator&lt;string[]&gt;</code></td><td>Its records' fields</td></tr>
+<tr><td><a href="class.cursor.html">Cursor</a></td><td><code>Iterator&lt;Row&gt;</code></td><td>A query's rows, read a batch at a time</td></tr>
+</tbody>
+</table>
+<p>A parameter of type <code>Iterable&lt;int&gt;</code> takes any collection of ints that implements it, as <code>function total(Iterable&lt;int&gt; values)</code> does.</p>
+"""
+
 CLASS_PAGES = [
     ("class.file.html", "The File class", "Reading and writing files a line or a chunk at a time, including standard input and output.", FILE_CLASS),
     ("class.response.html", "The Response class", "The result of an HTTP request: status, headers, and body.", RESPONSE_CLASS),
@@ -4338,5 +4478,7 @@ CLASS_PAGES = [
     ("class.csvwriter.html", "The CsvWriter class", "Writes a CSV file a row at a time.", CSVWRITER_CLASS),
     ("class.regexmatch.html", "The RegexMatch class", "A match of a regular expression: its text, position, and groups.", REGEXMATCH_CLASS),
     ("class.processresult.html", "The ProcessResult class", "The exit status and output of a command run by exec or shell.", PROCESSRESULT_CLASS),
+    ("class.test.html", "The Test class", "What a test receives from qiq test: assertions, skipping, and logging.", TEST_CLASS),
+    ("class.iterator.html", "The Iterator and Iterable interfaces", "What foreach needs to loop over objects, and the standard library classes that implement them.", ITERATOR_INTERFACES),
     ("exception-classes.html", "Exception classes", "The exception classes thrown by the language and the standard library.", EXCEPTION_CLASSES),
 ]
