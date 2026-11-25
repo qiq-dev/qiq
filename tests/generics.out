@@ -1,0 +1,12 @@
+6 hi [1, 2, 3] a list of 3
+Box<int> LinkedList<int>
+one 1 Pair<string, int>
+7 Box<Box<int>>
+3 none [1, 2, 3]
+[10, 20, 30] [1, 2]
+0
+hello
+5
+a list of 3 2 A
+{"value":{"value":7}} [{"value":1},{"value":2}]
+42

@@ -1,0 +1,166 @@
+// Generic classes and functions: type parameters, filled in where used.
+interface Show {
+    function show(): string;
+}
+
+class Box<T> {
+    public T value;
+
+    function __construct(T value) {
+        this->value = value;
+    }
+}
+
+// A class's type parameters are used in its properties and methods, and it
+// can mention itself (Node<T> next) and other generic classes.
+class Node<T> {
+    public T value;
+    public Node<T> next = null;
+
+    function __construct(T value) {
+        this->value = value;
+    }
+}
+
+class LinkedList<T> implements Show {
+    private Node<T> head = null;
+    private int count = 0;
+
+    function prepend(T value): LinkedList<T> {
+        Node<T> node = new Node(value);
+        node->next = this->head;
+        this->head = node;
+        this->count++;
+        return this;
+    }
+
+    function toArray(): T[] {
+        T[] values = [];
+        Node<T> current = this->head;
+        while (current != null) {
+            array_push(values, current->value);
+            current = current->next;
+        }
+        return values;
+    }
+
+    function show(): string {
+        return f"a list of {this->count}";
+    }
+}
+
+class Pair<A, B> {
+    public A first;
+    public B second;
+
+    function __construct(A first, B second) {
+        this->first = first;
+        this->second = second;
+    }
+
+    function swap(): Pair<B, A> {
+        return new Pair(this->second, this->first);
+    }
+}
+
+// Type arguments can be written, or inferred: from the constructor's
+// arguments, or from the type the object is used as.
+Box<int> written = new Box<int>(5);
+Box<string> inferred = new Box("hi");
+LinkedList<int> numbers = new LinkedList();
+numbers->prepend(3)->prepend(2)->prepend(1);
+print(written->value + 1, inferred->value, numbers->toArray(), numbers->show());
+print(written, numbers);
+
+Pair<int, string> pair = new Pair(1, "one");
+Pair<string, int> swapped = pair->swap();
+print(swapped->first, swapped->second, swapped);
+
+Box<Box<int>> nested = new Box(new Box(7));
+print(nested->value->value, nested);
+
+// Generic functions: the type arguments come from the arguments.
+function firstOr<T>(T[] values, T fallback): T {
+    return len(values) > 0 ? values[0] : fallback;
+}
+
+function transform<T, U>(T[] values, function(T): U change): U[] {
+    U[] result = [];
+    foreach (values as value) {
+        array_push(result, change(value));
+    }
+    return result;
+}
+
+function listOf<T>(T ...values): T[] {
+    return values;
+}
+
+function emptyList<T>(): T[] {
+    return [];
+}
+
+print(firstOr([3, 4], 0), firstOr([], "none"), listOf(1, 2, 3));
+print(transform([1, 2, 3], fn(n) => n * 10), transform(["a", "bb"], fn(string s) => len(s)));
+// When the arguments don't decide, the type the result is used as does.
+int[] none = emptyList();
+print(len(none));
+
+// Bounds: T must be the class or interface after the colon, and code
+// using a T can call that type's methods.
+interface HasLength {
+    function length(): int;
+}
+
+class Word implements HasLength {
+    public string text;
+
+    function __construct(string text) {
+        this->text = text;
+    }
+
+    function length(): int {
+        return len(this->text);
+    }
+}
+
+function longest<T: HasLength>(T[] items): T {
+    T best = items[0];
+    foreach (items as item) {
+        if (item->length() > best->length()) {
+            best = item;
+        }
+    }
+    return best;
+}
+
+class Shelf<T: HasLength> {
+    private T[] items = [];
+
+    function add(T item): void {
+        array_push(this->items, item);
+    }
+
+    function totalLength(): int {
+        int total = 0;
+        foreach (this->items as item) {
+            total += item->length();
+        }
+        return total;
+    }
+}
+
+print(longest([new Word("hi"), new Word("hello"), new Word("hey")])->text);
+Shelf<Word> shelf = new Shelf();
+shelf->add(new Word("abc"));
+shelf->add(new Word("de"));
+print(shelf->totalLength());
+
+// Objects of generic classes work everywhere objects do.
+Show shown = numbers;
+Box<int>[] boxes = [new Box(1), new Box(2)];
+map[string, Box<string>] named = {"a" => new Box("A")};
+print(shown->show(), boxes[1]->value, named["a"]->value);
+print(json_encode(nested), json_encode(boxes));
+Box<int> decoded = json_decode("{\"value\": 42}");
+print(decoded->value);

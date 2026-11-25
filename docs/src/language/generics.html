@@ -1,0 +1,140 @@
+<!-- title: Generics -->
+<h1>Generics</h1>
+<p>A generic class or function has <em>type parameters</em>, written in angle brackets after its name, that stand for types given where it's used. One <code>Stack&lt;T&gt;</code> serves as a stack of ints, of strings, or of any class, and the compiler checks each use with the real types.</p>
+
+```qiq
+class Stack<T> {
+    private T[] items = [];
+
+    function push(T item): void {
+        array_push(this->items, item);
+    }
+
+    function pop(): T {
+        return array_pop(this->items);
+    }
+
+    function size(): int {
+        return len(this->items);
+    }
+}
+
+Stack<string> names = new Stack<string>();
+names->push("Ada");
+names->push("Lin");
+print(names->pop(), names->size(), names);
+```
+```output
+Lin 1 Stack<string>
+```
+
+<h2>Generic classes</h2>
+<ul>
+<li>Declare type parameters after the class name: <code>class Pair&lt;A, B&gt;</code>. Inside the class they're types like any other, for properties, parameters, return types, variables, and arrays and maps: <code>T[]</code>, <code>map[string, T]</code>.</li>
+<li>Use the class with type arguments: <code>Stack&lt;int&gt;</code>, <code>Pair&lt;string, User&gt;</code>, <code>Stack&lt;Stack&lt;int&gt;&gt;</code>. Any type can be one, including <code>int</code> and <code>?int</code>.</li>
+<li>A class can mention itself and other generic classes with its parameters, as a linked list's <code>Node&lt;T&gt; next</code> does.</li>
+<li>Generic classes can implement interfaces, and their objects work everywhere objects do: as interface values, in arrays and maps, with <code>json_encode</code> and <code>json_decode</code>, and in print, where they show their type arguments.</li>
+</ul>
+
+<h2>Inferring type arguments</h2>
+<p><code>new</code> can leave the type arguments out when the compiler can tell them: from the type the object is used as, or else from the constructor's arguments.</p>
+
+```qiq
+class Pair<A, B> {
+    public A first;
+    public B second;
+
+    function __construct(A first, B second) {
+        this->first = first;
+        this->second = second;
+    }
+
+    function swap(): Pair<B, A> {
+        return new Pair(this->second, this->first);
+    }
+}
+
+Pair<int, string> pair = new Pair(1, "one");
+print(pair->swap()->first, pair->swap());
+```
+```output
+one Pair<string, int>
+```
+
+<h2>Generic functions</h2>
+<p>A function's type parameters come after its name. Calls never write type arguments: they come from the arguments' types, and when those don't decide (as for a function that only returns a <code>T[]</code>), from the type the result is used as.</p>
+
+```qiq
+function firstOr<T>(T[] values, T fallback): T {
+    return len(values) > 0 ? values[0] : fallback;
+}
+
+function transform<T, U>(T[] values, function(T): U change): U[] {
+    U[] result = [];
+    foreach (values as value) {
+        array_push(result, change(value));
+    }
+    return result;
+}
+
+print(firstOr([3, 4], 0), firstOr([], "none"));
+print(transform([1, 2, 3], fn(n) => n * 10));
+print(transform(["a", "bb"], fn(string s) => len(s)));
+```
+```output
+3 none
+[10, 20, 30]
+[1, 2]
+```
+
+<p>An anonymous function argument, like <code>fn(n) =&gt; n * 10</code> above, takes its parameter types from the other arguments, and its return type decides <code>U</code>. Arguments that need a type to have one (<code>[]</code>, <code>{}</code>, <code>null</code>) take it from the other arguments too. When an argument gives a different type for a parameter than an earlier one did, the call is an error: <code>T is int from an earlier argument, but string here</code>.</p>
+
+<h2>Bounds</h2>
+<p>Without a bound, generic code can only store, pass, return, and compare a <code>T</code>, since it could be any type. A bound, written <code>T: Interface</code> (or a class), says what <code>T</code> must be: generic code can then call that type's methods, and each use is checked to give a type that is one.</p>
+
+```qiq
+interface HasLength {
+    function length(): int;
+}
+
+class Word implements HasLength {
+    public string text;
+
+    function __construct(string text) {
+        this->text = text;
+    }
+
+    function length(): int {
+        return len(this->text);
+    }
+}
+
+function longest<T: HasLength>(T[] items): T {
+    T best = items[0];
+    foreach (items as item) {
+        if (item->length() > best->length()) {
+            best = item;
+        }
+    }
+    return best;
+}
+
+print(longest([new Word("hi"), new Word("hello")])->text);
+```
+```output
+hello
+```
+
+<p>Calling <code>longest</code> with objects that aren't a <code>HasLength</code> is the error <code>longest's type parameter T must be a HasLength, but Plain isn't one</code>.</p>
+
+<h2>How it works</h2>
+<p>The compiler makes a copy of a generic class or function for each set of type arguments the program uses, with the types filled in, so generic code runs exactly as fast as code written for those types: a <code>Stack&lt;int&gt;</code> stores plain ints. Generic code is also checked once on its own, even if nothing uses it, with each <code>T</code> standing for its bound, or for a type with no methods; a mistake shows up there rather than at some later use. One case is only caught when the code is used: comparing a <code>T</code> with <code>null</code> is an error when <code>T</code> is a type that can't be null, such as <code>int</code>.</p>
+
+<h2>Rules</h2>
+<ul>
+<li>A generic class can't extend a class, be abstract, or have static members yet; it can implement interfaces, and ordinary classes can't extend it.</li>
+<li>Interfaces can't be generic yet, and methods can't have type parameters of their own: give them to the class.</li>
+<li><code>?T</code> isn't allowed, since <code>T</code> may already be a type that can be null. <code>instanceof</code> can't test for a generic class.</li>
+<li>Calls can't write type arguments (<code>first&lt;int&gt;(xs)</code>); a generic function can't be used as a function value.</li>
+<li>Type arguments are exact: a <code>Stack&lt;Dog&gt;</code> isn't a <code>Stack&lt;Animal&gt;</code>, even when a <code>Dog</code> is an <code>Animal</code>.</li>
+</ul>

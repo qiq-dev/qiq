@@ -55,6 +55,7 @@ LANGUAGE = [
     ("Language reference", "static", "Static members"),
     ("Language reference", "interfaces", "Interfaces"),
     ("Language reference", "enums", "Enums"),
+    ("Language reference", "generics", "Generics"),
     ("Language reference", "exceptions", "Exceptions"),
     ("Language reference", "modules", "Modules"),
     ("Language reference", "packages", "Packages"),

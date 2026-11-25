@@ -798,6 +798,49 @@ enum ValueType {
     /// is a pointer to a small immutable box (an object of the scalar's box
     /// class, see box_class) holding the scalar, or null.
     Nullable(Scalar),
+    /// A type parameter of a generic class or function (an index into
+    /// Generics::params). Only in generic code, which is never emitted as
+    /// written: each use is a copy with the parameters replaced (see
+    /// Monomorphizer).
+    TypeParam(u32),
+    /// A generic class applied to type arguments, `Box<int>` (an index into
+    /// Generics::applications). Replaced by the class made for those
+    /// arguments before code is emitted.
+    Applied(u32),
+}
+
+/// A type parameter: `T`, or `T: Bound` (a class or interface it must be).
+#[derive(Debug, Clone)]
+struct TypeParamDef {
+    name: String,
+    bound: Option<u32>,
+}
+
+/// A generic class applied to type arguments, as written: `Box<int>`, or
+/// `Box<T>` inside generic code.
+#[derive(Debug, Clone, PartialEq)]
+struct Application {
+    generic: u32,
+    arguments: Vec<ValueType>,
+}
+
+/// Generic classes and functions: their type parameters, the applications
+/// written in the program, the declarations (kept apart from the classes
+/// and functions that are emitted), and the copies made for each set of
+/// type arguments.
+#[derive(Debug, Clone, Default)]
+struct Generics {
+    params: Vec<TypeParamDef>,
+    applications: Vec<Application>,
+    /// Generic classes as declared, by class id. Their own entries in the
+    /// class table become inert stubs (see Monomorphizer::run).
+    class_templates: HashMap<u32, ClassDef>,
+    /// Generic functions as declared, by symbol.
+    function_templates: HashMap<String, Function>,
+    /// The class made for each generic class and arguments.
+    class_instances: Vec<(u32, Vec<ValueType>, u32)>,
+    /// The function made for each generic function and arguments, by symbol.
+    function_instances: Vec<(String, Vec<ValueType>, String)>,
 }
 
 /// The scalars that have nullable forms (strings, chars, arrays, maps, and
@@ -855,6 +898,8 @@ impl ValueType {
             | Self::Class(_)
             | Self::Function(_)
             | Self::Nullable(_)
+            | Self::TypeParam(_)
+            | Self::Applied(_)
             | Self::Null => "ptr",
             Self::Void => "void",
         }
@@ -923,8 +968,9 @@ fn type_name(
     array_types: &[ValueType],
     function_types: &[FunctionType],
     classes: &[ClassDef],
+    generics: &Generics,
 ) -> String {
-    let name = |value_type: ValueType| type_name(value_type, map_types, array_types, function_types, classes);
+    let name = |value_type: ValueType| type_name(value_type, map_types, array_types, function_types, classes, generics);
     match value_type {
         ValueType::Int => "int".to_string(),
         ValueType::Double => "double".to_string(),
@@ -957,6 +1003,15 @@ fn type_name(
         ValueType::Null => "null".to_string(),
         ValueType::Void => "void".to_string(),
         ValueType::Nullable(scalar) => format!("?{}", name(scalar.value_type())),
+        ValueType::TypeParam(id) => generics.params.get(id as usize).map_or_else(|| "T".to_string(), |param| param.name.clone()),
+        ValueType::Applied(id) => match generics.applications.get(id as usize) {
+            Some(application) => {
+                let generic = classes.get(application.generic as usize).map_or("class", |class| class.name.as_str());
+                let arguments: Vec<String> = application.arguments.iter().map(|argument| name(*argument)).collect();
+                format!("{generic}<{}>", arguments.join(", "))
+            }
+            None => "class".to_string(),
+        },
     }
 }
 
@@ -1079,6 +1134,8 @@ struct Function {
     /// query's `?` placeholders. They are handed to the C runtime with
     /// qiq_bind_values just before the call, which takes them from there.
     binds_values: bool,
+    /// A generic function's type parameters (indexes into Generics::params).
+    type_params: Vec<u32>,
     /// Where the function's name is (for an anonymous function, `function`
     /// or `fn`), for errors about the function as a whole.
     line: usize,
@@ -1170,6 +1227,11 @@ struct ClassDef {
     /// Set for an `enum`: its cases, each a single object made by the
     /// compiler (see emit_enum_globals).
     enumeration: Option<Enumeration>,
+    /// A generic class's type parameters (indexes into Generics::params).
+    type_params: Vec<u32>,
+    /// For a class made from a generic one: the generic class and the type
+    /// arguments it was made for.
+    instance_of: Option<(u32, Vec<ValueType>)>,
     /// Where the class's name is, for errors about the class as a whole.
     line: usize,
     column: usize,
@@ -1193,10 +1255,11 @@ struct EnumCase {
     value: Option<Expr>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Program {
     functions: Vec<Function>,
     classes: Vec<ClassDef>,
+    generics: Generics,
     /// Top-level statements of the entry module; they become `main`.
     statements: Vec<Statement>,
     map_types: Vec<MapType>,
@@ -1206,7 +1269,7 @@ struct Program {
 }
 
 /// A source file. Module 0 is the entry file passed to the compiler.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 struct Module {
     /// Path shown in error messages; empty when compiling a source string.
     path: String,
@@ -1287,6 +1350,9 @@ enum Expr {
     /// the u32 is the class whose code contains it.
     NewStatic(u32, Vec<Expr>),
     NewObject(u32, Vec<Expr>),
+    /// `new Box<int>(args)`, or `new Box(args)` with the type arguments
+    /// inferred: an object of a generic class (see emit_new_generic).
+    NewGeneric(u32, Option<Vec<ValueType>>, Vec<Expr>),
     /// `new type[size]`: a zero-filled array; the type is the element type.
     NewArray(ValueType, Box<Expr>),
     /// `[a, b, ...]`; the element type comes from the elements, or from the
@@ -1479,6 +1545,13 @@ struct Parser {
     map_types: Vec<MapType>,
     array_types: Vec<ValueType>,
     function_types: Vec<FunctionType>,
+    generics: Generics,
+    /// The type parameters in scope (of the generic class or function being
+    /// parsed), innermost last.
+    type_scope: Vec<(String, u32)>,
+    /// The generic class being parsed (not yet in `classes`) and its number
+    /// of type parameters, for `Box<T>` inside its own body.
+    class_params_in_progress: Option<(u32, usize)>,
     class_names: HashMap<String, u32>,
     classes: Vec<ClassDef>,
     module: u32,
@@ -1515,7 +1588,7 @@ impl Parser {
 
     /// A type as written in qiq source, for error messages.
     fn type_name(&self, value_type: ValueType) -> String {
-        type_name(value_type, &self.map_types, &self.array_types, &self.function_types, &self.classes)
+        type_name(value_type, &self.map_types, &self.array_types, &self.function_types, &self.classes, &self.generics)
     }
 
     fn qualified_symbol(&self, name: &str, prefix: &str) -> String {
@@ -1758,6 +1831,19 @@ impl Parser {
         let (line, column) = (self.current().line, self.current().column);
         let name = self.expect_identifier("expected function name")?;
         let name_for_symbol = self.qualified_symbol(&name, "qiq.");
+        // `function first<T>(T[] items): T`
+        let scope_size = self.type_scope.len();
+        let type_params = if matches!(self.current().kind, TokenKind::Less) {
+            if owner_class.is_some() {
+                return Err(self.error("methods can't have their own type parameters yet; give them to the class instead, as in `class Box<T>`"));
+            }
+            if is_abstract {
+                return Err(self.error("extern functions can't be generic"));
+            }
+            self.parse_type_parameters()?
+        } else {
+            Vec::new()
+        };
         self.expect(TokenKind::LeftParen, "expected '(' after function name")?;
         let mut parameters = Vec::new();
         self.promoted.clear();
@@ -1890,6 +1976,7 @@ impl Parser {
             }
             self.expect(TokenKind::RightBrace, "expected '}' after function body")?;
         }
+        self.type_scope.truncate(scope_size);
         Ok(Function {
             name,
             parameters,
@@ -1904,6 +1991,7 @@ impl Parser {
             symbol: name_for_symbol,
             is_extern: false,
             binds_values,
+            type_params,
             line,
             column,
         })
@@ -1928,6 +2016,23 @@ impl Parser {
         let (line, column) = (self.current().line, self.current().column);
         let name = self.expect_identifier(&format!("expected {kind} name"))?;
         self.check_class_name_is_free(&name)?;
+        // `class Box<T>`
+        let scope_size = self.type_scope.len();
+        let type_params = if matches!(self.current().kind, TokenKind::Less) {
+            if is_enum {
+                return Err(self.error("an enum can't be generic"));
+            }
+            if is_abstract {
+                return Err(self.error("a generic class can't be abstract yet"));
+            }
+            self.parse_type_parameters()?
+        } else {
+            Vec::new()
+        };
+        if !type_params.is_empty() && matches!(self.current().kind, TokenKind::Extends) {
+            return Err(self.error(&format!("generic class '{name}' can't extend a class yet; it can implement interfaces")));
+        }
+        let generic = !type_params.is_empty();
         let backing = if is_enum && matches!(self.current().kind, TokenKind::Colon) {
             self.advance();
             let at = self.error("");
@@ -1972,6 +2077,9 @@ impl Parser {
         self.class_names.insert(name.clone(), class_id);
         self.current_class = Some(class_id);
         self.current_parent = parent_class;
+        if generic {
+            self.class_params_in_progress = Some((class_id, type_params.len()));
+        }
         self.expect(TokenKind::LeftBrace, &format!("expected '{{' after {kind} name"))?;
 
         let mut properties = Vec::new();
@@ -2028,6 +2136,9 @@ impl Parser {
                 }
                 constants.push(constant);
                 continue;
+            }
+            if generic && is_static_method {
+                return Err(self.error(&format!("generic class '{name}' can't have static members yet")));
             }
             if matches!(self.current().kind, TokenKind::Function) && !self.at_function_type() {
                 let start = self.error("");
@@ -2184,6 +2295,8 @@ impl Parser {
         self.expect(TokenKind::RightBrace, &format!("expected '}}' after {kind} body"))?;
         self.current_class = None;
         self.current_parent = None;
+        self.class_params_in_progress = None;
+        self.type_scope.truncate(scope_size);
         self.current_enum_cases = None;
         let enumeration = if is_enum {
             self.add_enum_members(class_id, &name, backing, &cases, &mut properties, &mut methods);
@@ -2205,6 +2318,8 @@ impl Parser {
             constants,
             methods,
             enumeration,
+            type_params,
+            instance_of: None,
             line,
             column,
         });
@@ -2312,6 +2427,7 @@ impl Parser {
             symbol: this.qualified_symbol(name, "qiq."),
             is_extern: false,
             binds_values: false,
+            type_params: Vec::new(),
             line: 0,
             column: 0,
         };
@@ -2402,6 +2518,9 @@ impl Parser {
         let (line, column) = (self.current().line, self.current().column);
         let name = self.expect_identifier("expected interface name")?;
         self.check_class_name_is_free(&name)?;
+        if matches!(self.current().kind, TokenKind::Less) {
+            return Err(self.error("generic interfaces aren't supported yet; a generic class can implement ordinary interfaces"));
+        }
         let interfaces = if matches!(self.current().kind, TokenKind::Extends) {
             self.advance();
             self.parse_interface_list(&name, "extends")?
@@ -2482,6 +2601,8 @@ impl Parser {
             constants,
             methods,
             enumeration: None,
+            type_params: Vec::new(),
+            instance_of: None,
             line,
             column,
         });
@@ -2592,6 +2713,11 @@ impl Parser {
                         Some(TokenKind::DoubleColon)
                     ) =>
             {
+                let value_type = self.parse_value_type()?;
+                self.parse_declaration(value_type)
+            }
+            // A variable whose type is a type parameter: `T found = ...;`
+            TokenKind::Identifier(ref type_name) if self.type_scope.iter().any(|(param, _)| param == type_name) => {
                 let value_type = self.parse_value_type()?;
                 self.parse_declaration(value_type)
             }
@@ -3225,6 +3351,9 @@ impl Parser {
         let class_id = *self.class_names.get(&class_name).ok_or_else(|| {
             self.error(&format!("type '{class_name}' is not declared or imported{}", stdlib_hint(&class_name)))
         })?;
+        if self.generic_arity(class_id) > 0 {
+            return Err(self.error(&format!("instanceof can't test for generic class {class_name}")));
+        }
         let binding = match &self.current().kind {
             TokenKind::Identifier(name) if name != "instanceof" => {
                 let name = name.clone();
@@ -3306,6 +3435,14 @@ impl Parser {
                 // (`new int[][3]`), a map, or a class (`new Page[3]`).
                 self.advance();
                 let element_type = self.parse_value_type()?;
+                // `new Box<int>(value)`: an object of a generic class.
+                if let (ValueType::Applied(id), TokenKind::LeftParen) = (element_type, &self.current().kind) {
+                    let application = self.generics.applications[id as usize].clone();
+                    self.advance();
+                    let arguments = self.parse_arguments()?;
+                    self.expect(TokenKind::RightParen, "expected ')' after constructor arguments")?;
+                    return Ok(Expr::NewGeneric(application.generic, Some(application.arguments), arguments));
+                }
                 self.expect(TokenKind::LeftBracket, "expected '[size]' after the array element type")?;
                 let size = self.parse_expression()?;
                 self.expect(TokenKind::RightBracket, "expected ']' after array size")?;
@@ -3320,7 +3457,12 @@ impl Parser {
                 self.expect(TokenKind::LeftParen, "expected '(' after class name")?;
                 let arguments = self.parse_arguments()?;
                 self.expect(TokenKind::RightParen, "expected ')' after constructor arguments")?;
-                Expr::NewObject(class_id, arguments)
+                if self.generic_arity(class_id) > 0 {
+                    // `new Box(value)`: the type arguments are inferred.
+                    Expr::NewGeneric(class_id, None, arguments)
+                } else {
+                    Expr::NewObject(class_id, arguments)
+                }
             }
             TokenKind::Number(value) => {
                 let value = i64::try_from(value)
@@ -3588,12 +3730,116 @@ impl Parser {
         Ok(Expr::StaticCall(target, member, arguments))
     }
 
+    /// `<T, U: Bound>` after a generic class's or function's name: registers
+    /// each parameter and puts it in scope (the caller takes it out again).
+    fn parse_type_parameters(&mut self) -> Result<Vec<u32>, String> {
+        self.advance(); // <
+        let mut params = Vec::new();
+        loop {
+            let at = self.error("");
+            let name = self.expect_identifier("expected a type parameter's name, such as T")?;
+            if self.type_scope[self.type_scope.len() - params.len()..].iter().any(|(existing, _)| *existing == name) {
+                return Err(format!("{at}type parameter '{name}' is declared more than once"));
+            }
+            // A type parameter hides a class of the same name inside its
+            // class or function, as in other languages.
+            if matches!(name.as_str(), "int" | "double" | "bool" | "byte" | "string" | "char" | "void" | "map") {
+                return Err(format!("{at}type parameter '{name}' has the name of a type; use a name such as T"));
+            }
+            let bound = if matches!(self.current().kind, TokenKind::Colon) {
+                self.advance();
+                let bound_at = self.error("");
+                let bound_name = self.expect_identifier("expected the class or interface a type parameter must be, as in `T: Comparable`")?;
+                let bound = *self.class_names.get(&bound_name).ok_or_else(|| format!("{bound_at}type '{bound_name}' is not declared or imported"))?;
+                if self.classes.get(bound as usize).is_some_and(|class| !class.type_params.is_empty()) {
+                    return Err(format!("{bound_at}a bound can't be a generic class"));
+                }
+                Some(bound)
+            } else {
+                None
+            };
+            let id = self.generics.params.len() as u32;
+            self.generics.params.push(TypeParamDef { name: name.clone(), bound });
+            self.type_scope.push((name, id));
+            params.push(id);
+            if !matches!(self.current().kind, TokenKind::Comma) {
+                break;
+            }
+            self.advance();
+        }
+        self.expect_closing_angle("expected '>' after the type parameters")?;
+        Ok(params)
+    }
+
+    /// The `>` that closes `<...>`; in `Box<Box<int>>`, half of the `>>`.
+    fn expect_closing_angle(&mut self, message: &str) -> Result<(), String> {
+        match self.current().kind {
+            TokenKind::Greater => {
+                self.advance();
+                Ok(())
+            }
+            TokenKind::ShiftRight => {
+                self.tokens[self.cursor].kind = TokenKind::Greater;
+                self.tokens[self.cursor].column += 1;
+                Ok(())
+            }
+            _ => Err(self.error(message)),
+        }
+    }
+
+    /// Whether `class_id` is a generic class, and how many type parameters
+    /// it has (0 if it isn't), including the one being parsed.
+    fn generic_arity(&self, class_id: u32) -> usize {
+        match self.classes.get(class_id as usize) {
+            Some(class) => class.type_params.len(),
+            None => self.class_params_in_progress.filter(|(id, _)| *id == class_id).map_or(0, |(_, count)| count),
+        }
+    }
+
+    /// `Box<int, string>` after a generic class's name: the type arguments.
+    fn parse_type_arguments(&mut self, class_id: u32, class_name: &str) -> Result<ValueType, String> {
+        let arity = self.generic_arity(class_id);
+        if !matches!(self.current().kind, TokenKind::Less) {
+            let names = vec!["T"; arity].join(", ");
+            return Err(self.error(&format!("{class_name} is generic: give its type arguments, as in {class_name}<{names}> with the types for {names}")));
+        }
+        self.advance();
+        let mut arguments = Vec::new();
+        loop {
+            let argument = self.parse_value_type()?;
+            if argument == ValueType::Void {
+                return Err(self.error("a type argument can't be void"));
+            }
+            arguments.push(argument);
+            if !matches!(self.current().kind, TokenKind::Comma) {
+                break;
+            }
+            self.advance();
+        }
+        self.expect_closing_angle("expected '>' after the type arguments")?;
+        if arguments.len() != arity {
+            return Err(self.error(&format!("{class_name} takes {arity} type argument(s), found {}", arguments.len())));
+        }
+        let application = Application { generic: class_id, arguments };
+        let id = match self.generics.applications.iter().position(|existing| *existing == application) {
+            Some(id) => id,
+            None => {
+                self.generics.applications.push(application);
+                self.generics.applications.len() - 1
+            }
+        };
+        Ok(ValueType::Applied(id as u32))
+    }
+
     fn parse_value_type(&mut self) -> Result<ValueType, String> {
         if matches!(self.current().kind, TokenKind::Question) {
             // `?int`: the scalar, or null.
             let at = self.error("");
             self.advance();
             let inner = self.parse_scalar_type()?;
+            if let ValueType::TypeParam(_) = inner {
+                return Err(format!("{at}?{} isn't supported: a type parameter may already be a type that can be null", self.type_name(inner)));
+            }
             let Some(scalar) = Scalar::of(inner) else {
                 let name = match inner {
                     ValueType::Class(class_id) => self.classes.get(class_id as usize).map_or_else(|| "an object".to_string(), |class| class.name.clone()),
@@ -3789,8 +4035,18 @@ impl Parser {
             TokenKind::String => ValueType::String,
             TokenKind::CharType => ValueType::Char,
             TokenKind::ByteType => ValueType::Byte,
+            TokenKind::Identifier(ref name) if self.type_scope.iter().any(|(param, _)| param == name) => {
+                let id = self.type_scope.iter().rev().find(|(param, _)| param == name).expect("checked above").1;
+                ValueType::TypeParam(id)
+            }
             TokenKind::Identifier(ref name) if self.class_names.contains_key(name) => {
-                ValueType::Class(*self.class_names.get(name).unwrap())
+                let name = name.clone();
+                let class_id = *self.class_names.get(&name).unwrap();
+                if self.generic_arity(class_id) > 0 {
+                    self.advance();
+                    return self.parse_type_arguments(class_id, &name);
+                }
+                ValueType::Class(class_id)
             }
             _ => return Err(self.error("expected a built-in or declared class type")),
         };
@@ -3962,6 +4218,16 @@ struct Emitter {
     /// The box class of each nullable scalar, in Scalar::ALL order (see
     /// ValueType::Nullable): one `value` field, set once.
     box_classes: Vec<u32>,
+    /// Generic classes and functions, and the copies made of them (see
+    /// Monomorphizer).
+    generics: Generics,
+    /// Copies of generic functions made while emitting, waiting to be emitted.
+    pending_generic_functions: Vec<Function>,
+    /// The type a call to a generic function is used as, for inferring type
+    /// arguments its arguments don't decide (see infer_type_arguments).
+    generic_expectation: Option<ValueType>,
+    /// Numbers the hidden variables that hold generic calls' arguments.
+    next_generic_argument: usize,
     /// Named functions used as values, by symbol: their adapter and class.
     function_references: Vec<(String, u32)>,
     map_types: Vec<MapType>,
@@ -4102,9 +4368,14 @@ impl Emitter {
         array_types: Vec<ValueType>,
         function_types: Vec<FunctionType>,
         classes: Vec<ClassDef>,
+        generics: Generics,
         modules: &[Module],
     ) -> Self {
         Self {
+            generics,
+            pending_generic_functions: Vec::new(),
+            generic_expectation: None,
+            next_generic_argument: 0,
             signatures,
             module_functions: modules.iter().map(|module| module.functions.clone()).collect(),
             module_paths: modules.iter().map(|module| module.path.clone()).collect(),
@@ -4168,6 +4439,7 @@ impl Emitter {
             );
             self.box_classes.push(class_id);
         }
+        self.check_generic_code(program)?;
         let is_stdlib = |function: &Function| program.modules[function.module as usize].is_stdlib;
         let mut functions_ir = String::new();
         for function in program.functions.iter().filter(|function| !is_stdlib(function)) {
@@ -4188,7 +4460,7 @@ impl Emitter {
         };
         let mut emitted_classes: Vec<u32> = Vec::new();
         for class_id in 0..program.classes.len() as u32 {
-            if deferred(&self, class_id) {
+            if deferred(&self, class_id) || !program.classes[class_id as usize].type_params.is_empty() {
                 continue;
             }
             emitted_classes.push(class_id);
@@ -4232,12 +4504,24 @@ impl Emitter {
                 .copied()
                 .filter(|class_id| !emitted_classes.contains(class_id))
                 .collect();
-            if pending.is_empty() && pending_classes.is_empty() {
+            let generic_functions = std::mem::take(&mut self.pending_generic_functions);
+            if pending.is_empty() && pending_classes.is_empty() && generic_functions.is_empty() {
                 break;
             }
             for class_id in pending_classes {
                 emitted_classes.push(class_id);
-                functions_ir.push_str(&self.emit_class_methods(&program.classes[class_id as usize], class_id)?);
+                // Copies of generic classes made while emitting are only in self.classes.
+                let class = self.classes[class_id as usize].clone();
+                functions_ir.push_str(&self.emit_class_methods(&class, class_id)?);
+            }
+            for function in generic_functions {
+                self.next_register = 0;
+                self.current_module = function.module as usize;
+                let ir = self
+                    .emit_function(&function, None)
+                    .map_err(|error| self.in_module(function.module, error))?;
+                functions_ir.push_str(&ir);
+                functions_ir.push('\n');
             }
             for function in pending {
                 emitted.push(&function.symbol);
@@ -5896,6 +6180,7 @@ impl Emitter {
             }
             ValueType::Class(_) => unreachable!("objects are compared above"),
             ValueType::Nullable(_) => unreachable!("nullable scalars are compared above"),
+            ValueType::TypeParam(_) | ValueType::Applied(_) => unreachable!("generic code is emitted with its types filled in"),
             ValueType::Null => match operator {
                 CompareOp::Equal => "eq",
                 CompareOp::NotEqual => "ne",
@@ -6157,6 +6442,7 @@ impl Emitter {
             ValueType::Int | ValueType::Double | ValueType::Bool | ValueType::Byte | ValueType::String | ValueType::Char => true,
             ValueType::Nullable(_) => true,
             ValueType::Class(_) | ValueType::Function(_) | ValueType::Null | ValueType::Void => false,
+            ValueType::TypeParam(_) | ValueType::Applied(_) => false,
         }
     }
 
@@ -6344,6 +6630,279 @@ impl Emitter {
     /// The synthetic class of the cell that holds one captured value of
     /// `value_type`: an object with one field, so cells are reference
     /// counted and cycle collected like any object.
+    /// Checks generic code once, whether or not it's used, with each type
+    /// parameter standing for its bound (so its methods can be called, and
+    /// only those), or, without one, for a type of that name with no members
+    /// (so a T value can only be stored, passed, returned, and compared).
+    /// The copies are ordinary code, emitted like any other.
+    fn check_generic_code(&mut self, program: &Program) -> Result<(), String> {
+        let user = |module: u32| !program.modules[module as usize].is_stdlib;
+        let mut stand_ins: HashMap<u32, ValueType> = HashMap::new();
+        let mut stand_in = |this: &mut Self, param: u32| -> ValueType {
+            if let Some(value_type) = stand_ins.get(&param) {
+                return *value_type;
+            }
+            let definition = this.generics.params[param as usize].clone();
+            let value_type = match definition.bound {
+                Some(bound) => ValueType::Class(bound),
+                None => ValueType::Class(this.add_synthetic_class(&definition.name, Vec::new())),
+            };
+            stand_ins.insert(param, value_type);
+            value_type
+        };
+        let mut functions: Vec<Function> = self.generics.function_templates.values().filter(|function| user(function.module)).cloned().collect();
+        functions.sort_by(|a, b| a.symbol.cmp(&b.symbol));
+        for template in functions {
+            let types: Vec<ValueType> = template.type_params.iter().map(|param| stand_in(self, *param)).collect();
+            self.current_module = template.module as usize;
+            self.generic_function_instance(&template, types).map_err(|error| self.in_module(template.module, error))?;
+        }
+        let mut classes: Vec<(u32, ClassDef)> = self.generics.class_templates.iter().filter(|(_, class)| user(class.module)).map(|(id, class)| (*id, class.clone())).collect();
+        classes.sort_by_key(|(id, _)| *id);
+        for (class_id, template) in classes {
+            let types: Vec<ValueType> = template.type_params.iter().map(|param| stand_in(self, *param)).collect();
+            self.monomorphize(|m| m.instance(class_id, types)).map_err(|error| self.in_module(template.module, error))?;
+        }
+        Ok(())
+    }
+
+    /// Runs `work` with a Monomorphizer over the emitter's tables; the
+    /// classes it makes are checked and queued for their methods.
+    fn monomorphize<R>(&mut self, work: impl FnOnce(&mut Monomorphizer) -> Result<R, String>) -> Result<R, String> {
+        let mut monomorphizer = Monomorphizer {
+            classes: &mut self.classes,
+            map_types: &mut self.map_types,
+            array_types: &mut self.array_types,
+            function_types: &mut self.function_types,
+            generics: &mut self.generics,
+            made: Vec::new(),
+        };
+        let result = work(&mut monomorphizer);
+        let made = std::mem::take(&mut monomorphizer.made);
+        for class_id in made {
+            let class = self.classes[class_id as usize].clone();
+            self.validate_class_contract(class_id, &class)?;
+            self.use_class(class_id);
+        }
+        result
+    }
+
+    fn has_params(&self, value_type: ValueType) -> bool {
+        type_has_params(value_type, &self.generics, &self.array_types, &self.map_types, &self.function_types)
+    }
+
+    /// The type arguments for a call of a generic function or constructor
+    /// (`parameters`, with type parameters `type_params`), from its
+    /// arguments' types and, for any they leave open, `expected`: the
+    /// return type pattern and the type the result is used as. The
+    /// arguments are evaluated here, in the order written (except that
+    /// anonymous functions, `null`, `[]`, and `{}` go last, so they can take
+    /// types from the other arguments), into hidden variables: the returned scope
+    /// holds them, and the returned arguments name them.
+    #[allow(clippy::too_many_arguments)]
+    fn infer_type_arguments(
+        &mut self,
+        parameters: &[Parameter],
+        type_params: &[u32],
+        callee: &str,
+        arguments: &[Expr],
+        expected: Option<(ValueType, ValueType)>,
+        variables: &HashMap<String, Value>,
+        body: &mut String,
+    ) -> Result<(Vec<ValueType>, HashMap<String, Value>, Vec<Expr>), String> {
+        let packed = Self::pack_variadic_arguments(parameters, arguments, callee)?.into_owned();
+        Self::resolve_arguments(parameters, &packed, callee)?;
+        let mut bindings = Bindings::default();
+        let mut scope = variables.clone();
+        let mut rewritten = packed.clone();
+        // Values that need a type to have one: decided by the others first.
+        let needs_type = |expression: &Expr| match expression {
+            Expr::Closure(_) | Expr::Null => true,
+            Expr::ArrayLiteral(elements) => elements.is_empty(),
+            Expr::MapLiteral(entries) => entries.is_empty(),
+            _ => false,
+        };
+        for later in [false, true] {
+            for (position, argument) in packed.iter().enumerate() {
+                let (index, expression) = match argument {
+                    Expr::NamedArgument(name, value) => (parameters.iter().position(|parameter| parameter.name == *name).expect("resolved above"), &**value),
+                    positional => (position, positional),
+                };
+                if needs_type(expression) != later {
+                    continue;
+                }
+                let closures = matches!(expression, Expr::Closure(_));
+                let pattern = parameters[index].value_type;
+                let known = self.monomorphize(|m| m.subst(pattern, &bindings))?;
+                let hint = if !self.has_params(known) {
+                    Some(known)
+                } else {
+                    match known {
+                        // A callback's parameters may be known before its return type.
+                        ValueType::Function(id) if !self.function_types[id as usize].parameters.iter().any(|parameter| self.has_params(*parameter)) => Some(known),
+                        _ => None,
+                    }
+                };
+                if closures && hint.is_none() {
+                    return Err(format!(
+                        "{callee}: the parameter types of the anonymous function for '{}' aren't known yet; write them, as in fn(int x) => ...",
+                        parameters[index].name
+                    ));
+                }
+                let value = self.emit_expecting(expression, hint, &scope, body)?;
+                self.unify(pattern, value.value_type, &mut bindings, callee)?;
+                let hidden = format!("#generic.argument{}", self.next_generic_argument);
+                self.next_generic_argument += 1;
+                scope.insert(hidden.clone(), Value { slot: None, ..value });
+                rewritten[position] = match argument {
+                    Expr::NamedArgument(name, _) => Expr::NamedArgument(name.clone(), Box::new(Expr::Variable(hidden))),
+                    // The variadic values, packed already: passed on as they are.
+                    _ if parameters[index].variadic => Expr::Spread(Box::new(Expr::Variable(hidden))),
+                    _ => Expr::Variable(hidden),
+                };
+            }
+        }
+        if let Some((pattern, expected)) = expected {
+            if type_params.iter().any(|param| !bindings.types.iter().any(|(bound, _)| bound == param)) {
+                self.unify(pattern, expected, &mut bindings, callee)?;
+            }
+        }
+        let mut types = Vec::new();
+        for param in type_params {
+            match bindings.types.iter().find(|(bound, _)| bound == param) {
+                Some((_, value_type)) => types.push(*value_type),
+                None => {
+                    let name = &self.generics.params[*param as usize].name;
+                    return Err(format!(
+                        "{callee}: can't tell what {name} is from the arguments; use the result where its type is known, as in a declaration"
+                    ));
+                }
+            }
+        }
+        Ok((types, scope, rewritten))
+    }
+
+    /// Matches `pattern`, a parameter's type (which may mention type
+    /// parameters), with `actual`, an argument's type, binding the type
+    /// parameters it reaches. Where they don't match, the call's ordinary
+    /// argument check reports it afterwards.
+    fn unify(&self, pattern: ValueType, actual: ValueType, bindings: &mut Bindings, callee: &str) -> Result<(), String> {
+        match (pattern, actual) {
+            (ValueType::TypeParam(param), actual) if !matches!(actual, ValueType::Null | ValueType::Void) => {
+                match bindings.types.iter().find(|(bound, _)| *bound == param) {
+                    Some((_, existing)) if *existing != actual => {
+                        return Err(format!(
+                            "{callee}: {} is {} from an earlier argument, but {} here",
+                            self.generics.params[param as usize].name,
+                            self.type_name(*existing),
+                            self.type_name(actual)
+                        ));
+                    }
+                    Some(_) => {}
+                    None => bindings.types.push((param, actual)),
+                }
+            }
+            (ValueType::Array(_), ValueType::Array(_)) => {
+                let (pattern, actual) = (self.element_of(pattern).expect("array"), self.element_of(actual).expect("array"));
+                self.unify(pattern, actual, bindings, callee)?;
+            }
+            (ValueType::Map(pattern), ValueType::Map(actual)) => {
+                let (pattern, actual) = (self.map_types[pattern as usize], self.map_types[actual as usize]);
+                self.unify(pattern.key_type, actual.key_type, bindings, callee)?;
+                self.unify(pattern.value_type, actual.value_type, bindings, callee)?;
+            }
+            (ValueType::Function(pattern), ValueType::Function(actual)) => {
+                let (pattern, actual) = (self.function_types[pattern as usize].clone(), self.function_types[actual as usize].clone());
+                if pattern.parameters.len() == actual.parameters.len() {
+                    for (pattern, actual) in pattern.parameters.iter().zip(&actual.parameters) {
+                        self.unify(*pattern, *actual, bindings, callee)?;
+                    }
+                    self.unify(pattern.return_type, actual.return_type, bindings, callee)?;
+                }
+            }
+            (ValueType::Applied(id), ValueType::Class(class_id)) => {
+                let application = self.generics.applications[id as usize].clone();
+                if let Some((generic, arguments)) = self.classes[class_id as usize].instance_of.clone() {
+                    if generic == application.generic {
+                        for (pattern, actual) in application.arguments.iter().zip(&arguments) {
+                            self.unify(*pattern, *actual, bindings, callee)?;
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
+    /// The symbol of generic function `template`'s copy for `types`, made
+    /// (and queued for emitting) the first time.
+    fn generic_function_instance(&mut self, template: &Function, types: Vec<ValueType>) -> Result<String, String> {
+        if let Some((_, _, symbol)) = self.generics.function_instances.iter().find(|(generic, made_for, _)| *generic == template.symbol && *made_for == types) {
+            return Ok(symbol.clone());
+        }
+        let copies = self.generics.function_instances.iter().filter(|(generic, ..)| *generic == template.symbol).count();
+        if copies >= 64 {
+            return Err(format!(
+                "generic function {} has been made for 64 different type arguments; does it call itself with ever larger ones?",
+                template.name
+            ));
+        }
+        let names: Vec<String> = types.iter().map(|value_type| self.type_name(*value_type)).collect();
+        let mut function = template.clone();
+        function.name = format!("{}<{}>", template.name, names.join(", "));
+        function.symbol = format!("{}.g{copies}", template.symbol);
+        function.type_params = Vec::new();
+        let bindings = Bindings { types: template.type_params.iter().copied().zip(types.clone()).collect(), own_class: None };
+        let module = template.module;
+        let owner = template.name.clone();
+        self.monomorphize(|m| {
+            m.check_bounds(&owner, &template.type_params, &types)?;
+            m.subst_function(&mut function, &bindings).map_err(|error| at(template.line, template.column, error))
+        })
+        .map_err(|error| if module == self.current_module as u32 { error } else { self.in_module(module, error) })?;
+        self.signatures.insert(
+            function.symbol.clone(),
+            FunctionSignature { parameters: function.parameters.clone(), return_type: function.return_type },
+        );
+        self.generics.function_instances.push((template.symbol.clone(), types, function.symbol.clone()));
+        let symbol = function.symbol.clone();
+        self.pending_generic_functions.push(function);
+        Ok(symbol)
+    }
+
+    /// `new Box<int>(...)`, or `new Box(...)` with the type arguments from
+    /// the type the object is used as (`expected`) or from the constructor's
+    /// arguments: an object of the class made for them.
+    fn emit_new_generic(
+        &mut self,
+        generic: u32,
+        type_arguments: Option<&[ValueType]>,
+        arguments: &[Expr],
+        expected: Option<ValueType>,
+        variables: &HashMap<String, Value>,
+        body: &mut String,
+    ) -> Result<Value, String> {
+        let template = self.generics.class_templates.get(&generic).cloned().ok_or("internal error: not a generic class")?;
+        let from_expected = expected.and_then(|expected| match expected {
+            ValueType::Class(class_id) => self.classes[class_id as usize].instance_of.clone().filter(|(of, _)| *of == generic).map(|(_, types)| types),
+            _ => None,
+        });
+        let (types, scope, rewritten) = match (type_arguments, from_expected) {
+            (Some(types), _) => (types.to_vec(), variables.clone(), arguments.to_vec()),
+            (None, Some(types)) => (types, variables.clone(), arguments.to_vec()),
+            (None, None) => {
+                let parameters = template.methods.iter().find(|method| method.name == "__construct").map(|method| method.parameters.clone()).unwrap_or_default();
+                let callee = format!("constructor '{}'", template.name);
+                self.infer_type_arguments(&parameters, &template.type_params, &callee, arguments, None, variables, body).map_err(|error| {
+                    format!("{error}; or give the type arguments, as in new {}<...>(...)", template.name)
+                })?
+            }
+        };
+        let class_id = self.monomorphize(|m| m.instance(generic, types))?;
+        self.emit_expression(&Expr::NewObject(class_id, rewritten), &scope, body)
+    }
+
     /// The class of the boxes that hold non-null `?scalar` values.
     fn box_class(&self, scalar: Scalar) -> u32 {
         self.box_classes[Scalar::ALL.iter().position(|candidate| *candidate == scalar).expect("every scalar has a box")]
@@ -6466,6 +7025,8 @@ impl Emitter {
             constants: Vec::new(),
             methods: Vec::new(),
             enumeration: None,
+            type_params: Vec::new(),
+            instance_of: None,
             line: 0,
             column: 0,
         });
@@ -8167,6 +8728,7 @@ impl Emitter {
             symbol: symbol.clone(),
             is_extern: false,
             binds_values: false,
+            type_params: Vec::new(),
             line: 0,
             column: 0,
         };
@@ -8808,7 +9370,10 @@ impl Emitter {
         let return_type = match closure.return_type {
             Some(return_type) => return_type,
             None => match expected {
-                Some(ValueType::Function(type_id)) if self.function_types[type_id as usize].parameters == parameter_types => {
+                Some(ValueType::Function(type_id))
+                    if self.function_types[type_id as usize].parameters == parameter_types
+                        && !self.has_params(self.function_types[type_id as usize].return_type) =>
+                {
                     self.function_types[type_id as usize].return_type
                 }
                 _ => self.infer_arrow_type(closure, &captures)?,
@@ -8862,6 +9427,7 @@ impl Emitter {
             symbol: symbol.clone(),
             is_extern: false,
             binds_values: false,
+            type_params: Vec::new(),
             line: closure.line,
             column: closure.column,
         };
@@ -9962,7 +10528,7 @@ impl Emitter {
             ValueType::Null => body.push_str(
                 "  call i32 (ptr, ...) @printf(ptr @.fmt.string, ptr @.str.null)\n",
             ),
-            ValueType::Void | ValueType::Array(_) | ValueType::Map(_) | ValueType::Class(_) | ValueType::Function(_) | ValueType::Nullable(_) => {
+            ValueType::Void | ValueType::Array(_) | ValueType::Map(_) | ValueType::Class(_) | ValueType::Function(_) | ValueType::Nullable(_) | ValueType::TypeParam(_) | ValueType::Applied(_) => {
                 unreachable!("only scalars and null take the printf path")
             }
         }
@@ -9978,8 +10544,9 @@ impl Emitter {
             ValueType::Char => "c".to_string(),
             ValueType::Byte => "y".to_string(),
             ValueType::Null | ValueType::Void => "n".to_string(),
-            // Function values are objects too, printed as "Closure".
-            ValueType::Class(_) | ValueType::Function(_) => "o".to_string(),
+            // Function values are objects too, printed as "Closure". (Generic
+            // classes' own fields, never used, also say "o".)
+            ValueType::Class(_) | ValueType::Function(_) | ValueType::TypeParam(_) | ValueType::Applied(_) => "o".to_string(),
             // A nullable scalar: null, or a box holding the scalar.
             ValueType::Nullable(scalar) => format!("N{}", self.type_descriptor(scalar.value_type())),
             ValueType::Array(_) => format!(
@@ -9995,7 +10562,7 @@ impl Emitter {
 
     /// A type as written in qiq source, for error messages.
     fn type_name(&self, value_type: ValueType) -> String {
-        type_name(value_type, &self.map_types, &self.array_types, &self.function_types, &self.classes)
+        type_name(value_type, &self.map_types, &self.array_types, &self.function_types, &self.classes, &self.generics)
     }
 
     fn array_of(&mut self, element: ValueType) -> ValueType {
@@ -10032,6 +10599,20 @@ impl Emitter {
                     return Ok(value);
                 }
             }
+        }
+        // A generic function's type arguments can come from the type its
+        // result is used as; so can `new Box()`'s.
+        if let Expr::Call(name, _) = expression {
+            let generic = self.module_functions[self.current_module].get(name).is_some_and(|symbol| self.generics.function_templates.contains_key(symbol));
+            if generic && !variables.contains_key(name) {
+                self.generic_expectation = expected;
+                let result = self.emit_expression(expression, variables, body);
+                self.generic_expectation = None;
+                return result;
+            }
+        }
+        if let Expr::NewGeneric(generic, None, arguments) = expression {
+            return self.emit_new_generic(*generic, None, arguments, expected, variables, body);
         }
         match expression {
             Expr::Number(number) if expected == Some(ValueType::Byte) => {
@@ -11649,6 +12230,9 @@ impl Emitter {
                     slot: None,
                 }))
             }
+            Expr::NewGeneric(generic, type_arguments, arguments) => {
+                self.emit_new_generic(*generic, type_arguments.as_deref(), arguments, None, variables, body)
+            }
             Expr::NewObject(class_id, arguments) => {
                 let class = self.classes[*class_id as usize].name.clone();
                 if let Some(enumeration) = &self.classes[*class_id as usize].enumeration {
@@ -11814,6 +12398,22 @@ impl Emitter {
                         return Ok(value);
                     }
                 }
+                // A generic function: the copy for the type arguments its
+                // arguments give, called with them (evaluated already).
+                let mut symbol = symbol;
+                let generic_call;
+                let (arguments, variables) = match self.generics.function_templates.get(&symbol).cloned() {
+                    Some(template) => {
+                        let callee = format!("function '{name}'");
+                        let expected = self.generic_expectation.take().map(|expected| (template.return_type, expected));
+                        let (types, scope, rewritten) =
+                            self.infer_type_arguments(&template.parameters, &template.type_params, &callee, arguments, expected, variables, body)?;
+                        symbol = self.generic_function_instance(&template, types)?;
+                        generic_call = (rewritten, scope);
+                        (&generic_call.0[..], &generic_call.1)
+                    }
+                    None => (&arguments[..], variables),
+                };
                 if !self.called_functions.contains(&symbol) {
                     self.called_functions.push(symbol.clone());
                 }
@@ -12231,6 +12831,8 @@ impl Emitter {
             | ValueType::Map(_)
             | ValueType::Class(_)
             | ValueType::Nullable(_)
+            | ValueType::TypeParam(_)
+            | ValueType::Applied(_)
             | ValueType::Function(_) => body.push_str(&format!(
                 "  {encoded} = ptrtoint ptr {} to i64\n",
                 value.operand
@@ -12268,6 +12870,8 @@ impl Emitter {
             | ValueType::Map(_)
             | ValueType::Class(_)
             | ValueType::Nullable(_)
+            | ValueType::TypeParam(_)
+            | ValueType::Applied(_)
             | ValueType::Function(_) => body.push_str(&format!(
                 "  {decoded} = inttoptr i64 {encoded} to ptr\n"
             )),
@@ -12301,7 +12905,466 @@ fn llvm_escape(bytes: &[u8]) -> String {
     escaped
 }
 
+/// Whether `value_type` mentions a type parameter (so it's in generic code).
+fn type_has_params(value_type: ValueType, generics: &Generics, array_types: &[ValueType], map_types: &[MapType], function_types: &[FunctionType]) -> bool {
+    let has = |value_type| type_has_params(value_type, generics, array_types, map_types, function_types);
+    match value_type {
+        ValueType::TypeParam(_) => true,
+        ValueType::Applied(id) => generics.applications[id as usize].arguments.iter().any(|argument| has(*argument)),
+        ValueType::Array(_) => element_type_of(array_types, value_type).is_some_and(has),
+        ValueType::Map(id) => has(map_types[id as usize].key_type) || has(map_types[id as usize].value_type),
+        ValueType::Function(id) => {
+            let function = &function_types[id as usize];
+            function.parameters.iter().any(|parameter| has(*parameter)) || has(function.return_type)
+        }
+        _ => false,
+    }
+}
+
+/// Whether `class_id` is `ancestor`, extends it, or implements it (through
+/// its parents and interfaces).
+fn class_is_a(classes: &[ClassDef], class_id: u32, ancestor: u32) -> bool {
+    if class_id == ancestor {
+        return true;
+    }
+    let Some(class) = classes.get(class_id as usize) else { return false };
+    class.parent_class.is_some_and(|parent| class_is_a(classes, parent, ancestor))
+        || class.interfaces.iter().any(|&interface| class_is_a(classes, interface, ancestor))
+}
+
+/// The type arguments for one copy of generic code: each type parameter's
+/// type, and the generic class whose copy this is (its own name inside it,
+/// as in `self::`, means the copy).
+#[derive(Debug, Clone, Default)]
+struct Bindings {
+    types: Vec<(u32, ValueType)>,
+    own_class: Option<(u32, u32)>,
+}
+
+/// Makes the copies of generic classes and functions that a program uses
+/// (monomorphization): a copy of the declaration with its type parameters
+/// replaced by the type arguments, and every `Box<int>` it mentions replaced
+/// by the class made for those arguments. Generic code is never emitted
+/// itself, so each copy is ordinary code with concrete types. It runs over
+/// the whole program before code is emitted (run), and again in the emitter
+/// for each call to a generic function, whose type arguments come from the
+/// call's argument types.
+struct Monomorphizer<'a> {
+    classes: &'a mut Vec<ClassDef>,
+    map_types: &'a mut Vec<MapType>,
+    array_types: &'a mut Vec<ValueType>,
+    function_types: &'a mut Vec<FunctionType>,
+    generics: &'a mut Generics,
+    /// Classes made so far, for the emitter to emit their methods.
+    made: Vec<u32>,
+}
+
+impl Monomorphizer<'_> {
+    fn type_name(&self, value_type: ValueType) -> String {
+        type_name(value_type, self.map_types, self.array_types, self.function_types, self.classes, self.generics)
+    }
+
+    /// Whether `value_type` still mentions a type parameter.
+    fn has_params(&self, value_type: ValueType) -> bool {
+        type_has_params(value_type, self.generics, self.array_types, self.map_types, self.function_types)
+    }
+
+    /// `value_type` with the type parameters in `bindings` replaced, and
+    /// each generic class applied to types without parameters replaced by
+    /// its copy for them.
+    fn subst(&mut self, value_type: ValueType, bindings: &Bindings) -> Result<ValueType, String> {
+        Ok(match value_type {
+            ValueType::TypeParam(id) => bindings.types.iter().find(|(param, _)| *param == id).map_or(value_type, |(_, bound)| *bound),
+            ValueType::Applied(id) => {
+                let application = self.generics.applications[id as usize].clone();
+                let mut arguments = Vec::new();
+                for argument in &application.arguments {
+                    arguments.push(self.subst(*argument, bindings)?);
+                }
+                if arguments.iter().any(|argument| self.has_params(*argument)) {
+                    let application = Application { generic: application.generic, arguments };
+                    let id = match self.generics.applications.iter().position(|existing| *existing == application) {
+                        Some(id) => id,
+                        None => {
+                            self.generics.applications.push(application);
+                            self.generics.applications.len() - 1
+                        }
+                    };
+                    ValueType::Applied(id as u32)
+                } else {
+                    ValueType::Class(self.instance(application.generic, arguments)?)
+                }
+            }
+            ValueType::Array(_) => {
+                let element = element_type_of(self.array_types, value_type).expect("an array type has an element type");
+                let replaced = self.subst(element, bindings)?;
+                if replaced == element { value_type } else { array_type_of(self.array_types, replaced) }
+            }
+            ValueType::Map(id) => {
+                let map = self.map_types[id as usize];
+                let key_type = self.subst(map.key_type, bindings)?;
+                let value = self.subst(map.value_type, bindings)?;
+                if key_type == map.key_type && value == map.value_type {
+                    value_type
+                } else {
+                    let id = match self.map_types.iter().position(|existing| existing.key_type == key_type && existing.value_type == value) {
+                        Some(id) => id,
+                        None => {
+                            self.map_types.push(MapType { key_type, value_type: value });
+                            self.map_types.len() - 1
+                        }
+                    };
+                    ValueType::Map(id as u32)
+                }
+            }
+            ValueType::Function(id) => {
+                let function = self.function_types[id as usize].clone();
+                let mut parameters = Vec::new();
+                for parameter in &function.parameters {
+                    parameters.push(self.subst(*parameter, bindings)?);
+                }
+                let return_type = self.subst(function.return_type, bindings)?;
+                function_type_of(self.function_types, FunctionType { parameters, return_type })
+            }
+            ValueType::Class(id) => ValueType::Class(self.own_class(id, bindings)),
+            other => other,
+        })
+    }
+
+    fn own_class(&self, class_id: u32, bindings: &Bindings) -> u32 {
+        match bindings.own_class {
+            Some((generic, copy)) if generic == class_id => copy,
+            _ => class_id,
+        }
+    }
+
+    /// The class made from generic class `generic` for `arguments`, made
+    /// now if it hasn't been. Each argument must meet its parameter's bound.
+    fn instance(&mut self, generic: u32, arguments: Vec<ValueType>) -> Result<u32, String> {
+        if let Some((_, _, class_id)) = self.generics.class_instances.iter().find(|(class, made_for, _)| *class == generic && *made_for == arguments) {
+            return Ok(*class_id);
+        }
+        let template = self.generics.class_templates.get(&generic).cloned().ok_or_else(|| {
+            format!("internal error: class '{}' isn't generic", self.classes[generic as usize].name)
+        })?;
+        let copies = self.generics.class_instances.iter().filter(|(class, ..)| *class == generic).count();
+        if copies >= 64 {
+            return Err(format!(
+                "generic class {} has been made for 64 different type arguments; does it use itself with ever larger ones, as in Box<Box<T>>?",
+                template.name
+            ));
+        }
+        self.check_bounds(&template.name, &template.type_params, &arguments)?;
+        let names: Vec<String> = arguments.iter().map(|argument| self.type_name(*argument)).collect();
+        let class_id = self.classes.len() as u32;
+        let mut class = template.clone();
+        class.name = format!("{}<{}>", template.name, names.join(", "));
+        class.symbol = format!("{}.{class_id}", template.symbol);
+        class.type_params = Vec::new();
+        class.instance_of = Some((generic, arguments.clone()));
+        // Registered before its members are filled in, so a class that
+        // mentions itself (a Node<T> with a Node<T> next) finds this copy.
+        self.classes.push(class.clone());
+        self.generics.class_instances.push((generic, arguments.clone(), class_id));
+        let bindings = Bindings {
+            types: template.type_params.iter().copied().zip(arguments).collect(),
+            own_class: Some((generic, class_id)),
+        };
+        for property in &mut class.properties {
+            property.value_type = self.subst(property.value_type, &bindings)?;
+            if let Some(default) = &mut property.default {
+                self.subst_expr(default, &bindings)?;
+            }
+        }
+        for method in &mut class.methods {
+            self.subst_function(method, &bindings).map_err(|error| at(method.line, method.column, error))?;
+        }
+        self.classes[class_id as usize] = class;
+        self.made.push(class_id);
+        Ok(class_id)
+    }
+
+    /// Each type argument must be its parameter's bound (or extend or
+    /// implement it).
+    fn check_bounds(&self, owner: &str, params: &[u32], arguments: &[ValueType]) -> Result<(), String> {
+        for (param, argument) in params.iter().zip(arguments) {
+            let definition = &self.generics.params[*param as usize];
+            let Some(bound) = definition.bound else { continue };
+            let meets = matches!(argument, ValueType::Class(class_id) if class_is_a(self.classes, *class_id, bound));
+            if !meets {
+                return Err(format!(
+                    "{owner}'s type parameter {} must be a {}, but {} isn't one",
+                    definition.name,
+                    self.classes[bound as usize].name,
+                    self.type_name(*argument)
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn subst_function(&mut self, function: &mut Function, bindings: &Bindings) -> Result<(), String> {
+        for parameter in &mut function.parameters {
+            parameter.value_type = self.subst(parameter.value_type, bindings)?;
+            if let Some(default) = &mut parameter.default {
+                self.subst_expr(default, bindings)?;
+            }
+        }
+        function.return_type = self.subst(function.return_type, bindings)?;
+        self.subst_statements(&mut function.body, bindings)
+    }
+
+    fn subst_statements(&mut self, statements: &mut [Statement], bindings: &Bindings) -> Result<(), String> {
+        for statement in statements {
+            let (line, column) = (statement.line, statement.column);
+            self.subst_statement(&mut statement.kind, bindings).map_err(|error| at(line, column, error))?;
+        }
+        Ok(())
+    }
+
+    fn subst_target(&self, target: &mut StaticTarget, bindings: &Bindings) {
+        match target {
+            StaticTarget::Class { class_id, .. } => *class_id = self.own_class(*class_id, bindings),
+            StaticTarget::Parent { enclosing, .. } | StaticTarget::Late { enclosing } => *enclosing = self.own_class(*enclosing, bindings),
+        }
+    }
+
+    fn subst_statement(&mut self, kind: &mut StatementKind, bindings: &Bindings) -> Result<(), String> {
+        match kind {
+            StatementKind::Declare(value_type, _, value) => {
+                *value_type = self.subst(*value_type, bindings)?;
+                self.subst_expr(value, bindings)?;
+            }
+            StatementKind::DeclareArray(value_type, _, initializer) => {
+                *value_type = self.subst(*value_type, bindings)?;
+                if let ArrayInitializer::Existing(value) = initializer {
+                    self.subst_expr(value, bindings)?;
+                }
+            }
+            StatementKind::DeclareMap(value_type, _, initializer) => {
+                *value_type = self.subst(*value_type, bindings)?;
+                if let MapInitializer::Existing(value) = initializer {
+                    self.subst_expr(value, bindings)?;
+                }
+            }
+            StatementKind::Assign(_, value) | StatementKind::Expression(value) | StatementKind::Throw(value) => self.subst_expr(value, bindings)?,
+            StatementKind::AssignIndex(target, index, value) => {
+                self.subst_expr(target, bindings)?;
+                self.subst_expr(index, bindings)?;
+                self.subst_expr(value, bindings)?;
+            }
+            StatementKind::AssignMember(object, _, value) => {
+                self.subst_expr(object, bindings)?;
+                self.subst_expr(value, bindings)?;
+            }
+            StatementKind::AssignStatic(target, _, value) => {
+                self.subst_target(target, bindings);
+                self.subst_expr(value, bindings)?;
+            }
+            StatementKind::Print(values, _) => {
+                for value in values {
+                    self.subst_expr(value, bindings)?;
+                }
+            }
+            StatementKind::Return(value) => {
+                if let Some(value) = value {
+                    self.subst_expr(value, bindings)?;
+                }
+            }
+            StatementKind::Break | StatementKind::Continue => {}
+            StatementKind::Try { body, catches, finally } => {
+                self.subst_statements(body, bindings)?;
+                for catch in catches {
+                    self.subst_statements(&mut catch.body, bindings)?;
+                }
+                if let Some(finally) = finally {
+                    self.subst_statements(finally, bindings)?;
+                }
+            }
+            StatementKind::If { condition, then_body, else_body } => {
+                self.subst_expr(condition, bindings)?;
+                self.subst_statements(then_body, bindings)?;
+                self.subst_statements(else_body, bindings)?;
+            }
+            StatementKind::Switch { subject, cases, default } => {
+                self.subst_expr(subject, bindings)?;
+                for case in cases {
+                    for value in &mut case.values {
+                        self.subst_expr(value, bindings)?;
+                    }
+                    self.subst_statements(&mut case.body, bindings)?;
+                }
+                if let Some(default) = default {
+                    self.subst_statements(default, bindings)?;
+                }
+            }
+            StatementKind::While { condition, body } => {
+                self.subst_expr(condition, bindings)?;
+                self.subst_statements(body, bindings)?;
+            }
+            StatementKind::Foreach { iterable, body, .. } => {
+                self.subst_expr(iterable, bindings)?;
+                self.subst_statements(body, bindings)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn subst_exprs(&mut self, expressions: &mut [Expr], bindings: &Bindings) -> Result<(), String> {
+        for expression in expressions {
+            self.subst_expr(expression, bindings)?;
+        }
+        Ok(())
+    }
+
+    fn subst_expr(&mut self, expression: &mut Expr, bindings: &Bindings) -> Result<(), String> {
+        match expression {
+            Expr::Number(_) | Expr::One | Expr::Decimal(_) | Expr::Boolean(_) | Expr::Null | Expr::Text(_) | Expr::Character(_) | Expr::Variable(_) => {}
+            Expr::InstanceOf(operand, class_id, _) | Expr::Downcast(operand, class_id) => {
+                *class_id = self.own_class(*class_id, bindings);
+                self.subst_expr(operand, bindings)?;
+            }
+            Expr::Nullsafe(object, _, rest) => {
+                self.subst_expr(object, bindings)?;
+                self.subst_expr(rest, bindings)?;
+            }
+            Expr::Call(_, arguments) => self.subst_exprs(arguments, bindings)?,
+            Expr::CallValue(callee, arguments) | Expr::MethodCall(callee, _, arguments) => {
+                self.subst_expr(callee, bindings)?;
+                self.subst_exprs(arguments, bindings)?;
+            }
+            Expr::StaticCall(target, _, arguments) => {
+                self.subst_target(target, bindings);
+                self.subst_exprs(arguments, bindings)?;
+            }
+            Expr::StaticProperty(target, _) | Expr::ClassName(target) => self.subst_target(target, bindings),
+            Expr::NewStatic(class_id, arguments) | Expr::NewObject(class_id, arguments) => {
+                *class_id = self.own_class(*class_id, bindings);
+                self.subst_exprs(arguments, bindings)?;
+            }
+            Expr::NewGeneric(_, type_arguments, arguments) => {
+                if let Some(type_arguments) = type_arguments {
+                    for argument in type_arguments.iter_mut() {
+                        *argument = self.subst(*argument, bindings)?;
+                    }
+                }
+                self.subst_exprs(arguments, bindings)?;
+            }
+            Expr::NewArray(element, size) => {
+                *element = self.subst(*element, bindings)?;
+                self.subst_expr(size, bindings)?;
+            }
+            Expr::Closure(closure) => {
+                for parameter in &mut closure.parameters {
+                    parameter.value_type = self.subst(parameter.value_type, bindings)?;
+                }
+                if let Some(return_type) = &mut closure.return_type {
+                    *return_type = self.subst(*return_type, bindings)?;
+                }
+                self.subst_statements(&mut closure.body, bindings)?;
+            }
+            Expr::Binary(_, left, right)
+            | Expr::Compare(_, left, right)
+            | Expr::Logical(_, left, right)
+            | Expr::Coalesce(left, right)
+            | Expr::Index(left, right) => {
+                self.subst_expr(left, bindings)?;
+                self.subst_expr(right, bindings)?;
+            }
+            Expr::Ternary(condition, then, otherwise) => {
+                self.subst_expr(condition, bindings)?;
+                self.subst_expr(then, bindings)?;
+                self.subst_expr(otherwise, bindings)?;
+            }
+            Expr::Negate(operand)
+            | Expr::BitNot(operand)
+            | Expr::Not(operand)
+            | Expr::Member(operand, _)
+            | Expr::ClassOf(operand)
+            | Expr::NamedArgument(_, operand)
+            | Expr::Spread(operand) => self.subst_expr(operand, bindings)?,
+            Expr::ArrayLiteral(elements) => self.subst_exprs(elements, bindings)?,
+            Expr::MapLiteral(entries) => {
+                for (key, value) in entries {
+                    self.subst_expr(key, bindings)?;
+                    self.subst_expr(value, bindings)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Sets generic code apart and makes the copies the rest of the program
+    /// uses. A generic class's own entry in the class table becomes an
+    /// inert stub (abstract, with no members), so nothing emits or
+    /// dispatches to it; generic functions leave the function list.
+    fn run(program: &mut Program) -> Result<(), String> {
+        let templates: Vec<u32> = (0..program.classes.len() as u32).filter(|id| !program.classes[*id as usize].type_params.is_empty()).collect();
+        for &class_id in &templates {
+            let template = program.classes[class_id as usize].clone();
+            let stub = &mut program.classes[class_id as usize];
+            stub.methods.clear();
+            stub.properties.clear();
+            stub.interfaces.clear();
+            stub.is_abstract = true;
+            program.generics.class_templates.insert(class_id, template);
+        }
+        let (generic_functions, functions): (Vec<Function>, Vec<Function>) =
+            std::mem::take(&mut program.functions).into_iter().partition(|function| !function.type_params.is_empty());
+        program.functions = functions;
+        for function in generic_functions {
+            program.generics.function_templates.insert(function.symbol.clone(), function);
+        }
+        let paths: Vec<String> = program.modules.iter().map(|module| module.path.clone()).collect();
+        let in_module = |module: u32, error: String| match paths.get(module as usize) {
+            Some(path) if !path.is_empty() && has_position(&error) => format!("{path}:{error}"),
+            Some(path) if !path.is_empty() => format!("{path}: {error}"),
+            _ => error,
+        };
+        let mut this = Monomorphizer {
+            classes: &mut program.classes,
+            map_types: &mut program.map_types,
+            array_types: &mut program.array_types,
+            function_types: &mut program.function_types,
+            generics: &mut program.generics,
+            made: Vec::new(),
+        };
+        let none = Bindings::default();
+        for function in &mut program.functions {
+            let module = function.module;
+            this.subst_function(function, &none).map_err(|error| in_module(module, at(function.line, function.column, error)))?;
+        }
+        let declared = this.classes.len();
+        for class_id in 0..declared {
+            if templates.contains(&(class_id as u32)) || this.classes[class_id].instance_of.is_some() {
+                continue;
+            }
+            let mut class = this.classes[class_id].clone();
+            let module = class.module;
+            let result = (|| -> Result<(), String> {
+                for property in &mut class.properties {
+                    property.value_type = this.subst(property.value_type, &none)?;
+                }
+                for property in &mut class.static_properties {
+                    property.value_type = this.subst(property.value_type, &none)?;
+                }
+                for method in &mut class.methods {
+                    this.subst_function(method, &none).map_err(|error| at(method.line, method.column, error))?;
+                }
+                Ok(())
+            })();
+            result.map_err(|error| in_module(module, at(class.line, class.column, error)))?;
+            this.classes[class_id] = class;
+        }
+        this.subst_statements(&mut program.statements, &none).map_err(|error| in_module(0, error))?;
+        Ok(())
+    }
+}
+
 fn emit_llvm(program: &Program) -> Result<String, String> {
+    let mut program = program.clone();
+    Monomorphizer::run(&mut program)?;
+    let program = &program;
     let signatures = program
         .functions
         .iter()
@@ -12321,6 +13384,7 @@ fn emit_llvm(program: &Program) -> Result<String, String> {
         program.array_types.clone(),
         program.function_types.clone(),
         program.classes.clone(),
+        program.generics.clone(),
         &program.modules,
     )
     .emit_program(program)
@@ -12634,7 +13698,7 @@ fn expression_names(expression: &Expr, used: &mut std::collections::BTreeSet<Str
             used.insert("this".to_string());
             each(&arguments.iter().collect::<Vec<_>>(), used, declared);
         }
-        Expr::NewObject(_, arguments) | Expr::ArrayLiteral(arguments) => each(&arguments.iter().collect::<Vec<_>>(), used, declared),
+        Expr::NewObject(_, arguments) | Expr::NewGeneric(_, _, arguments) | Expr::ArrayLiteral(arguments) => each(&arguments.iter().collect::<Vec<_>>(), used, declared),
         Expr::MapLiteral(entries) => {
             for (key, value) in entries {
                 each(&[key, value], used, declared);
@@ -12868,6 +13932,7 @@ struct Loader<'a> {
     map_types: Vec<MapType>,
     array_types: Vec<ValueType>,
     function_types: Vec<FunctionType>,
+    generics: Generics,
     functions: Vec<Function>,
     statements: Vec<Statement>,
     /// Standard library exports, visible in every non-stdlib module.
@@ -12908,6 +13973,7 @@ impl<'a> Loader<'a> {
             map_types: Vec::new(),
             array_types: Vec::new(),
             function_types: Vec::new(),
+            generics: Generics::default(),
             functions: Vec::new(),
             statements: Vec::new(),
             prelude_functions: HashMap::new(),
@@ -13127,6 +14193,7 @@ impl<'a> Loader<'a> {
         Program {
             functions: self.functions,
             classes: self.classes,
+            generics: self.generics,
             statements: self.statements,
             map_types: self.map_types,
             array_types: self.array_types,
@@ -13273,6 +14340,9 @@ impl<'a> Loader<'a> {
             map_types: std::mem::take(&mut self.map_types),
             array_types: std::mem::take(&mut self.array_types),
             function_types: std::mem::take(&mut self.function_types),
+            generics: std::mem::take(&mut self.generics),
+            type_scope: Vec::new(),
+            class_params_in_progress: None,
             class_names,
             classes: std::mem::take(&mut self.classes),
             module: id,
@@ -13291,6 +14361,7 @@ impl<'a> Loader<'a> {
         self.map_types = parser.map_types;
         self.array_types = parser.array_types;
         self.function_types = parser.function_types;
+        self.generics = parser.generics;
         let (declared_functions, statements) = parsed.map_err(at)?;
 
         let mut exported_functions = HashMap::new();
@@ -15850,6 +16921,50 @@ mod tests {
         // Naming only a leading prefix reuses the positional adapter.
         let prefix = compile_source("interface T { function r(int a, int b = 1): int; } class A implements T { function r(int a, int b = 10): int { return a; } } function show(T t): void { print(t->r(a: 0)); } show(new A());").unwrap();
         assert!(prefix.contains("define i64 @qiq_A_r.1(ptr %this, i64 %arg0)"));
+    }
+
+    #[test]
+    fn rejects_invalid_generics() {
+        let declared = "interface HasLength { function length(): int; } class Plain {} class Box<T> { public T value; function __construct(T value) { this->value = value; } } ";
+        let cases = [
+            ("function f<T: HasLength>(T x): int { return x->length(); } print(f(new Plain()));", "f's type parameter T must be a HasLength, but Plain isn't one"),
+            ("class S<T: HasLength> {} S<Plain> s = null;", "S's type parameter T must be a HasLength, but Plain isn't one"),
+            // Generic code is checked even when unused: a T has only its bound's methods...
+            ("function f<T: HasLength>(T x): int { return x->size(); }", "function 'f<HasLength>': class 'HasLength' has no method 'size'"),
+            // ...and without a bound, none.
+            ("function g<T>(T x): int { return x + 1; }", "function 'g<T>': '+' requires two ints or two doubles"),
+            ("class C<T> { function m(T x): void { x->go(); } }", "class 'T' has no method 'go'"),
+            ("function f<T>(T x): T { return x; } print(f(null));", "function 'f': can't tell what T is from the arguments"),
+            ("function f<T>(T a, T b): T { return a; } print(f(1, \"x\"));", "function 'f': T is int from an earlier argument, but string here"),
+            ("Box b = null;", "Box is generic: give its type arguments, as in Box<T>"),
+            ("Box<int, int> b = null;", "Box takes 1 type argument(s), found 2"),
+            ("Box<int> b = new Box(\"x\");", "constructor argument mismatch"),
+            ("class B<T> extends Plain {}", "generic class 'B' can't extend a class yet; it can implement interfaces"),
+            ("class B<T> { static int n = 0; }", "generic class 'B' can't have static members yet"),
+            ("abstract class B<T> {}", "a generic class can't be abstract yet"),
+            ("enum E<T> { case A; }", "an enum can't be generic"),
+            ("interface I<T> {}", "generic interfaces aren't supported yet"),
+            ("class B<T> { function m<U>(U x): void {} }", "methods can't have their own type parameters yet"),
+            ("print(1 instanceof Box);", "instanceof can't test for generic class Box"),
+            ("function f<T>(?T x): void {}", "?T isn't supported"),
+            ("function f<T, T>(T x): void {}", "type parameter 'T' is declared more than once"),
+            ("function f<int>(): void {}", "expected a type parameter's name"),
+        ];
+        for (code, message) in cases {
+            let source = format!("{declared}{code}");
+            let error = compile_source(&source).unwrap_err();
+            assert!(error.contains(message), "{code}: expected '{message}', got '{error}'");
+        }
+    }
+
+    #[test]
+    fn generic_copies_use_their_own_types() {
+        let ir = compile_source("class Box<T> { public T value; function __construct(T value) { this->value = value; } function get(): T { return this->value; } } Box<int> b = new Box(5); Box<string> s = new Box(\"a\"); print(b->get(), s->get());").unwrap();
+        // Box<int>'s get returns a plain i64, Box<string>'s a pointer: no boxing.
+        assert!(ir.contains("define i64 @qiq_Box."), "{ir}");
+        assert!(ir.contains("define ptr @qiq_Box."), "{ir}");
+        // The generic class itself is never emitted.
+        assert!(!ir.contains("@qiq_Box_get("), "{ir}");
     }
 
     #[test]
