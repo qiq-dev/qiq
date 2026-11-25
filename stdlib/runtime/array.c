@@ -384,7 +384,8 @@ static void *qiq_array_pick(void *array, int64_t size, int32_t flags, const int6
 typedef struct {
     const char *data;
     int64_t size;
-    int kind;            // 0 int, 1 double, 2 string or char, 3 byte; -1 for `compare`
+    int kind;            // 0 int, 1 double, 2 string or char, 3 byte; 10 + one of
+                         // those for its nullable form; -1 for `compare`
     bool descending;
     int64_t (*compare)(void *closure, const void *left, const void *right);
     void *closure;
@@ -402,7 +403,18 @@ static int qiq_sort_compare(QiqSortOrder *order, int64_t left, int64_t right) {
         result = compared < 0 ? -1 : compared > 0 ? 1 : 0;
     } else {
         uint64_t x = qiq_load(order->data, left, order->size), y = qiq_load(order->data, right, order->size);
-        switch (order->kind) {
+        int kind = order->kind;
+        if (kind >= 10) {
+            // Nullable scalars: null before any value; values by their scalar.
+            if (x == 0 || y == 0) {
+                result = (x != 0) - (y != 0);
+                return order->descending ? -result : result;
+            }
+            x = ((const uint64_t *)(uintptr_t)x)[1];
+            y = ((const uint64_t *)(uintptr_t)y)[1];
+            kind -= 10;
+        }
+        switch (kind) {
         case 0:
             result = (int64_t)x < (int64_t)y ? -1 : (int64_t)x > (int64_t)y;
             break;
@@ -492,7 +504,7 @@ QIQ_VALUE_SORT(qiq_sort_bytes, uint8_t)
 // bytes, so by Unicode code point), or bytes and bools.
 QIQ_GUARDED(void *, qiq_array_sort, NULL, (void *array, int64_t size, int32_t flags, int32_t kind, bool descending),
             (array, size, flags, kind, descending)) {
-    if (kind == 2) {
+    if (kind == 2 || kind >= 10) {
         QiqSortOrder order = {NULL, 0, kind, descending, NULL, NULL, false};
         return qiq_array_sorted(array, size, flags, &order);
     }
@@ -626,6 +638,31 @@ QIQ_GUARDED(int64_t, qiq_array_sum_int, 0, (void *array), (array)) {
     uint64_t sum = 0;
     for (int64_t index = 0; index < QIQ_ARRAY_LENGTH(array); index++) sum += (uint64_t)data[index];
     return (int64_t)sum;
+}
+
+// array_sum of ?ints or ?doubles: nulls count as nothing.
+QIQ_GUARDED(int64_t, qiq_array_sum_nullable_int, 0, (void *array), (array)) {
+    qiq_require_array(array);
+    void *const *data = QIQ_ARRAY_DATA(array);
+    uint64_t sum = 0;
+    for (int64_t index = 0; index < QIQ_ARRAY_LENGTH(array); index++) {
+        if (data[index] != NULL) sum += ((const uint64_t *)data[index])[1];
+    }
+    return (int64_t)sum;
+}
+
+QIQ_GUARDED(double, qiq_array_sum_nullable_double, 0, (void *array), (array)) {
+    qiq_require_array(array);
+    void *const *data = QIQ_ARRAY_DATA(array);
+    double sum = 0;
+    for (int64_t index = 0; index < QIQ_ARRAY_LENGTH(array); index++) {
+        if (data[index] != NULL) {
+            double value;
+            memcpy(&value, (const uint64_t *)data[index] + 1, sizeof value);
+            sum += value;
+        }
+    }
+    return sum;
 }
 
 QIQ_GUARDED(double, qiq_array_sum_double, 0, (void *array), (array)) {

@@ -1834,7 +1834,7 @@ ARRAYS = {
             "purpose": "Sort an array",
             "params": [param("array", "T[]", "An array of ints, doubles, strings, chars, bytes, or bools.")],
             "returns": "T[]",
-            "description": "Returns a new array with the elements in ascending order: numbers by value, strings and chars by their characters' Unicode code points (as PHP compares them, so <code>\"Z\"</code> comes before <code>\"a\"</code>, and accented letters after both), and <code>false</code> before <code>true</code>. Unlike PHP's <code>sort</code>, the array itself isn't changed. To sort anything else, or in another order, use <a href=\"function.usort.html\">usort</a>.",
+            "description": "Returns a new array with the elements in ascending order: numbers by value, strings and chars by their characters' Unicode code points (as PHP compares them, so <code>\"Z\"</code> comes before <code>\"a\"</code>, and accented letters after both), and <code>false</code> before <code>true</code>. In an array of <a href=\"types.html#nullable\">nullable scalars</a> such as <code>?int[]</code>, nulls come first. Unlike PHP's <code>sort</code>, the array itself isn't changed. To sort anything else, or in another order, use <a href=\"function.usort.html\">usort</a>.",
             "return_description": "The sorted elements.",
             "errors": ["An array of other elements, such as objects, is a compile error."],
             "examples": [{"title": "Numbers and strings", "code": 'int[] numbers = [5, -2, 8, 0];\nprint(sort(numbers), numbers);\nprint(sort(["pear", "Apple", "fig", "apple"]));',
@@ -1927,9 +1927,9 @@ ARRAYS = {
         {
             "name": "array_sum",
             "purpose": "Add up an array",
-            "params": [param("array", "T[]", "An array of ints or doubles.")],
+            "params": [param("array", "T[]", "An array of ints or doubles (or <code>?int</code>s or <code>?double</code>s).")],
             "returns": "int|double",
-            "description": "Returns the sum of the elements, an int for an <code>int[]</code> (which wraps on overflow, as <code>+</code> does) and a double for a <code>double[]</code>. For an empty array, it's 0.",
+            "description": "Returns the sum of the elements, an int for an <code>int[]</code> (which wraps on overflow, as <code>+</code> does) and a double for a <code>double[]</code>. Nulls in a <code>?int[]</code> or <code>?double[]</code> count as nothing. For an empty array, it's 0.",
             "return_description": "The sum.",
             "errors": ["An array of anything but ints or doubles is a compile error."],
             "examples": [{"title": "A total", "code": 'print(array_sum([5, 10, 15]), array_sum([0.5, 0.25]));', "output": "30 0.75"}],
@@ -2436,7 +2436,7 @@ Hello, Ada!</pre>
 <li><strong>Pre-forked workers.</strong> <code>http_serve</code> opens the listening socket, then forks worker processes (one per CPU by default) that each accept and serve one connection at a time, like Apache's prefork or PHP-FPM. The first process supervises them and starts a new worker if one exits or crashes, so a handler that crashes takes down one worker, never the server.</li>
 <li><strong>No shared memory between requests in different workers.</strong> Each worker is a separate process with its own copy of the program's variables, so a counter incremented by a handler counts per worker. Keep shared state in a file or a database.</li>
 <li><strong>Stopping.</strong> Ctrl-C (SIGINT) or SIGTERM stops the server gracefully: workers finish the request in progress and exit, and <code>http_serve</code> returns in the first process.</li>
-<li><strong>Errors.</strong> An exception thrown by a handler becomes a <code>500 Internal Server Error</code> response, logged to stderr as <code>qiq: 500 GET /path: message</code>; the worker carries on.</li>
+<li><strong>Errors.</strong> An exception thrown by a handler becomes a <code>500 Internal Server Error</code> response, logged to stderr as <code>qiq: 500 GET /path: file.qiq:12: message</code>, with its <a href=\"exceptions.html\">stack trace</a> on the lines after when it passed through more than one function; the worker carries on.</li>
 <li><strong>Connections.</strong> HTTP/1.1 with keep-alive (and HTTP/1.0). A worker closes an idle connection after 5 seconds, or sooner when another client is waiting for a worker. Request bodies can be sent with <code>Content-Length</code> or chunked, up to 64 MB; <code>Expect: 100-continue</code> is answered.</li>
 <li><strong>Responses</strong> are collected in memory and sent with a <code>Content-Length</code> when the handler returns, with a <code>Date</code> header and, unless the handler sets one, <code>Content-Type: text/plain; charset=utf-8</code>. Responses to <code>HEAD</code> requests have no body.</li>
 <li>Not supported yet: HTTPS (put a proxy such as Caddy or nginx in front), streaming responses, WebSockets, HTTP/2, and compression.</li>
@@ -3325,10 +3325,10 @@ CSV = {
             "name": "csv_decode", "purpose": "Read CSV text into objects",
             "params": [param("text", "string", "The CSV, with a header row."), _DELIMITER],
             "returns": "T[]",
-            "description": "Reads each record after the header into a new object of the class the result is used as, as <a href=\"function.json-decode.html\">json_decode</a> does for JSON: each public property is set from the column with its name, converted to the property's type. Columns without a property are ignored, and the columns can be in any order. Around ints, doubles, and bools, spaces are ignored; bools are <code>true</code>, <code>false</code>, <code>1</code>, <code>0</code>, <code>yes</code>, or <code>no</code>, in any case.",
+            "description": "Reads each record after the header into a new object of the class the result is used as, as <a href=\"function.json-decode.html\">json_decode</a> does for JSON: each public property is set from the column with its name, converted to the property's type. Columns without a property are ignored, and the columns can be in any order. Around ints, doubles, and bools, spaces are ignored; bools are <code>true</code>, <code>false</code>, <code>1</code>, <code>0</code>, <code>yes</code>, or <code>no</code>, in any case. A <code>?int</code>, <code>?double</code>, or <code>?bool</code> property is <code>null</code> for an empty field, and <a href=\"function.csv-encode.html\">csv_encode</a> writes <code>null</code> as an empty field.",
             "return_description": "The objects, one for each record after the header.",
             "errors": ["<code>CsvException</code> if a column a property needs is missing, a record has more or fewer fields than the header, or a field doesn't fit its property, such as <code>abc</code> for an int; the message names the line and column.",
-                       "A compile error if the result isn't used as an array of objects, or the class has a public property that isn't an int, double, bool, or string."],
+                       "A compile error if the result isn't used as an array of objects, or the class has a public property that isn't an int, double, bool (or their ? forms), or string."],
             "examples": [{"title": "Typed rows", "code": 'class Product {\n    public string name;\n    public double price;\n    public int stock;\n}\n\nstring text = "name,stock,price\\nTea,12,3.50\\n\\"Cake, large\\",0,12\\n";\nProduct[] products = csv_decode(text);\nforeach (products as product) {\n    print(product->name, product->price * 2.0, product->stock + 1);\n}',
                           "output": "Tea 7 13\nCake, large 24 1"}],
             "see_also": ["csv_encode", "json_decode"],
@@ -3406,6 +3406,7 @@ CSVREADER_CLASS = r"""<h1>The CsvReader class</h1>
 <tbody>
 <tr><td><code>CsvReader::open(path, delimiter)</code></td><td>Opens the file. Throws <code>FileNotFoundException</code>, <code>PermissionDeniedException</code>, or <code>IOException</code> if it can't.</td></tr>
 <tr><td><code>next()</code></td><td>The next record's fields, or <code>null</code> at the end of the file. Throws <code>CsvException</code> for malformed CSV.</td></tr>
+<tr><td><code>hasNext()</code></td><td>Whether there's another record. A <code>CsvReader</code> is an <code>Iterator&lt;string[]&gt;</code>, so <code>foreach (reader as record)</code> reads it record by record.</td></tr>
 <tr><td><code>line()</code></td><td>The line the last record starts on, for messages about it. A record with a quoted line break spans several lines.</td></tr>
 <tr><td><code>close()</code></td><td>Closes the file; closing twice does nothing.</td></tr>
 </tbody>
@@ -3479,6 +3480,7 @@ FILE_CLASS = """<h1>The File class</h1>
 <tr><td><code>write(text)</code></td><td>Writes a string as UTF-8.</td></tr>
 <tr><td><code>writeBytes(data)</code></td><td>Writes raw bytes.</td></tr>
 <tr><td><code>eof()</code></td><td>Whether there's nothing left to read. It looks ahead, so it's <code>true</code> before a read would come back empty. On standard input it waits for input.</td></tr>
+<tr><td><code>hasNext()</code>, <code>next()</code></td><td><code>!eof()</code> and <code>readLine()</code>: a <code>File</code> is an <code>Iterator&lt;string&gt;</code> of its lines, so <code>foreach (file as line)</code> reads it a line at a time.</td></tr>
 <tr><td><code>flush()</code></td><td>Writes buffered output now.</td></tr>
 <tr><td><code>close()</code></td><td>Flushes and closes the file. Closing twice does nothing, so it's safe in <code>finally</code>. Closing a standard stream only flushes it.</td></tr>
 </tbody>
@@ -4015,6 +4017,7 @@ CURSOR_CLASS = """<h1>The Cursor class</h1>
 <thead><tr><th>Method</th><th>Description</th></tr></thead>
 <tbody>
 <tr><td><code>next()</code></td><td>The next <a href="class.row.html">Row</a>, or <code>null</code> after the last. It reads ahead 256 rows at a time, so each call is quick.</td></tr>
+<tr><td><code>hasNext()</code></td><td>Whether there's another row. A <code>Cursor</code> is an <code>Iterator&lt;Row&gt;</code>, so <code>foreach (cursor as row)</code> reads it.</td></tr>
 <tr><td><code>fetch(count)</code></td><td>Up to <code>count</code> more rows: fewer only at the end, and an empty array after it. Throws <code>InvalidArgumentException</code> for a count below 1.</td></tr>
 <tr><td><code>nextAs()</code>, <code>fetchAs(count)</code></td><td>Like <code>next</code> and <code>fetch</code>, with each row read into an object of the class the result is used as, as <a href="class.database.html#objects">queryAs</a> does: <code>Event event = rows-&gt;nextAs();</code>, <code>Event[] batch = rows-&gt;fetchAs(500);</code>.</td></tr>
 <tr><td><code>close()</code></td><td>Stops reading; the rest of the rows are skipped. A cursor closes itself after its last row, and closing twice does nothing.</td></tr>
@@ -4034,12 +4037,10 @@ db->transaction(function(): void {
     }
 });
 
-Cursor rows = db->cursor("select id, kind from events where kind = ? order by id", "click");
+// A cursor is an Iterator<Row>, so foreach reads it.
 int clicks = 0;
-Row row = rows->next();
-while (row != null) {
+foreach (db->cursor("select id, kind from events where kind = ? order by id", "click") as row) {
     clicks++;
-    row = rows->next();
 }
 print("clicks:", clicks);
 

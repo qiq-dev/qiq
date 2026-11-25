@@ -13,3 +13,6 @@ null 0
 south null 3
 [1, null]
 [3, -1, 7, -1]
+unknown
+42 82
+[null, 1, 2, 3] [3, 2, 1, null] 6

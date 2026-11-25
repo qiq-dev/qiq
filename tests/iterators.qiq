@@ -1,5 +1,8 @@
 // Iterating your own types: foreach over an object that implements
 // Iterator<T> (it's looped over directly) or Iterable<T> (its iterator() is).
+import File, file_put_contents from "std/file";
+import CsvReader from "std/csv";
+import Database from "std/sql";
 class Countdown implements Iterator<int> {
     private int n;
     function __construct(int from) { this->n = from; }
@@ -56,3 +59,22 @@ function firstOver(Iterable<int> values, int limit): int {
     return -1;
 }
 print(firstOver(new Fibonacci(), 50));
+
+// Standard library types that read a piece at a time are iterators too.
+file_put_contents("tests/iterators_output.txt", "one\ntwo\n");
+foreach (File::open("tests/iterators_output.txt") as i => line) {
+    print(i, line);
+}
+file_put_contents("tests/iterators_output.txt", "name,age\nAda,36\n");
+CsvReader reader = CsvReader::open("tests/iterators_output.txt");
+foreach (reader as record) {
+    print(record, reader->line());
+}
+Database db = Database::open("sqlite::memory:");
+db->execute("create table t (n integer)");
+db->execute("insert into t values (1), (2), (3)");
+int rows = 0;
+foreach (db->cursor("select n from t") as row) {
+    rows += row->getInt("n");
+}
+print(rows);

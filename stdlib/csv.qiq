@@ -15,6 +15,7 @@
 // the line.
 
 import File, file_get_contents, file_put_contents from "file";
+import Iterator from "iterators";
 
 extern function __csv_parse(string text, string delimiter): string[][];
 extern function __csv_parse_maps(string text, string delimiter): map[string, string][];
@@ -77,8 +78,17 @@ extern function csv_decode(string text, string delimiter = ","): string[][];
 extern function csv_encode(string[][] objects, string delimiter = ",", string lineEnding = "\n"): string;
 
 // Reads a CSV file a record at a time, for files too large to read at once.
-final class CsvReader {
+// It's an Iterator<string[]>, so foreach reads it:
+//
+//   foreach (CsvReader::open("big.csv") as record) { ... }
+final class CsvReader implements Iterator<string[]> {
     private int handle;
+    // A record hasNext() read ahead, and the line it starts on.
+    private bool peeked = false;
+    private string[] pending = null;
+    private int pendingLine = 0;
+    // The line the record next() last returned starts on.
+    private int lastLine = 0;
 
     private function __construct(int handle) {
         this->handle = handle;
@@ -90,14 +100,29 @@ final class CsvReader {
         return new CsvReader(__csv_open(path, delimiter));
     }
 
-    // The next record's fields, or null at the end of the file.
-    function next(): string[] {
-        return __csv_next(this->handle);
+    // Whether there's another record (reading it ahead).
+    function hasNext(): bool {
+        if (!this->peeked) {
+            this->pending = __csv_next(this->handle);
+            this->pendingLine = __csv_line(this->handle);
+            this->peeked = true;
+        }
+        return this->pending != null;
     }
 
-    // The line the last record read starts on, for messages.
+    // The next record's fields, or null at the end of the file.
+    function next(): string[] {
+        this->hasNext();
+        this->peeked = false;
+        this->lastLine = this->pendingLine;
+        string[] record = this->pending;
+        this->pending = null;
+        return record;
+    }
+
+    // The line the record next() last returned starts on, for messages.
     function line(): int {
-        return __csv_line(this->handle);
+        return this->lastLine;
     }
 
     // Closes the file; closing twice does nothing.

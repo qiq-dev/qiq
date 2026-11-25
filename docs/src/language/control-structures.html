@@ -154,6 +154,7 @@ foreach (bag as i => item) {
 1 b
 ```
 
+<p>The standard library's readers work this way too: a <a href="class.file.html">File</a> is an <code>Iterator&lt;string&gt;</code> of its lines, a <a href="class.csvreader.html">CsvReader</a> an <code>Iterator&lt;string[]&gt;</code> of its records, and a database <a href="class.cursor.html">Cursor</a> an <code>Iterator&lt;Row&gt;</code>, so <code>foreach (File::open("app.log") as line)</code> reads a file a line at a time.</p>
 <p>The loop variable has the iterator's type <code>T</code>, and <code>foreach (object as i =&gt; value)</code> counts <code>i</code> from 0, as for an array. <code>break</code>, <code>continue</code>, and <code>return</code> work as in any loop, so an iterator can go on forever, as a <code>Fibonacci</code> one can, and the loop stops it. A function can take any collection with a parameter of type <code>Iterable&lt;int&gt;</code>.</p>
 
 <h3>Counting with range</h3>

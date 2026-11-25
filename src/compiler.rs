@@ -816,6 +816,8 @@ struct TypeParamDef {
     /// A class or interface (Class), or a generic interface applied to type
     /// arguments, which may mention the parameters (Applied).
     bound: Option<ValueType>,
+    /// `T: object`: any object type, so a T can be null.
+    objects_only: bool,
 }
 
 /// A generic class applied to type arguments, as written: `Box<int>`, or
@@ -1244,6 +1246,10 @@ struct ClassDef {
     /// written: `implements Repository<User>`. Each becomes an entry in
     /// `interfaces` once the interface is made for those arguments.
     applied_interfaces: Vec<ValueType>,
+    /// A generic parent class as written (`extends Repository<User>`, or
+    /// `extends Base<T>` in a generic class): `parent_class` once the class
+    /// is made for those arguments.
+    applied_parent: Option<ValueType>,
     /// Where the class's name is, for errors about the class as a whole.
     line: usize,
     column: usize,
@@ -1374,6 +1380,11 @@ enum Expr {
     MapLiteral(Vec<(Expr, Expr)>),
     /// `name: value` in a call's argument list; only valid there.
     NamedArgument(String, Box<Expr>),
+    /// `Box<int>::member`: a static call, static property, or ::class of the
+    /// class made from the generic class named in the member for the
+    /// application's arguments. Replaced by the member itself, naming that
+    /// class, when copies are made (see Monomorphizer::subst_expr).
+    OnApplied(u32, Box<Expr>),
     /// `match (subject) { a, b => x, c => y, default => z }`: the value of the
     /// first arm with a value equal to the subject (see emit_match).
     Match(Box<Expr>, Vec<MatchArm>, Option<Box<Expr>>),
@@ -1596,6 +1607,9 @@ struct Parser {
     /// The promoted parameters of the constructor just parsed.
     promoted: Vec<PromotedParameter>,
 }
+
+const APPLIED_STATIC_ASSIGNMENT: &str =
+    "a generic class's static property can't be assigned with its type arguments (Box<int>::count = ...) yet; assign it inside the class, with self::count";
 
 const INCREMENT_IS_A_STATEMENT: &str = "'++' and '--' are statements in qiq: write `i++;` on its own, then use i";
 
@@ -2047,16 +2061,10 @@ impl Parser {
             if is_enum {
                 return Err(self.error("an enum can't be generic"));
             }
-            if is_abstract {
-                return Err(self.error("a generic class can't be abstract yet"));
-            }
             self.parse_type_parameters()?
         } else {
             Vec::new()
         };
-        if !type_params.is_empty() && matches!(self.current().kind, TokenKind::Extends) {
-            return Err(self.error(&format!("generic class '{name}' can't extend a class yet; it can implement interfaces")));
-        }
         let generic = !type_params.is_empty();
         // Known from here, so `implements Comparable<Money>` can name it.
         let class_id = self.classes.len() as u32;
@@ -2077,12 +2085,21 @@ impl Parser {
         if is_enum && matches!(self.current().kind, TokenKind::Extends) {
             return Err(self.error(&format!("enum '{name}' can't extend a class; it can implement interfaces")));
         }
+        // `extends Repository<User>`: a generic parent, resolved when copies
+        // are made (see Monomorphizer::resolve_parent). parent:: refers to the
+        // generic class until then.
+        let mut applied_parent = None;
+        let mut parent_template = None;
         let parent_class = if matches!(self.current().kind, TokenKind::Extends) {
             self.advance();
             let parent_name = self.expect_identifier("expected parent class name after extends")?;
             let parent_id = *self.class_names.get(&parent_name).ok_or_else(|| {
                 self.error(&format!("parent class '{parent_name}' must be declared first"))
             })?;
+            if self.generic_arity(parent_id) > 0 {
+                applied_parent = Some(self.parse_type_arguments(parent_id, &parent_name)?);
+                parent_template = Some(parent_id);
+            }
             if self.classes[parent_id as usize].is_interface {
                 return Err(self.error(&format!(
                     "class '{name}' cannot extend interface '{parent_name}'; use implements"
@@ -2094,7 +2111,7 @@ impl Parser {
             if self.classes[parent_id as usize].is_final {
                 return Err(self.error(&format!("class '{name}' cannot extend final class '{parent_name}'")));
             }
-            Some(parent_id)
+            if parent_template.is_some() { None } else { Some(parent_id) }
         } else {
             None
         };
@@ -2105,7 +2122,7 @@ impl Parser {
             (Vec::new(), Vec::new())
         };
         self.current_class = Some(class_id);
-        self.current_parent = parent_class;
+        self.current_parent = parent_class.or(parent_template);
         self.expect(TokenKind::LeftBrace, &format!("expected '{{' after {kind} name"))?;
 
         let mut properties = Vec::new();
@@ -2162,9 +2179,6 @@ impl Parser {
                 }
                 constants.push(constant);
                 continue;
-            }
-            if generic && is_static_method {
-                return Err(self.error(&format!("generic class '{name}' can't have static members yet")));
             }
             if matches!(self.current().kind, TokenKind::Function) && !self.at_function_type() {
                 let start = self.error("");
@@ -2347,6 +2361,7 @@ impl Parser {
             type_params,
             instance_of: None,
             applied_interfaces,
+            applied_parent,
             line,
             column,
         });
@@ -2645,6 +2660,7 @@ impl Parser {
             type_params,
             instance_of: None,
             applied_interfaces,
+            applied_parent: None,
             line,
             column,
         });
@@ -2712,6 +2728,7 @@ impl Parser {
                 let current = Expr::StaticProperty(target.clone(), property_name.clone());
                 Ok(StatementKind::AssignStatic(target, property_name, combined(current)))
             }
+            Expr::OnApplied(..) => Err(format!("{}:{}: {APPLIED_STATIC_ASSIGNMENT}", at.0, at.1)),
             _ => Err(format!(
                 "{}:{}: {}",
                 at.0,
@@ -2755,7 +2772,8 @@ impl Parser {
                     && !matches!(
                         self.tokens.get(self.cursor + 1).map(|token| &token.kind),
                         Some(TokenKind::DoubleColon)
-                    ) =>
+                    )
+                    && !self.at_applied_static() =>
             {
                 let value_type = self.parse_value_type()?;
                 self.parse_declaration(value_type)
@@ -2871,6 +2889,8 @@ impl Parser {
                         Ok(StatementKind::AssignMember(*object, property_name, value))
                     } else if let Expr::StaticProperty(target, property_name) = expression {
                         Ok(StatementKind::AssignStatic(target, property_name, value))
+                    } else if let Expr::OnApplied(..) = expression {
+                        Err(self.error(APPLIED_STATIC_ASSIGNMENT))
                     } else {
                         Err(self.error("only variables, indexed elements, or properties can be assigned"))
                     }
@@ -3420,6 +3440,28 @@ impl Parser {
         Ok(Expr::Binary(BinaryOp::Power, Box::new(base), Box::new(exponent)))
     }
 
+    /// Whether the tokens are a generic class's static member,
+    /// `Box<int>::create()`, rather than a declaration of a `Box<int>`.
+    fn at_applied_static(&self) -> bool {
+        if !matches!(self.tokens.get(self.cursor + 1).map(|token| &token.kind), Some(TokenKind::Less)) {
+            return false;
+        }
+        let mut depth = 0;
+        for (offset, token) in self.tokens[self.cursor + 1..].iter().enumerate() {
+            match token.kind {
+                TokenKind::Less => depth += 1,
+                TokenKind::Greater => depth -= 1,
+                TokenKind::ShiftRight => depth -= 2,
+                TokenKind::Semicolon | TokenKind::LeftBrace | TokenKind::End | TokenKind::Equals => return false,
+                _ => {}
+            }
+            if depth <= 0 {
+                return matches!(self.tokens.get(self.cursor + 2 + offset).map(|token| &token.kind), Some(TokenKind::DoubleColon));
+            }
+        }
+        false
+    }
+
     /// Whether the tokens start a match expression: `match (...) {`. `match`
     /// is a keyword only there, so it can still name a function or variable.
     fn at_match(&self) -> bool {
@@ -3694,6 +3736,25 @@ impl Parser {
                 self.parse_static_member(StaticTarget::Late { enclosing })?
             }
             TokenKind::Identifier(name) if name == "match" && self.at_match() => self.parse_match()?,
+            // `Box<int>::create()`: a static member of a generic class made
+            // for those arguments.
+            TokenKind::Identifier(name)
+                if self.class_names.get(&name).is_some_and(|class_id| self.generic_arity(*class_id) > 0)
+                    && matches!(self.tokens.get(self.cursor + 1).map(|token| &token.kind), Some(TokenKind::Less)) =>
+            {
+                let class_id = self.class_names[&name];
+                self.advance();
+                let ValueType::Applied(application) = self.parse_type_arguments(class_id, &name)? else {
+                    unreachable!("a generic class's type arguments are an application")
+                };
+                if !matches!(self.current().kind, TokenKind::DoubleColon) {
+                    return Err(self.error(&format!("expected '::' after {name}'s type arguments")));
+                }
+                // parse_static_member starts at the token before `::`.
+                self.cursor -= 1;
+                let member = self.parse_static_member(StaticTarget::Class { class_id, forwards: false })?;
+                Expr::OnApplied(application, Box::new(member))
+            }
             TokenKind::Identifier(name) => {
                 self.advance();
                 if matches!(self.current().kind, TokenKind::LeftParen) {
@@ -3857,10 +3918,17 @@ impl Parser {
             }
             // In scope already, for a bound that mentions it: `T: Comparable<T>`.
             let id = self.generics.params.len() as u32;
-            self.generics.params.push(TypeParamDef { name: name.clone(), bound: None });
+            self.generics.params.push(TypeParamDef { name: name.clone(), bound: None, objects_only: false });
             self.type_scope.push((name, id));
             params.push(id);
-            if matches!(self.current().kind, TokenKind::Colon) {
+            // `T: object`: any class, interface, or enum.
+            let object_bound = matches!(self.current().kind, TokenKind::Colon)
+                && matches!(self.tokens.get(self.cursor + 1).map(|token| &token.kind), Some(TokenKind::Identifier(word)) if word == "object" && !self.class_names.contains_key("object"));
+            if object_bound {
+                self.advance();
+                self.advance();
+                self.generics.params[id as usize].objects_only = true;
+            } else if matches!(self.current().kind, TokenKind::Colon) {
                 self.advance();
                 let bound_at = self.error("");
                 let bound = match &self.current().kind {
@@ -4341,6 +4409,18 @@ struct Emitter {
     pending_generic_functions: Vec<Function>,
     /// Copies of generic methods, with their classes, waiting to be emitted.
     pending_generic_methods: Vec<(u32, Function)>,
+    /// Classes that copies of generic classes made while emitting could
+    /// extend: the parents (and their ancestors) of generic classes, and the
+    /// copies of generic classes that generic classes extend (by generic
+    /// class). A method of one could be overridden by a class made after a
+    /// call to it was emitted, so such calls always go through a dispatch
+    /// table, which is built at the end, when every class is known.
+    late_parents: Vec<u32>,
+    late_parent_generics: Vec<u32>,
+    /// The classes whose methods have been emitted. Dispatch tables list
+    /// only these: a standard library class the program never uses (so has
+    /// no objects) can still implement an interface it does.
+    emitted_classes: Vec<u32>,
     /// The type a call to a generic function is used as, for inferring type
     /// arguments its arguments don't decide (see infer_type_arguments).
     generic_expectation: Option<ValueType>,
@@ -4497,6 +4577,9 @@ impl Emitter {
             generics,
             pending_generic_functions: Vec::new(),
             pending_generic_methods: Vec::new(),
+            emitted_classes: Vec::new(),
+            late_parents: Vec::new(),
+            late_parent_generics: Vec::new(),
             generic_expectation: None,
             next_generic_argument: 0,
             unbounded_stand_ins: Vec::new(),
@@ -4563,6 +4646,23 @@ impl Emitter {
             );
             self.box_classes.push(class_id);
         }
+        // Before any call is emitted: which classes generic copies may extend.
+        let templates: Vec<ClassDef> = self.generics.class_templates.values().cloned().collect();
+        for template in templates {
+            let mut parent = template.parent_class;
+            while let Some(id) = parent {
+                if !self.late_parents.contains(&id) {
+                    self.late_parents.push(id);
+                }
+                parent = self.classes[id as usize].parent_class;
+            }
+            if let Some(ValueType::Applied(application)) = template.applied_parent {
+                let generic = self.generics.applications[application as usize].generic;
+                if !self.late_parent_generics.contains(&generic) {
+                    self.late_parent_generics.push(generic);
+                }
+            }
+        }
         self.check_generic_code(program)?;
         let is_stdlib = |function: &Function| program.modules[function.module as usize].is_stdlib;
         let mut functions_ir = String::new();
@@ -4582,12 +4682,12 @@ impl Emitter {
                 && class_id != exception
                 && !this.is_subclass(class_id, exception)
         };
-        let mut emitted_classes: Vec<u32> = Vec::new();
+        self.emitted_classes.clear();
         for class_id in 0..program.classes.len() as u32 {
             if deferred(&self, class_id) || !program.classes[class_id as usize].type_params.is_empty() {
                 continue;
             }
-            emitted_classes.push(class_id);
+            self.emitted_classes.push(class_id);
             functions_ir.push_str(&self.emit_class_methods(&program.classes[class_id as usize], class_id)?);
         }
         self.next_register = 0;
@@ -4626,7 +4726,7 @@ impl Emitter {
                 .used_classes
                 .iter()
                 .copied()
-                .filter(|class_id| !emitted_classes.contains(class_id))
+                .filter(|class_id| !self.emitted_classes.contains(class_id))
                 .collect();
             let generic_functions = std::mem::take(&mut self.pending_generic_functions);
             let generic_methods = std::mem::take(&mut self.pending_generic_methods);
@@ -4642,7 +4742,7 @@ impl Emitter {
                 functions_ir.push('\n');
             }
             for class_id in pending_classes {
-                emitted_classes.push(class_id);
+                self.emitted_classes.push(class_id);
                 // Copies of generic classes made while emitting are only in self.classes.
                 let class = self.classes[class_id as usize].clone();
                 functions_ir.push_str(&self.emit_class_methods(&class, class_id)?);
@@ -4684,6 +4784,9 @@ impl Emitter {
                 let Some(implementer) = self.find_implementation(class_id, &method_name) else {
                     continue;
                 };
+                if !self.emitted_classes.contains(&implementer) {
+                    continue;
+                }
                 let key = (implementer, method_name.clone(), supplied.clone());
                 if adapters.contains(&key) {
                     continue;
@@ -4780,7 +4883,7 @@ impl Emitter {
             ir.push_str(&self.emit_dispatch_table(*owner, method_name, Some(supplied)));
         }
         ir.push_str(
-            "\ndeclare i32 @printf(ptr, ...)\ndeclare i32 @strcmp(ptr, ptr)\ndeclare ptr @calloc(i64, i64)\ndeclare ptr @qiq_map_new(i32, i32)\ndeclare void @qiq_retain(ptr)\ndeclare void @qiq_release(ptr)\ndeclare ptr @qiq_object_new(i64, i64)\ndeclare void @qiq_map_set(ptr, i64, i64)\ndeclare i64 @qiq_map_get(ptr, i64)\ndeclare i64 @qiq_map_iteration_end(ptr)\ndeclare i64 @qiq_map_version(ptr)\ndeclare zeroext i1 @qiq_map_entry_live(ptr, i64, i64)\ndeclare zeroext i1 @qiq_map_find(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_map_has(ptr, i64)\ndeclare void @qiq_map_remove(ptr, i64)\ndeclare ptr @qiq_map_keys(ptr, i64, i32)\ndeclare ptr @qiq_map_values(ptr, i64, i32)\ndeclare zeroext i1 @qiq_map_contains_value(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_values_equal(ptr, ptr, ptr)\ndeclare zeroext i1 @qiq_nullable_equals(ptr, ptr, i64)\ndeclare i64 @qiq_map_key_at(ptr, i64)\ndeclare i64 @qiq_map_value_at(ptr, i64)\ndeclare ptr @qiq_map_merge(ptr, ptr)\ndeclare ptr @qiq_array_sort(ptr, i64, i32, i32, i1 zeroext)\ndeclare ptr @qiq_array_usort(ptr, i64, i32, ptr, ptr)\ndeclare i64 @qiq_array_index_of(ptr, i64, ptr, i64)\ndeclare ptr @qiq_array_slice(ptr, i64, i32, i64, i64, i1 zeroext)\ndeclare ptr @qiq_array_reverse(ptr, i64, i32)\ndeclare ptr @qiq_array_unique(ptr, i64, i32, ptr)\ndeclare i64 @qiq_array_sum_int(ptr)\ndeclare double @qiq_array_sum_double(ptr)\ndeclare ptr @qiq_map_filter_keys(ptr, ptr, i1 zeroext)\ndeclare ptr @qiq_map_filter_entries(ptr, ptr, ptr, i1 zeroext)\ndeclare ptr @qiq_map_flip(ptr, i32, i32)\ndeclare i64 @qiq_string_len(ptr)\ndeclare ptr @qiq_sprintf(ptr, ptr, ptr, i64)\ndeclare void @qiq_bind_values(ptr, ptr, i64)\ndeclare ptr @qiq_json_encode(ptr, i64, i1 zeroext)\ndeclare i64 @qiq_json_decode(ptr, ptr)\ndeclare i64 @qiq_csv_decode(ptr, ptr, ptr)\ndeclare ptr @qiq_csv_encode(ptr, ptr, ptr, ptr)\ndeclare i32 @qiq_string_equality(ptr, ptr)\ndeclare i32 @qiq_string_compare(ptr, ptr)\ndeclare ptr @qiq_string_char_at(ptr, i64)\ndeclare ptr @qiq_string_concat(ptr, ptr)\ndeclare i64 @qiq_int_divide(i64, i64)\ndeclare i64 @qiq_int_modulo(i64, i64)\ndeclare i64 @qiq_int_power(i64, i64)\ndeclare i64 @qiq_int_power_unchecked(i64, i64)\ndeclare i64 @qiq_int_shift_left(i64, i64)\ndeclare i64 @qiq_int_shift_right(i64, i64)\ndeclare double @llvm.pow.f64(double, double)\ndeclare double @llvm.fabs.f64(double)\ndeclare i64 @qiq_math_min_int(ptr)\ndeclare i64 @qiq_math_max_int(ptr)\ndeclare double @qiq_math_min_double(ptr)\ndeclare double @qiq_math_max_double(ptr)\ndeclare i64 @qiq_math_clamp_int(i64, i64, i64)\ndeclare double @qiq_math_clamp_double(double, double, double)\ndeclare void @qiq_uncaught(ptr, ptr, ptr, i64, ptr)\ndeclare ptr @qiq_array_new(i64, i64, i32)\ndeclare void @qiq_set_arguments(i32, ptr)\ndeclare void @qiq_check_callable(ptr)\ndeclare void @qiq_array_push(ptr, i64, i64)\ndeclare i64 @qiq_range_plan(i64, i64, i64, i1 zeroext, ptr)\ndeclare ptr @qiq_range_int(i64, i64, i64, i1 zeroext)\ndeclare ptr @qiq_range_count(i64)\ndeclare ptr @qiq_range_double(double, double, double, i1 zeroext)\ndeclare ptr @qiq_range_char(ptr, ptr, i64, i1 zeroext)\ndeclare i64 @qiq_array_pop(ptr, i64)\ndeclare i64 @qiq_array_shift(ptr, i64)\ndeclare void @qiq_array_insert(ptr, i64, i64, i64)\ndeclare ptr @qiq_array_splice(ptr, i64, i64, i64, i1 zeroext, ptr)\ndeclare ptr @qiq_array_with_tail(i64, ptr, i64, i32)\ndeclare i64 @qiq_array_length(ptr)\ndeclare i64 @qiq_len_string(ptr)\ndeclare i64 @qiq_len_array(ptr)\ndeclare i64 @qiq_len_map(ptr)\ndeclare void @qiq_array_check_index(ptr, i64)\ndeclare void @qiq_print_value(ptr, i64)\ndeclare ptr @qiq_describe_value(ptr, i64)\ndeclare void @qiq_print_space()\ndeclare void @qiq_print_newline()\ndeclare i64 @qiq_double_to_int(double)\ndeclare zeroext i8 @qiq_int_to_byte(i64)\ndeclare i64 @qiq_string_to_int(ptr)\ndeclare double @qiq_string_to_double(ptr)\ndeclare ptr @qiq_int_to_string(i64)\ndeclare ptr @qiq_double_to_string(double)\n",
+            "\ndeclare i32 @printf(ptr, ...)\ndeclare i32 @strcmp(ptr, ptr)\ndeclare ptr @calloc(i64, i64)\ndeclare ptr @qiq_map_new(i32, i32)\ndeclare void @qiq_retain(ptr)\ndeclare void @qiq_release(ptr)\ndeclare ptr @qiq_object_new(i64, i64)\ndeclare void @qiq_map_set(ptr, i64, i64)\ndeclare i64 @qiq_map_get(ptr, i64)\ndeclare i64 @qiq_map_iteration_end(ptr)\ndeclare i64 @qiq_map_version(ptr)\ndeclare zeroext i1 @qiq_map_entry_live(ptr, i64, i64)\ndeclare zeroext i1 @qiq_map_find(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_map_has(ptr, i64)\ndeclare void @qiq_map_remove(ptr, i64)\ndeclare ptr @qiq_map_keys(ptr, i64, i32)\ndeclare ptr @qiq_map_values(ptr, i64, i32)\ndeclare zeroext i1 @qiq_map_contains_value(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_values_equal(ptr, ptr, ptr)\ndeclare zeroext i1 @qiq_nullable_equals(ptr, ptr, i64)\ndeclare i64 @qiq_map_key_at(ptr, i64)\ndeclare i64 @qiq_map_value_at(ptr, i64)\ndeclare ptr @qiq_map_merge(ptr, ptr)\ndeclare ptr @qiq_array_sort(ptr, i64, i32, i32, i1 zeroext)\ndeclare ptr @qiq_array_usort(ptr, i64, i32, ptr, ptr)\ndeclare i64 @qiq_array_index_of(ptr, i64, ptr, i64)\ndeclare ptr @qiq_array_slice(ptr, i64, i32, i64, i64, i1 zeroext)\ndeclare ptr @qiq_array_reverse(ptr, i64, i32)\ndeclare ptr @qiq_array_unique(ptr, i64, i32, ptr)\ndeclare i64 @qiq_array_sum_int(ptr)\ndeclare double @qiq_array_sum_double(ptr)\ndeclare i64 @qiq_array_sum_nullable_int(ptr)\ndeclare double @qiq_array_sum_nullable_double(ptr)\ndeclare ptr @qiq_map_filter_keys(ptr, ptr, i1 zeroext)\ndeclare ptr @qiq_map_filter_entries(ptr, ptr, ptr, i1 zeroext)\ndeclare ptr @qiq_map_flip(ptr, i32, i32)\ndeclare i64 @qiq_string_len(ptr)\ndeclare ptr @qiq_sprintf(ptr, ptr, ptr, i64)\ndeclare void @qiq_bind_values(ptr, ptr, i64)\ndeclare ptr @qiq_json_encode(ptr, i64, i1 zeroext)\ndeclare i64 @qiq_json_decode(ptr, ptr)\ndeclare i64 @qiq_csv_decode(ptr, ptr, ptr)\ndeclare ptr @qiq_csv_encode(ptr, ptr, ptr, ptr)\ndeclare i32 @qiq_string_equality(ptr, ptr)\ndeclare i32 @qiq_string_compare(ptr, ptr)\ndeclare ptr @qiq_string_char_at(ptr, i64)\ndeclare ptr @qiq_string_concat(ptr, ptr)\ndeclare i64 @qiq_int_divide(i64, i64)\ndeclare i64 @qiq_int_modulo(i64, i64)\ndeclare i64 @qiq_int_power(i64, i64)\ndeclare i64 @qiq_int_power_unchecked(i64, i64)\ndeclare i64 @qiq_int_shift_left(i64, i64)\ndeclare i64 @qiq_int_shift_right(i64, i64)\ndeclare double @llvm.pow.f64(double, double)\ndeclare double @llvm.fabs.f64(double)\ndeclare i64 @qiq_math_min_int(ptr)\ndeclare i64 @qiq_math_max_int(ptr)\ndeclare double @qiq_math_min_double(ptr)\ndeclare double @qiq_math_max_double(ptr)\ndeclare i64 @qiq_math_clamp_int(i64, i64, i64)\ndeclare double @qiq_math_clamp_double(double, double, double)\ndeclare void @qiq_uncaught(ptr, ptr, ptr, i64, ptr)\ndeclare ptr @qiq_array_new(i64, i64, i32)\ndeclare void @qiq_set_arguments(i32, ptr)\ndeclare void @qiq_check_callable(ptr)\ndeclare void @qiq_array_push(ptr, i64, i64)\ndeclare i64 @qiq_range_plan(i64, i64, i64, i1 zeroext, ptr)\ndeclare ptr @qiq_range_int(i64, i64, i64, i1 zeroext)\ndeclare ptr @qiq_range_count(i64)\ndeclare ptr @qiq_range_double(double, double, double, i1 zeroext)\ndeclare ptr @qiq_range_char(ptr, ptr, i64, i1 zeroext)\ndeclare i64 @qiq_array_pop(ptr, i64)\ndeclare i64 @qiq_array_shift(ptr, i64)\ndeclare void @qiq_array_insert(ptr, i64, i64, i64)\ndeclare ptr @qiq_array_splice(ptr, i64, i64, i64, i1 zeroext, ptr)\ndeclare ptr @qiq_array_with_tail(i64, ptr, i64, i32)\ndeclare i64 @qiq_array_length(ptr)\ndeclare i64 @qiq_len_string(ptr)\ndeclare i64 @qiq_len_array(ptr)\ndeclare i64 @qiq_len_map(ptr)\ndeclare void @qiq_array_check_index(ptr, i64)\ndeclare void @qiq_print_value(ptr, i64)\ndeclare ptr @qiq_describe_value(ptr, i64)\ndeclare void @qiq_print_space()\ndeclare void @qiq_print_newline()\ndeclare i64 @qiq_double_to_int(double)\ndeclare zeroext i8 @qiq_int_to_byte(i64)\ndeclare i64 @qiq_string_to_int(ptr)\ndeclare double @qiq_string_to_double(ptr)\ndeclare ptr @qiq_int_to_string(i64)\ndeclare ptr @qiq_double_to_string(double)\n",
         );
         ir.push_str(&extern_declarations);
         ir.push('\n');
@@ -6799,13 +6902,14 @@ impl Emitter {
                     let name = this.generics.params[*param as usize].name.clone();
                     let class_id = this.add_synthetic_class(&name, Vec::new());
                     this.classes[class_id as usize].is_abstract = true;
-                    if this.generics.params[*param as usize].bound.is_none() {
+                    let definition = &this.generics.params[*param as usize];
+                    if definition.bound.is_none() && !definition.objects_only {
                         this.unbounded_stand_ins.push(class_id);
                     }
                     stand_ins.insert(*param, ValueType::Class(class_id));
                 }
             }
-            let bindings = Bindings { types: stand_ins.iter().map(|(param, value_type)| (*param, *value_type)).collect(), own_class: None };
+            let bindings = Bindings { types: stand_ins.iter().map(|(param, value_type)| (*param, *value_type)).collect(), own_class: None, parent: None };
             for param in params {
                 let Some(bound) = this.generics.params[*param as usize].bound else { continue };
                 let ValueType::Class(stand_in) = stand_ins[param] else { continue };
@@ -6975,7 +7079,7 @@ impl Emitter {
             ValueType::Class(class_id) if self.unbounded_stand_ins.contains(&class_id) => {
                 let name = &self.classes[class_id as usize].name;
                 Err(format!(
-                    "a {name} can't {doing}: {name} could be a type that can't be null, such as int; give {name} a bound, as in {name}: SomeInterface, if it's always an object"
+                    "a {name} can't {doing}: {name} could be a type that can't be null, such as int; if it's always an object, say so with a bound, as in {name}: object"
                 ))
             }
             _ => Ok(()),
@@ -7159,7 +7263,7 @@ impl Emitter {
         function.name = format!("{}<{}>", template.name, names.join(", "));
         function.symbol = format!("{}.g{copies}", template.symbol);
         function.type_params = Vec::new();
-        let bindings = Bindings { types: template.type_params.iter().copied().zip(types.clone()).collect(), own_class: None };
+        let bindings = Bindings { types: template.type_params.iter().copied().zip(types.clone()).collect(), own_class: None, parent: None };
         let module = template.module;
         let owner = template.name.clone();
         self.monomorphize(|m| {
@@ -7198,7 +7302,7 @@ impl Emitter {
         let mut method = template.clone();
         method.name = format!("{}.g{copies}", template.name);
         method.type_params = Vec::new();
-        let bindings = Bindings { types: template.type_params.iter().copied().zip(types.clone()).collect(), own_class: None };
+        let bindings = Bindings { types: template.type_params.iter().copied().zip(types.clone()).collect(), own_class: None, parent: None };
         let owner = format!("{class_name}::{}", template.name);
         self.monomorphize(|m| {
             m.check_bounds(&owner, &template.type_params, &types)?;
@@ -7305,6 +7409,21 @@ impl Emitter {
         proven_set(condition, when, &mut names);
         let mut narrowed = variables.clone();
         for name in names {
+            // A property, `owner->property`: marked, so each read of it there
+            // is unboxed (see the Member case in emit_expression). A property
+            // can change, so each read checks it's still set.
+            if let Some((owner, property)) = name.split_once("->") {
+                let Some(variable) = variables.get(owner) else { continue };
+                if self.boxed.contains(owner) || (owner != "this" && regions.iter().any(|statements| assigns(statements, owner))) {
+                    continue;
+                }
+                let ValueType::Class(class_id) = variable.value_type else { continue };
+                let Ok((_, property_type, ..)) = self.find_property(class_id, property) else { continue };
+                if property_type.non_null().is_some() {
+                    narrowed.insert(narrowed_property(owner, property), Value { value_type: ValueType::Null, operand: "null".to_string(), slot: None });
+                }
+                continue;
+            }
             let Some(variable) = variables.get(&name) else { continue };
             if variable.value_type.non_null().is_none() || self.boxed.contains(&name) {
                 continue;
@@ -7382,6 +7501,7 @@ impl Emitter {
             type_params: Vec::new(),
             instance_of: None,
             applied_interfaces: Vec::new(),
+            applied_parent: None,
             line: 0,
             column: 0,
         });
@@ -7510,7 +7630,7 @@ impl Emitter {
                 let class = &self.classes[class_id as usize];
                 let is_subtype = class_id == owner || self.is_subclass(class_id, owner);
                 match self.find_implementation(class_id, method_name) {
-                    Some(implementer) if is_subtype && !class.is_abstract => format!(
+                    Some(implementer) if is_subtype && !class.is_abstract && self.emitted_classes.contains(&implementer) => format!(
                         "ptr @qiq_{}_{method_name}{suffix}",
                         self.classes[implementer as usize].symbol
                     ),
@@ -7524,6 +7644,13 @@ impl Emitter {
             entries.len(),
             entries.join(", ")
         )
+    }
+
+    /// Whether a class made from a generic class while emitting could extend
+    /// `class_id` (see Emitter::late_parents).
+    fn may_gain_subclasses(&self, class_id: u32) -> bool {
+        self.late_parents.contains(&class_id)
+            || self.classes[class_id as usize].instance_of.as_ref().is_some_and(|(generic, _)| self.late_parent_generics.contains(generic))
     }
 
     /// Whether a subclass of `owner` declares its own `name` method.
@@ -10191,9 +10318,13 @@ impl Emitter {
                     ValueType::Double => 1,
                     ValueType::String | ValueType::Char => 2,
                     ValueType::Byte | ValueType::Bool => 3,
+                    // A nullable scalar: nulls first, then the values (array.c).
+                    ValueType::Nullable(Scalar::Int) => 10,
+                    ValueType::Nullable(Scalar::Double) => 11,
+                    ValueType::Nullable(Scalar::Byte | Scalar::Bool) => 13,
                     other => {
                         return Err(format!(
-                            "{name} sorts ints, doubles, strings, chars, bytes, and bools, found {}[]; for other types, use usort with a comparison function",
+                            "{name} sorts ints, doubles, strings, chars, bytes, and bools (and their ? forms), found {}[]; for other types, use usort with a comparison function",
                             self.type_name(other)
                         ))
                     }
@@ -10266,7 +10397,10 @@ impl Emitter {
                 let (function, value_type) = match element {
                     ValueType::Int => ("qiq_array_sum_int", ValueType::Int),
                     ValueType::Double => ("qiq_array_sum_double", ValueType::Double),
-                    other => return Err(format!("array_sum adds ints or doubles, found {}[]", self.type_name(other))),
+                    // Nulls count as nothing.
+                    ValueType::Nullable(Scalar::Int) => ("qiq_array_sum_nullable_int", ValueType::Int),
+                    ValueType::Nullable(Scalar::Double) => ("qiq_array_sum_nullable_double", ValueType::Double),
+                    other => return Err(format!("array_sum adds ints or doubles (or their ? forms), found {}[]", self.type_name(other))),
                 };
                 body.push_str(&format!("  {register} = call {} @{function}(ptr {})\n", value_type.llvm(), array.operand));
                 self.emit_exception_check(body);
@@ -10816,10 +10950,17 @@ impl Emitter {
         while let Some(id) = current {
             for property in &self.classes[id as usize].properties {
                 if property.visibility == Visibility::Public
-                    && !matches!(property.value_type, ValueType::Int | ValueType::Double | ValueType::Bool | ValueType::String)
+                    && !matches!(
+                        property.value_type,
+                        ValueType::Int
+                            | ValueType::Double
+                            | ValueType::Bool
+                            | ValueType::String
+                            | ValueType::Nullable(Scalar::Int | Scalar::Double | Scalar::Bool)
+                    )
                 {
                     return Err(format!(
-                        "{function} can't {} {}'s property '{}', a {}: CSV holds ints, doubles, bools, and strings",
+                        "{function} can't {} {}'s property '{}', a {}: CSV holds ints, doubles, bools (or their ? forms), and strings",
                         if function == "csv_decode" { "read" } else { "write" },
                         class.name,
                         property.name,
@@ -10938,16 +11079,15 @@ impl Emitter {
                     };
                     return Err(format!("json_decode can't create a {} yet: decode it as a string and read that with {reader}", class.name));
                 }
+                // A backed enum is read from its value; a pure enum has none.
                 if let Some(enumeration) = &class.enumeration {
-                    let how = match enumeration.backing {
-                        Some(backing) => format!(
-                            "decode its value as {} and read that with {}::from",
-                            if backing == ValueType::Int { "an int" } else { "a string" },
-                            class.name
-                        ),
-                        None => format!("decode its name as a string and find it in {}::cases()", class.name),
-                    };
-                    return Err(format!("json_decode can't create enum {} yet: {how}", class.name));
+                    if enumeration.backing.is_none() {
+                        return Err(format!(
+                            "json_decode can't create enum {}: a pure enum has no value in JSON; give it values, as in `enum {}: string`",
+                            class.name, class.name
+                        ));
+                    }
+                    return Ok(());
                 }
                 if class.is_interface || class.is_abstract {
                     return Err(format!(
@@ -11868,10 +12008,25 @@ impl Emitter {
     /// freed and `==` (which compares objects by identity) compares cases.
     fn emit_enum_globals(&mut self) -> String {
         let mut ir = String::new();
+        // Per class, a null-terminated list of its cases' objects (null for
+        // other classes), for json_decode.
+        let mut lists = Vec::new();
         for class_id in 0..self.classes.len() {
-            let Some(enumeration) = self.classes[class_id].enumeration.clone() else { continue };
+            let Some(enumeration) = self.classes[class_id].enumeration.clone() else {
+                lists.push("ptr null".to_string());
+                continue;
+            };
             let symbol = self.classes[class_id].symbol.clone();
             let layout = Self::enum_object_type(&enumeration);
+            let objects: Vec<String> = (0..enumeration.cases.len())
+                .map(|index| format!("ptr getelementptr inbounds ({layout}, ptr @qiq_enum.{symbol}.{index}, i32 0, i32 4)"))
+                .collect();
+            ir.push_str(&format!(
+                "@qiq_enum_list.{symbol} = private unnamed_addr constant [{} x ptr] [{}], align 8\n",
+                objects.len() + 1,
+                objects.iter().cloned().chain(std::iter::once("ptr null".to_string())).collect::<Vec<_>>().join(", ")
+            ));
+            lists.push(format!("ptr @qiq_enum_list.{symbol}"));
             for (index, case) in enumeration.cases.iter().enumerate() {
                 let name = self.string_literal(case.name.as_bytes());
                 let value = match &case.value {
@@ -11884,6 +12039,7 @@ impl Emitter {
                 ));
             }
         }
+        ir.push_str(&format!("@qiq_enum_cases = unnamed_addr constant [{} x ptr] [{}], align 8\n", lists.len(), lists.join(", ")));
         ir
     }
 
@@ -11970,10 +12126,12 @@ impl Emitter {
             } else if let Some(enumeration) = &self.classes[class_id as usize].enumeration {
                 // A backed enum is written as its value, as PHP does; a pure
                 // enum has no value to write ("!N", an error).
+                // "!E", the value's kind (S or I), and its slot; json.c
+                // decodes it with qiq_enum_cases.
                 let value = slot_of(&fields, "value").unwrap_or(0);
                 text = match enumeration.backing {
-                    Some(ValueType::String) => format!("!S{value}"),
-                    Some(_) => format!("!I{value}"),
+                    Some(ValueType::String) => format!("!ES{value}"),
+                    Some(_) => format!("!EI{value}"),
                     None => "!N".to_string(),
                 };
             }
@@ -12031,7 +12189,7 @@ impl Emitter {
         if class.is_interface || visiting.contains(&class_id) {
             return true;
         }
-        if self.classes.iter().any(|other| other.parent_class == Some(class_id)) {
+        if self.classes.iter().any(|other| other.parent_class == Some(class_id)) || self.may_gain_subclasses(class_id) {
             return true;
         }
         visiting.push(class_id);
@@ -12429,6 +12587,14 @@ impl Emitter {
                 let encoded = self.new_register();
                 body.push_str(&format!("  {encoded} = load i64, ptr {address}, align 8\n"));
                 let value = self.decode_payload(property_type, &encoded, body)?;
+                // Checked not to be null (see narrow): its scalar, read now.
+                if let Expr::Variable(owner) = &**object_expression {
+                    if property_type.non_null().is_some() && variables.contains_key(&narrowed_property(owner, property_name)) {
+                        let message = format!("property '{property_name}' is null here, though a check said it wasn't: something set it to null since");
+                        self.emit_null_check(&value, &Expr::Null, &message, body);
+                        return Ok(self.emit_unbox(&value, body));
+                    }
+                }
                 Ok(if borrow { value } else { self.retained(value, body) })
             }
             Expr::MethodCall(object_expression, method_name, arguments) => {
@@ -12518,7 +12684,8 @@ impl Emitter {
                 // dispatch table indexed by the class id in the object's header,
                 // so the object's own implementation runs. Others are called directly.
                 let dynamic = is_abstract
-                    || (visibility != Visibility::Private && self.is_overridden(method_owner, method_name));
+                    || (visibility != Visibility::Private
+                        && (self.is_overridden(method_owner, method_name) || self.may_gain_subclasses(method_owner)));
                 // A dispatched call that omits optional arguments goes through
                 // adapters, so the running class's defaults apply.
                 let mut supplied: Vec<usize> = resolved.iter().map(|(index, _)| *index).collect();
@@ -12842,6 +13009,7 @@ impl Emitter {
                 self.emit_new_generic(*generic, type_arguments.as_deref(), arguments, None, variables, body)
             }
             Expr::Match(subject, arms, default) => self.emit_match(subject, arms, default.as_deref(), None, variables, body),
+            Expr::OnApplied(..) => Err("internal error: a generic class's static member wasn't resolved".to_string()),
             Expr::NewObject(class_id, arguments) => {
                 let class = self.classes[*class_id as usize].name.clone();
                 if let Some(enumeration) = &self.classes[*class_id as usize].enumeration {
@@ -13548,6 +13716,9 @@ fn class_is_a(classes: &[ClassDef], class_id: u32, ancestor: u32) -> bool {
 struct Bindings {
     types: Vec<(u32, ValueType)>,
     own_class: Option<(u32, u32)>,
+    /// The generic parent class `parent::` names in a class that extends one,
+    /// and the copy that's its parent.
+    parent: Option<(u32, u32)>,
 }
 
 /// Makes the copies of generic classes and functions that a program uses
@@ -13678,8 +13849,10 @@ impl Monomorphizer<'_> {
         let bindings = Bindings {
             types: template.type_params.iter().copied().zip(arguments).collect(),
             own_class: Some((generic, class_id)),
+            parent: None,
         };
         self.resolve_interfaces(&mut class, &bindings)?;
+        let bindings = self.resolve_parent(&mut class, &bindings)?;
         for property in &mut class.properties {
             property.value_type = self.subst(property.value_type, &bindings)?;
             if let Some(default) = &mut property.default {
@@ -13698,9 +13871,16 @@ impl Monomorphizer<'_> {
     /// implement it). A bound can mention the parameters, as in
     /// `T: Comparable<T>`: it's checked with them filled in.
     fn check_bounds(&mut self, owner: &str, params: &[u32], arguments: &[ValueType]) -> Result<(), String> {
-        let bindings = Bindings { types: params.iter().copied().zip(arguments.iter().copied()).collect(), own_class: None };
+        let bindings = Bindings { types: params.iter().copied().zip(arguments.iter().copied()).collect(), own_class: None, parent: None };
         for (param, argument) in params.iter().zip(arguments) {
             let definition = self.generics.params[*param as usize].clone();
+            if definition.objects_only && !matches!(argument, ValueType::Class(_)) {
+                return Err(format!(
+                    "{owner}'s type parameter {} must be an object, but {} isn't one",
+                    definition.name,
+                    self.type_name(*argument)
+                ));
+            }
             let Some(bound) = definition.bound else { continue };
             let bound = self.subst(bound, &bindings)?;
             let meets = match (argument, bound) {
@@ -13757,8 +13937,37 @@ impl Monomorphizer<'_> {
     fn subst_target(&self, target: &mut StaticTarget, bindings: &Bindings) {
         match target {
             StaticTarget::Class { class_id, .. } => *class_id = self.own_class(*class_id, bindings),
-            StaticTarget::Parent { enclosing, .. } | StaticTarget::Late { enclosing } => *enclosing = self.own_class(*enclosing, bindings),
+            StaticTarget::Parent { parent, enclosing } => {
+                *enclosing = self.own_class(*enclosing, bindings);
+                if let Some((generic, copy)) = bindings.parent {
+                    if *parent == generic {
+                        *parent = copy;
+                    }
+                }
+            }
+            StaticTarget::Late { enclosing } => *enclosing = self.own_class(*enclosing, bindings),
         }
+    }
+
+    /// Sets the parent of a class that extends a generic class (as written,
+    /// with the arguments in `bindings` filled in) to the copy for those
+    /// arguments, and returns `bindings` with parent:: mapped to it.
+    fn resolve_parent(&mut self, class: &mut ClassDef, bindings: &Bindings) -> Result<Bindings, String> {
+        let mut bindings = bindings.clone();
+        let Some(applied) = class.applied_parent.take() else { return Ok(bindings) };
+        let ValueType::Applied(application) = applied else { return Ok(bindings) };
+        let generic = self.generics.applications[application as usize].generic;
+        match self.subst(applied, &bindings)? {
+            ValueType::Class(parent) => {
+                if self.classes[parent as usize].is_final {
+                    return Err(format!("class '{}' cannot extend final class '{}'", class.name, self.classes[parent as usize].name));
+                }
+                class.parent_class = Some(parent);
+                bindings.parent = Some((generic, parent));
+            }
+            other => class.applied_parent = Some(other),
+        }
+        Ok(bindings)
     }
 
     fn subst_statement(&mut self, kind: &mut StatementKind, bindings: &Bindings) -> Result<(), String> {
@@ -13922,6 +14131,27 @@ impl Monomorphizer<'_> {
                     self.subst_expr(value, bindings)?;
                 }
             }
+            Expr::OnApplied(application, member) => {
+                let generic = self.generics.applications[*application as usize].generic;
+                self.subst_expr(member, bindings)?;
+                match self.subst(ValueType::Applied(*application), bindings)? {
+                    // Made: the member, naming the copy.
+                    ValueType::Class(copy) => {
+                        let mut member = std::mem::replace(&mut **member, Expr::Null);
+                        if let Expr::StaticCall(StaticTarget::Class { class_id, .. }, ..)
+                        | Expr::StaticProperty(StaticTarget::Class { class_id, .. }, _)
+                        | Expr::ClassName(StaticTarget::Class { class_id, .. }) = &mut member
+                        {
+                            if *class_id == generic {
+                                *class_id = copy;
+                            }
+                        }
+                        *expression = member;
+                    }
+                    ValueType::Applied(still) => *application = still,
+                    _ => {}
+                }
+            }
             Expr::Match(subject, arms, default) => {
                 self.subst_expr(subject, bindings)?;
                 for arm in arms {
@@ -13985,14 +14215,15 @@ impl Monomorphizer<'_> {
             let module = class.module;
             let result = (|| -> Result<(), String> {
                 this.resolve_interfaces(&mut class, &none)?;
+                let bindings = this.resolve_parent(&mut class, &none)?;
                 for property in &mut class.properties {
-                    property.value_type = this.subst(property.value_type, &none)?;
+                    property.value_type = this.subst(property.value_type, &bindings)?;
                 }
                 for property in &mut class.static_properties {
-                    property.value_type = this.subst(property.value_type, &none)?;
+                    property.value_type = this.subst(property.value_type, &bindings)?;
                 }
                 for method in &mut class.methods {
-                    this.subst_function(method, &none).map_err(|error| at(method.line, method.column, error))?;
+                    this.subst_function(method, &bindings).map_err(|error| at(method.line, method.column, error))?;
                 }
                 Ok(())
             })();
@@ -14342,6 +14573,7 @@ fn expression_names(expression: &Expr, used: &mut std::collections::BTreeSet<Str
             each(&arguments.iter().collect::<Vec<_>>(), used, declared);
         }
         Expr::NewObject(_, arguments) | Expr::NewGeneric(_, _, arguments) | Expr::ArrayLiteral(arguments) => each(&arguments.iter().collect::<Vec<_>>(), used, declared),
+        Expr::OnApplied(_, member) => expression_names(member, used, declared),
         Expr::Match(subject, arms, default) => {
             expression_names(subject, used, declared);
             for arm in arms {
@@ -14374,10 +14606,23 @@ fn expression_names(expression: &Expr, used: &mut std::collections::BTreeSet<Str
 fn proven_set(condition: &Expr, when: bool, names: &mut Vec<String>) {
     match condition {
         Expr::Compare(operator, left, right) => {
+            // A variable, or a variable's property: `this->age`, `user->age`.
+            let checked = |side: &Expr| match side {
+                Expr::Variable(name) => Some(name.clone()),
+                Expr::Member(object, property) => match &**object {
+                    Expr::Variable(owner) => Some(format!("{owner}->{property}")),
+                    _ => None,
+                },
+                _ => None,
+            };
             let name = match (&**left, &**right) {
-                (Expr::Variable(name), Expr::Null) | (Expr::Null, Expr::Variable(name)) => name,
+                (side, Expr::Null) | (Expr::Null, side) => match checked(side) {
+                    Some(name) => name,
+                    None => return,
+                },
                 _ => return,
             };
+            let name = &name;
             let proves = match operator {
                 CompareOp::NotEqual => when,
                 CompareOp::Equal => !when,
@@ -14398,6 +14643,12 @@ fn proven_set(condition: &Expr, when: bool, names: &mut Vec<String>) {
         Expr::Not(inner) => proven_set(inner, !when, names),
         _ => {}
     }
+}
+
+/// The name under which `narrow` marks `owner->property` as checked not to
+/// be null (it can't clash with a variable's name).
+fn narrowed_property(owner: &str, property: &str) -> String {
+    format!("\u{1}narrowed {owner}->{property}")
 }
 
 /// Whether any statement assigns to the variable `name` with `name = ...`.
@@ -15547,7 +15798,7 @@ mod tests {
         assert!(error("print(sort([[1], [2]]));").contains("for other types, use usort with a comparison function"));
         assert!(error("print(in_array(\"1\", [1, 2]));").contains("in_array looks for an int in a int[], found string"));
         assert!(error("print(usort([1], fn(a) => 1));").contains("usort's callback takes 2 parameters (int, int)"));
-        assert!(error("print(array_sum([\"a\"]));").contains("array_sum adds ints or doubles, found string[]"));
+        assert!(error("print(array_sum([\"a\"]));").contains("array_sum adds ints or doubles (or their ? forms), found string[]"));
     }
 
     #[test]
@@ -17599,9 +17850,9 @@ mod tests {
             ("Box b = null;", "Box is generic: give its type arguments, as in Box<T>"),
             ("Box<int, int> b = null;", "Box takes 1 type argument(s), found 2"),
             ("Box<int> b = new Box(\"x\");", "constructor argument mismatch"),
-            ("class B<T> extends Plain {}", "generic class 'B' can't extend a class yet; it can implement interfaces"),
-            ("class B<T> { static int n = 0; }", "generic class 'B' can't have static members yet"),
-            ("abstract class B<T> {}", "a generic class can't be abstract yet"),
+            ("class B<T> { public static int n = 0; } B<int>::n = 1;", "a generic class's static property can't be assigned with its type arguments"),
+            ("final class F<T> {} class G extends F<int> {}", "cannot extend final class 'F'"),
+            ("abstract class A<T> {} A<int> a = new A<int>();", "cannot instantiate abstract class 'A<int>'"),
             ("enum E<T> { case A; }", "an enum can't be generic"),
             ("interface I { function m<U>(U x): void; }", "abstract and interface methods can't have their own type parameters yet"),
             ("class A { function __construct<U>(U x) {} }", "a constructor can't have its own type parameters"),
@@ -17630,10 +17881,34 @@ mod tests {
     }
 
     #[test]
+    fn object_bounds_and_property_narrowing() {
+        // T: object allows null, and takes only objects.
+        assert!(compile_source("class C<T: object> { public T value = null; function has(): bool { return this->value != null; } } class U {} C<U> c = new C(); print(c->has());").is_ok());
+        let error = compile_source("class C<T: object> {} C<int> c = null;").unwrap_err();
+        assert!(error.contains("C's type parameter T must be an object, but int isn't one"), "{error}");
+        // A checked property is its scalar where the check holds.
+        assert!(compile_source("class P { public ?int age = null; function next(): int { if (this->age == null) { return 0; } return this->age + 1; } } P p = new P(); if (p->age != null && p->age > 1) { print(p->age * 2); }").is_ok());
+        let unchecked = compile_source("class P { public ?int age = null; } P p = new P(); print(p->age + 1);").unwrap_err();
+        assert!(unchecked.contains("a ?int may be null"), "{unchecked}");
+    }
+
+    #[test]
     fn bounded_type_parameters_can_be_null() {
         // A T with a bound is always an object.
         let source = "interface I {} class C implements I {} function g<T: I>(T x): T { return x == null ? null : x; } function h<T>(map[string, T] m): T { return m[\"k\"] ?? m[\"j\"]; } print(g(new C()) != null);";
         assert!(compile_source(source).is_ok());
+    }
+
+    #[test]
+    fn generic_classes_inherit() {
+        // Abstract generic classes, generic parents, parent::, and statics.
+        let source = "abstract class Collection<T> { protected T[] items = []; public static int made = 0; function __construct() { self::made++; } function add(T item): void { array_push(this->items, item); } abstract function label(): string; } class Stack<T> extends Collection<T> { function __construct() { parent::__construct(); } function label(): string { return \"stack\"; } } class Names extends Stack<string> { function label(): string { return \"names \" + parent::label(); } } Names n = new Names(); n->add(\"a\"); print(n->label(), Collection<string>::made);";
+        assert!(compile_source(source).is_ok(), "{:?}", compile_source(source).err());
+        // A class a generic class extends dispatches every call: a copy made
+        // later can override its methods.
+        let ir = compile_source("class Base { function hello(): string { return \"base\"; } } class Loud<T> extends Base { function hello(): string { return \"loud\"; } } function greet(Base b): string { return b->hello(); } print(greet(new Loud<int>()));").unwrap();
+        let greet = &ir[ir.find("define ptr @greet(").unwrap()..];
+        assert!(greet[..greet.find("\n}").unwrap()].contains("@qiq_dispatch_"), "{greet}");
     }
 
     #[test]
@@ -17739,7 +18014,7 @@ mod tests {
             ("enum E extends Suit { case A; }", "enum 'E' can't extend a class; it can implement interfaces"),
             ("function f(Suit s = Suit::Clubs): void {}", "default for 's' must be one of the enum's cases, and 'Clubs' isn't one"),
             ("class K { public Suit s = Suit::Clubs; }", "the default for 's' must be a constant, and 'Clubs' isn't one"),
-            ("class T { public Level l; } T t = json_decode(\"{}\");", "json_decode can't create enum Level yet: decode its value as an int and read that with Level::from"),
+            ("class T { public Suit s; } T t = json_decode(\"{}\");", "json_decode can't create enum Suit: a pure enum has no value in JSON"),
         ];
         for (code, message) in cases {
             let source = format!("{declared}{code}");

@@ -111,7 +111,7 @@ print(describe(null), describe(41), total);
 unknown 42 10
 ```
 
-<p>This works for local variables and parameters that the checked code doesn't assign to, and that no anonymous function captures (either could make them null again). For a property, copy it into a variable first. Using a nullable value unchecked is a compile error that says how to fix it: <code>'+' requires two ints or two doubles, or strings and chars to concatenate; found ?int and int; a ?int may be null: check it with != null first (then it's int there), or give a fallback with ??</code>.</p>
+<p>This works for local variables and parameters that the checked code doesn't assign to, and that no anonymous function captures (either could make them null again). A property checked the same way, such as <code>this-&gt;age</code> or <code>user-&gt;age</code>, is its scalar there too; since something else could set a property to <code>null</code> in the meantime, each read of it there checks, and throws <code>RuntimeException</code> if that happened. Using a nullable value unchecked is a compile error that says how to fix it: <code>'+' requires two ints or two doubles, or strings and chars to concatenate; found ?int and int; a ?int may be null: check it with != null first (then it's int there), or give a fallback with ??</code>.</p>
 <p>Strings, chars, arrays, maps, and objects can already be null, so <code>?string</code> and <code>?User</code> are errors: write <code>string</code> and <code>User</code>. Map keys can't be nullable.</p>
 
 <h2>Arrays, maps, objects, and functions</h2>

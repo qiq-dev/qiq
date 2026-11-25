@@ -76,3 +76,23 @@ print(parsed);
 // Callbacks.
 int[] filled = array_map(readings, fn(?int r) => r ?? -1);
 print(filled);
+
+// A property checked not to be null is its scalar where the check holds.
+class Person {
+    public ?int age = null;
+
+    function nextYear(): string {
+        if (this->age == null) {
+            return "unknown";
+        }
+        return to_string(this->age + 1);
+    }
+}
+Person person = new Person();
+print(person->nextYear());
+person->age = 41;
+print(person->nextYear(), person->age != null ? person->age * 2 : 0);
+
+// sort puts nulls first; array_sum skips them.
+?int[] points = [3, null, 1, 2];
+print(sort(points), rsort(points), array_sum(points));

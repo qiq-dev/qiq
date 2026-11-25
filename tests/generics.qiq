@@ -250,3 +250,79 @@ Converter<int> number = new Converter(21);
 Converter<string> label = number->convert(fn(n) => f"#{n * 2}");
 print(label->value, label, number->convert(fn(int n) => n > 20)->value);
 print(Lists::repeat("ab", 3), Lists::repeat(Money::class, 1));
+
+// T: object: any object type, so a T can be null.
+class Slot<T: object> {
+    public T value = null;
+
+    function isEmpty(): bool {
+        return this->value == null;
+    }
+}
+Slot<Word> slot = new Slot();
+print(slot->isEmpty());
+slot->value = new Word("x");
+print(slot->isEmpty());
+
+// Generic classes can be abstract, extend classes (generic or not), be
+// extended, and have static members.
+abstract class Collection<T> {
+    protected T[] items = [];
+    public static int made = 0;
+
+    function __construct() {
+        self::made++;
+    }
+
+    function add(T item): Collection<T> {
+        array_push(this->items, item);
+        return this;
+    }
+
+    function size(): int {
+        return len(this->items);
+    }
+
+    abstract function label(): string;
+}
+
+class Stack<T> extends Collection<T> {
+    function pop(): T {
+        return array_pop(this->items);
+    }
+
+    function label(): string {
+        return "stack";
+    }
+}
+
+class CountingStack<T> extends Stack<T> {
+    public int pushes = 0;
+
+    function add(T item): Collection<T> {
+        this->pushes++;
+        return parent::add(item);
+    }
+
+    function label(): string {
+        return "counting " + parent::label();
+    }
+}
+
+// An ordinary class can extend a generic class made for its types.
+class History extends Stack<string> {
+    function label(): string {
+        return "history";
+    }
+}
+
+function describe(Collection<string> collection): string {
+    return f"{collection->label()} of {collection->size()}";
+}
+
+CountingStack<string> counting = new CountingStack();
+counting->add("a")->add("b");
+History history = new History();
+history->add("x");
+print(counting->pop(), counting->pushes, describe(counting), describe(history));
+print(Collection<string>::made);

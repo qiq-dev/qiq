@@ -5,6 +5,8 @@
 // PermissionDeniedException when access is denied, and IOException for other
 // errors (all three extend IOException).
 
+import Iterator from "iterators";
+
 // The whole file as a string. Throws InvalidUtf8Exception when the contents
 // aren't valid UTF-8 text.
 extern function file_get_contents(string path): string;
@@ -143,8 +145,11 @@ extern function __file_close(int handle): void;
 // A file opened for reading or writing a piece at a time, so large files
 // don't have to fit in memory. Writes are buffered; close() (or the program
 // ending) flushes them. Errors throw the same exceptions as the functions
-// above, and using a file after close() throws IOException.
-final class File {
+// above, and using a file after close() throws IOException. It's an
+// Iterator<string> of its lines, so foreach reads it a line at a time:
+//
+//   foreach (File::open("app.log") as line) { ... }
+final class File implements Iterator<string> {
     private int handle;
 
     private function __construct(int handle) {
@@ -188,6 +193,16 @@ final class File {
 
     function writeBytes(byte[] data): void {
         __file_write_bytes(this->handle, data);
+    }
+
+    // Whether there's another line to read: !eof().
+    function hasNext(): bool {
+        return !this->eof();
+    }
+
+    // The next line, as readLine() reads it.
+    function next(): string {
+        return this->readLine();
     }
 
     // Whether there is nothing left to read.

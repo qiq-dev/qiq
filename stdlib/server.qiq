@@ -986,7 +986,17 @@ function __server_request(int connection, string line, string peer, function(Req
     try {
         handler(request, writer);
     } catch (Exception e) {
-        File::stderr()->write("qiq: 500 " + method + " " + target + ": " + e->getMessage() + "\n");
+        // As an uncaught exception is reported: where it was thrown, and
+        // the functions it passed through.
+        string where = e->getLine() > 0 ? e->getFile() + ":" + to_string(e->getLine()) + ": " : "";
+        string report = "qiq: 500 " + method + " " + target + ": " + where + e->getMessage() + "\n";
+        string[] trace = e->getTrace();
+        if (len(trace) > 1) {
+            foreach (trace as frame) {
+                report = report + "    at " + frame + "\n";
+            }
+        }
+        File::stderr()->write(report);
         writer->__reset();
         writer->error(500);
     }

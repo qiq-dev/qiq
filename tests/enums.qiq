@@ -96,3 +96,12 @@ foreach ([Suit::Hearts, Suit::Clubs] as each) {
             print("not hearts");
     }
 }
+
+// json_decode reads a backed enum from its value.
+Task fromJson = json_decode("{\"title\": \"ship\", \"status\": \"archived\", \"priority\": 10}");
+print(fromJson->status, fromJson->priority);
+try {
+    Status unknown = json_decode("\"deleted\"");
+} catch (JsonException e) {
+    print(e->getMessage());
+}

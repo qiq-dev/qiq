@@ -20,6 +20,7 @@
 import Exception, DatabaseException, InvalidArgumentException from "exceptions";
 import implode, str_contains from "string";
 import DateTime from "date";
+import Iterator from "iterators";
 
 extern function __sql_open(string dsn): int;
 extern function __sql_close(int handle): void;
@@ -336,20 +337,18 @@ final class Row {
 }
 
 // The rows of a query, read a batch at a time rather than all at once, for
-// results too big to hold in memory. From Database::cursor.
+// results too big to hold in memory. From Database::cursor. It's an
+// Iterator<Row>, so foreach reads it:
 //
-//   Cursor rows = db->cursor("select * from events where day = ?", day);
-//   Row row = rows->next();
-//   while (row != null) {
+//   foreach (db->cursor("select * from events where day = ?", day) as row) {
 //       ...
-//       row = rows->next();
 //   }
 //
 // A cursor closes itself after its last row; close() stops early. With
 // PostgreSQL and MySQL, the rows come from the connection as they're read,
 // so the database can't run another statement until they've all been read
 // or the cursor is closed (doing so throws DatabaseException).
-final class Cursor {
+final class Cursor implements Iterator<Row> {
     private int handle;
     // Rows next() has read ahead.
     private Row[] batch;
@@ -377,14 +376,19 @@ final class Cursor {
         return rows;
     }
 
-    // The next row, or null after the last.
-    function next(): Row {
+    // Whether there's another row (reading the next batch if needed).
+    function hasNext(): bool {
         if (this->at == len(this->batch)) {
             this->batch = this->read(256);
             this->at = 0;
-            if (len(this->batch) == 0) {
-                return null;
-            }
+        }
+        return this->at < len(this->batch);
+    }
+
+    // The next row, or null after the last.
+    function next(): Row {
+        if (!this->hasNext()) {
+            return null;
         }
         Row row = this->batch[this->at];
         this->at++;

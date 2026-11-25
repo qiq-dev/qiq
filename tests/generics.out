@@ -14,3 +14,7 @@ second 2 MemoryRepository<Word>
 12
 #42 Converter<string> true
 ["ab", "ab", "ab"] ["Money"]
+true
+false
+b 2 counting stack of 1 history of 1
+2

@@ -113,6 +113,38 @@ print(label->value, label);
 #42 Box<string>
 ```
 
+<h2>Inheritance</h2>
+<p>Generic classes take part in inheritance like any other: one can be abstract, extend a class, generic or not (<code>class Stack&lt;T&gt; extends Collection&lt;T&gt;</code>), and be extended, by another generic class or by an ordinary class for particular types (<code>class History extends Stack&lt;string&gt;</code>). <code>parent::</code> calls the parent's methods, and static members belong to each class made from the generic one: <code>Collection&lt;string&gt;</code> and <code>Collection&lt;int&gt;</code> each have their own.</p>
+
+```qiq
+abstract class Repository<T> {
+    protected map[int, T] items = {};
+
+    function save(int id, T item): void {
+        this->items[id] = item;
+    }
+
+    function count(): int {
+        return len(this->items);
+    }
+
+    abstract function name(): string;
+}
+
+class UserRepository extends Repository<string> {
+    function name(): string {
+        return "users";
+    }
+}
+
+Repository<string> users = new UserRepository();
+users->save(1, "Ada");
+print(users->name(), users->count());
+```
+```output
+users 1
+```
+
 <h2>Generic interfaces</h2>
 <p>An interface can have type parameters too: <code>Repository&lt;User&gt;</code> declares methods that take and return users. A class implements it for particular types (<code>class Money implements Comparable&lt;Money&gt;</code>), or a generic class for its own (<code>class MemoryRepository&lt;T&gt; implements Repository&lt;T&gt;</code>), and its methods must match the interface's with those types filled in.</p>
 
@@ -220,11 +252,11 @@ print(largest([new Money(5), new Money(12), new Money(7)])->cents);
 <p>The compiler makes a copy of a generic class or function for each set of type arguments the program uses, with the types filled in, so generic code runs exactly as fast as code written for those types: a <code>Stack&lt;int&gt;</code> stores plain ints. Generic code is also checked once on its own, even if nothing uses it, with each <code>T</code> standing for its bound, or for a type with no methods; a mistake shows up there rather than at some later use.</p>
 
 <h2>Type parameters and null</h2>
-<p>A <code>T</code> without a bound could be a type that can't be null, such as <code>int</code>, so generic code can't treat it as able to be null: comparing it with <code>null</code>, setting it to <code>null</code>, and giving it a <code>??</code> fallback are errors, such as <code>a T can't be compared with null: T could be a type that can't be null, such as int</code>. A <code>T</code> with a bound is always an object, so it can be <code>null</code>. <code>??</code> on a map or array element of type <code>T</code> (<code>items[key] ?? fallback</code>) works either way, since it tests for a missing key or index.</p>
+<p>A <code>T</code> without a bound could be a type that can't be null, such as <code>int</code>, so generic code can't treat it as able to be null: comparing it with <code>null</code>, setting it to <code>null</code>, and giving it a <code>??</code> fallback are errors, such as <code>a T can't be compared with null: T could be a type that can't be null, such as int</code>. A <code>T</code> with a bound is always an object, so it can be <code>null</code>; when any object type will do, the bound <code>T: object</code> says so, and allows <code>null</code>. <code>??</code> on a map or array element of type <code>T</code> (<code>items[key] ?? fallback</code>) works either way, since it tests for a missing key or index.</p>
 
 <h2>Rules</h2>
 <ul>
-<li>A generic class can't extend a class, be abstract, or have static members yet; it can implement interfaces, and ordinary classes can't extend it.</li>
+<li>A generic class's static property can be read with its type arguments (<code>Box&lt;int&gt;::count</code>), but only assigned inside the class, with <code>self::</code>.</li>
 <li>Interface and abstract methods can't have type parameters of their own yet, and generic methods can't be overridden. A constructor's type parameters are its class's.</li>
 <li><code>?T</code> isn't allowed, since <code>T</code> may already be a type that can be null. <code>instanceof</code> can't test for a generic class.</li>
 <li>Calls can't write type arguments (<code>first&lt;int&gt;(xs)</code>); a generic function can't be used as a function value.</li>

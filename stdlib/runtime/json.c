@@ -26,6 +26,8 @@ extern char *(*const qiq_json_datetime_format)(const char *format, int64_t micro
 extern const char *qiq_class_names[];
 // The box classes of ?int, ?double, ?bool, and ?byte, in that order.
 extern const int64_t qiq_box_classes[];
+// Per class, its enum cases' objects, null-terminated (NULL for others).
+extern void *const *const qiq_enum_cases[];
 
 // From map.c and memory.c.
 void *qiq_map_new(uint32_t key_type, int32_t value_references);
@@ -178,15 +180,20 @@ static void qiq_encode_string(QiqBuffer *out, const char *text);
 static void qiq_encode_time_value(QiqEncoder *encoder, const char *json, const int64_t *slots) {
     char *end;
     if (json[1] == 'S') {
-        // A value written as one of its strings (a Url, or a string-backed enum's value).
+        // A value written as one of its strings (a Url).
         qiq_encode_string(&encoder->out, (const char *)(uintptr_t)slots[strtol(json + 2, NULL, 10)]);
         return;
     }
-    if (json[1] == 'I') {
-        // An int-backed enum, written as its value.
-        char number[24];
-        qiq_format_int(number, slots[strtol(json + 2, NULL, 10)]);
-        qiq_buffer_text(&encoder->out, number);
+    if (json[1] == 'E') {
+        // A backed enum, written as its value: "!ES<slot>" or "!EI<slot>".
+        int64_t value = slots[strtol(json + 3, NULL, 10)];
+        if (json[2] == 'S') {
+            qiq_encode_string(&encoder->out, (const char *)(uintptr_t)value);
+        } else {
+            char number[24];
+            qiq_format_int(number, value);
+            qiq_buffer_text(&encoder->out, number);
+        }
         return;
     }
     if (json[1] == 'N') {
@@ -1045,6 +1052,35 @@ static bool qiq_decode_value(QiqDecoder *decoder, const char *descriptor, uint64
     char first = *decoder->cursor;
     char kind = *descriptor;
     *out = 0;
+    // A backed enum: its value, as the case with that value.
+    if (kind == 'o' && first != 'n') {
+        int64_t class_id = strtol(descriptor + 1, NULL, 10);
+        const char *json = qiq_class_json[class_id];
+        if (json[0] == '!' && json[1] == 'E') {
+            bool text = json[2] == 'S';
+            int64_t slot = strtol(json + 3, NULL, 10);
+            uint64_t value;
+            if (!qiq_decode_value(decoder, text ? "s" : "i", &value)) return false;
+            for (void *const *cases = qiq_enum_cases[class_id]; *cases != NULL; cases++) {
+                int64_t own = ((const int64_t *)*cases)[slot];
+                bool same = text ? strcmp((const char *)(uintptr_t)own, (const char *)(uintptr_t)value) == 0 : own == (int64_t)value;
+                if (same) {
+                    if (text) qiq_release((void *)(uintptr_t)value);
+                    *out = (uint64_t)(uintptr_t)*cases;
+                    return true;
+                }
+            }
+            char message[256];
+            if (text) {
+                snprintf(message, sizeof message, "\"%.100s\" is not a valid value for enum %s", (const char *)(uintptr_t)value, qiq_class_names[class_id]);
+                qiq_release((void *)(uintptr_t)value);
+            } else {
+                snprintf(message, sizeof message, "%lld is not a valid value for enum %s", (long long)value, qiq_class_names[class_id]);
+            }
+            qiq_path_error(decoder, message);
+            return false;
+        }
+    }
     if (kind == 'N' && first != 'n') {
         // A nullable scalar that isn't null: the scalar, in a new box.
         uint64_t scalar;

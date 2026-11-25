@@ -13,3 +13,5 @@ write docs: active, later write docs: active, urgent
 {"title":"write docs","status":"active","priority":1}
 hearts
 not hearts
+Status::Archived Priority::High
+$: "deleted" is not a valid value for enum Status

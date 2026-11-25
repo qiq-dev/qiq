@@ -131,7 +131,7 @@ high (10) Priority::Low
 <li>An enum can't have properties or a constructor, and it can't be created with <code>new</code>: its cases are its only values.</li>
 <li>An enum can't extend a class, and classes can't extend it.</li>
 <li>It can't declare its own <code>cases</code>, <code>from</code>, or <code>tryFrom</code>; a pure enum (without values) has only <code>cases</code>.</li>
-<li><code>json_encode</code> writes a backed enum as its value, as PHP does, and throws <code>JsonException</code> for a pure enum. <code>json_decode</code> can't create enums yet: decode the value and read it with <code>from</code>.</li>
+<li><code>json_encode</code> writes a backed enum as its value, as PHP does, and throws <code>JsonException</code> for a pure enum. <code>json_decode</code> reads a backed enum from its value, and an unknown value throws <code>JsonException</code> (<code>"deleted" is not a valid value for enum Status</code>); a pure enum can't be decoded.</li>
 <li>Maps can't have enum keys, since keys are scalars; use the case's <code>name</code> or <code>value</code> as the key.</li>
 <li><code>enum</code> is a keyword only at the start of an enum declaration, so it can still be used as a name.</li>
 </ul>

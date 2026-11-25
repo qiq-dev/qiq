@@ -451,6 +451,7 @@ typedef struct {
     char name[128];
     int64_t slot;
     char kind;     // i, d, b, or s
+    bool nullable; // ?int, ?double, or ?bool: an empty field is null
 } QiqCsvProperty;
 
 // The public properties of class `class_id`, from qiq_class_json:
@@ -467,8 +468,10 @@ static size_t qiq_csv_properties(int64_t class_id, QiqCsvProperty *properties, s
         memcpy(property->name, cursor, length);
         property->name[length] = '\0';
         property->slot = strtoll(colon + 1, NULL, 10);
-        property->kind = second[1];
-        if (end != second + 2 || !strchr("idbs", property->kind)) {
+        // "N" before the kind: a nullable scalar ("Ni" for ?int).
+        property->nullable = second[1] == 'N';
+        property->kind = second[property->nullable ? 2 : 1];
+        if (end != second + (property->nullable ? 3 : 2) || !strchr(property->nullable ? "idb" : "idbs", property->kind)) {
             qiq_throwf(QIQ_CSV_EXCEPTION, "%s: %s's property '%s' isn't an int, double, bool, or string, which is all CSV holds", caller,
                        qiq_class_names[class_id], property->name);
         }
@@ -517,6 +520,10 @@ static bool qiq_csv_json_value(QiqCsvText *out, const QiqCsvProperty *property, 
     char trimmed[128];
     const char *value = qiq_csv_trimmed(field, trimmed, sizeof trimmed);
     char *end;
+    if (property->nullable && *value == '\0') {
+        qiq_csv_add(out, "null", 4);
+        return true;
+    }
     switch (property->kind) {
     case 's':
         qiq_csv_json_string(out, field);
@@ -662,6 +669,14 @@ QIQ_GUARDED(char *, qiq_csv_encode, NULL, (void *objects, const char *descriptor
             uint64_t bits = slots[properties[index].slot];
             field.length = 0;
             qiq_csv_add(&field, "", 0);
+            // A nullable scalar: an empty field for null, else its box's value.
+            if (properties[index].nullable) {
+                if (bits == 0) {
+                    qiq_csv_write_field(&out, field.data, separator, count == 1);
+                    continue;
+                }
+                bits = ((const uint64_t *)(uintptr_t)bits)[1];
+            }
             switch (properties[index].kind) {
             case 'i': {
                 char text[32];
