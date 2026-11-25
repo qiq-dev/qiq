@@ -1417,10 +1417,11 @@ JSON = {
                 param("pretty", "bool", "Whether to indent the output (4 spaces per level, one value per line), like PHP's <code>JSON_PRETTY_PRINT</code>.", "false"),
             ],
             "returns": "string",
-            "description": "Returns the JSON text for <code>value</code>. Objects are written with their public properties, in the order they're declared (inherited properties first); private and protected properties are left out. Maps are written in insertion order, as PHP writes arrays.",
+            "description": "Returns the JSON text for <code>value</code>. Objects are written with their public properties, in the order they're declared (inherited properties first); private and protected properties are left out. Maps are written in insertion order, as PHP writes arrays. A case of a backed <a href=\"enums.html\">enum</a> is written as its value.",
             "return_description": "The JSON text.",
             "errors": [
                 "<code>JsonException</code> if a double is <code>INF</code> or <code>NAN</code>, which JSON can't represent, or if values are nested more than 512 levels deep, as happens when objects refer to each other in a cycle.",
+                "<code>JsonException</code> for a case of a pure enum (one without values), which has nothing to write.",
             ],
             "examples": [
                 {

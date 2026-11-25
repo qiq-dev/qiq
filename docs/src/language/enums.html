@@ -1,0 +1,137 @@
+<!-- title: Enums -->
+<h1>Enums</h1>
+<p>An enum is a type with a fixed set of values, its <em>cases</em>. A variable of an enum type holds one of them, so the compiler can check that a value is valid and that a <code>switch</code> handles every case, which int or string constants can't give you. qiq's enums work like PHP's.</p>
+
+```qiq
+enum Suit {
+    case Hearts;
+    case Diamonds;
+    case Clubs;
+    case Spades;
+}
+
+Suit trump = Suit::Spades;
+print(trump, trump->name, trump == Suit::Spades);
+```
+```output
+Suit::Spades Spades true
+```
+
+<h2>Cases</h2>
+<ul>
+<li>Write a case as <code>Enum::Case</code> (or <code>self::Case</code> inside the enum). Each case is a single value: <code>==</code> and <code>!=</code> compare cases, and two reads of <code>Suit::Hearts</code> are always equal.</li>
+<li>Every case has a readonly <code>name</code> property, the case's name as a string.</li>
+<li><code>Enum::cases()</code> returns all the cases in the order they're declared.</li>
+<li>Printing a case prints <code>Enum::Case</code>.</li>
+<li>Cases can be stored anywhere an object can: in variables, properties, arrays, and map values. They can also be property defaults and parameter defaults: <code>function deal(Suit trump = Suit::Spades)</code>.</li>
+</ul>
+
+```qiq
+enum Direction {
+    case Up;
+    case Down;
+}
+foreach (Direction::cases() as direction) {
+    print(direction->name);
+}
+```
+```output
+Up
+Down
+```
+
+<h2>Backed enums</h2>
+<p>A backed enum gives each case a value, all ints or all strings, written after the enum's name. This is how an enum is stored in a database or sent as JSON. Each case then also has a readonly <code>value</code>, and the enum gets two static methods for going back from a value to its case:</p>
+<ul>
+<li><code>Enum::from(value)</code> returns the case with that value, and throws <code>InvalidArgumentException</code> if there's none.</li>
+<li><code>Enum::tryFrom(value)</code> returns the case, or <code>null</code> if there's none.</li>
+</ul>
+
+```qiq
+enum Status: string {
+    case Active = "active";
+    case Archived = "archived";
+}
+
+print(Status::Active->value);
+print(Status::from("archived"), Status::tryFrom("deleted") == null);
+try {
+    Status::from("deleted");
+} catch (InvalidArgumentException e) {
+    print(e->getMessage());
+}
+```
+```output
+active
+Status::Archived true
+"deleted" is not a valid backing value for enum Status
+```
+
+<p>Values must be literals of the backing type, and no two cases can share one.</p>
+
+<h2>switch on an enum</h2>
+<p>A <code>switch</code> can test an enum value; its case values must be cases of that enum. Without a <code>default</code>, the switch must handle every case, so adding a case to an enum makes the compiler point out every switch that needs updating.</p>
+
+```qiq
+enum Suit {
+    case Hearts;
+    case Diamonds;
+    case Clubs;
+    case Spades;
+}
+
+function color(Suit suit): string {
+    switch (suit) {
+        case Suit::Hearts, Suit::Diamonds:
+            return "red";
+        case Suit::Clubs, Suit::Spades:
+            return "black";
+    }
+}
+print(color(Suit::Diamonds));
+```
+```output
+red
+```
+
+<p>Leaving out <code>Suit::Spades</code> above is the error <code>switch on enum Suit doesn't handle Suit::Spades; add a case for it, or a default</code>. A switch like this one, with every case handled and every branch returning, ends the function's code path, as a switch with a <code>default</code> does. A <code>null</code> value matches no case, so it throws <code>RuntimeException</code>.</p>
+
+<h2>Methods, constants, and interfaces</h2>
+<p>An enum can have methods (with <code>this</code> as the case they're called on), static methods, and constants, and it can implement interfaces.</p>
+
+```qiq
+interface HasLabel {
+    function label(): string;
+}
+
+enum Priority: int implements HasLabel {
+    case Low = 1;
+    case High = 10;
+
+    const Default = 1;
+
+    function label(): string {
+        return strtolower(this->name) + " (" + to_string(this->value) + ")";
+    }
+
+    static function fallback(): Priority {
+        return Priority::from(self::Default);
+    }
+}
+
+HasLabel item = Priority::High;
+print(item->label(), Priority::fallback());
+```
+```output
+high (10) Priority::Low
+```
+
+<h2>Rules</h2>
+<ul>
+<li>An enum can't have properties or a constructor, and it can't be created with <code>new</code>: its cases are its only values.</li>
+<li>An enum can't extend a class, and classes can't extend it.</li>
+<li>It can't declare its own <code>cases</code>, <code>from</code>, or <code>tryFrom</code>; a pure enum (without values) has only <code>cases</code>.</li>
+<li><code>json_encode</code> writes a backed enum as its value, as PHP does, and throws <code>JsonException</code> for a pure enum. <code>json_decode</code> can't create enums yet: decode the value and read it with <code>from</code>.</li>
+<li>Maps can't have enum keys, since keys are scalars; use the case's <code>name</code> or <code>value</code> as the key.</li>
+<li><code>enum</code> is a keyword only at the start of an enum declaration, so it can still be used as a name.</li>
+</ul>

@@ -130,10 +130,10 @@ ok not found error
 ```
 
 <ul>
-<li>The value can be an <code>int</code>, <code>double</code>, <code>bool</code>, <code>byte</code>, <code>string</code>, or <code>char</code>. Case values are expressions of the same type, tested in order; the switch value is evaluated once.</li>
+<li>The value can be an <code>int</code>, <code>double</code>, <code>bool</code>, <code>byte</code>, <code>string</code>, <code>char</code>, or <a href="enums.html">enum</a>. Case values are expressions of the same type, tested in order; the switch value is evaluated once. For an enum, they must be its cases, and a switch without a <code>default</code> must handle all of them.</li>
 <li>Duplicate literal case values are an error, and so is a case with no statements, because it would silently do nothing (this catches PHP-style stacked <code>case 1: case 2:</code>). Write <code>break;</code> for a case that deliberately does nothing.</li>
 <li><code>default</code> can appear anywhere, at most once.</li>
-<li>A switch with a <code>default</code> in which every branch returns or throws ends a function's code path.</li>
+<li>A switch with a <code>default</code> in which every branch returns or throws ends a function's code path, and so does such a switch on an enum that handles every case.</li>
 </ul>
 
 <h2>break and continue</h2>

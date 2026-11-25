@@ -1,0 +1,15 @@
+Suit::Hearts
+Hearts Red Hearts (Red) 4
+true false true
+[Suit::Hearts, Suit::Diamonds, Suit::Clubs, Suit::Spades]
+Suit::Hearts
+active 10 -5
+Status::Archived Low
+true Status::Active
+3 is not a valid backing value for enum Priority at line 56
+Spades (Black) true
+Suit::Clubs 4
+write docs: active, later write docs: active, urgent
+{"title":"write docs","status":"active","priority":1}
+hearts
+not hearts

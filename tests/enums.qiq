@@ -1,0 +1,98 @@
+// Enums: a type whose values are its cases.
+interface HasLabel {
+    function label(): string;
+}
+
+enum Suit implements HasLabel {
+    case Hearts;
+    case Diamonds;
+    case Clubs;
+    case Spades;
+
+    const Count = 4;
+
+    // A switch on an enum without a default must handle every case.
+    function color(): string {
+        switch (this) {
+            case Suit::Hearts, Suit::Diamonds:
+                return "Red";
+            case self::Clubs, self::Spades:
+                return "Black";
+        }
+    }
+
+    function label(): string {
+        return this->name + " (" + this->color() + ")";
+    }
+
+    static function fromSymbol(string symbol): Suit {
+        return symbol == "♥" ? Suit::Hearts : Suit::Spades;
+    }
+}
+
+// Backed enums: each case has a value, an int or a string.
+enum Status: string {
+    case Active = "active";
+    case Archived = "archived";
+}
+
+enum Priority: int {
+    case Low = 1;
+    case High = 10;
+    case Below = -5;
+}
+
+Suit suit = Suit::Hearts;
+print(suit);
+print(suit->name, suit->color(), suit->label(), Suit::Count);
+print(suit == Suit::Hearts, suit == Suit::Spades, suit != Suit::Clubs);
+print(Suit::cases());
+print(Suit::fromSymbol("♥"));
+
+print(Status::Active->value, Priority::High->value, Priority::Below->value);
+print(Status::from("archived"), Priority::from(1)->name);
+print(Status::tryFrom("deleted") == null, Status::tryFrom("active"));
+try {
+    Priority::from(3);
+} catch (InvalidArgumentException e) {
+    print(e->getMessage(), "at line", e->getLine());
+}
+
+// Cases are objects: in arrays and maps, as interface values, and with instanceof.
+HasLabel labelled = Suit::Spades;
+print(labelled->label(), labelled instanceof Suit);
+map[string, Suit] byName = {};
+foreach (Suit::cases() as each) {
+    byName[each->name] = each;
+}
+print(byName["Clubs"], len(byName));
+
+// Defaults, in properties and parameters.
+class Task {
+    public string title;
+    public Status status = Status::Active;
+    public Priority priority = Priority::Low;
+
+    function __construct(string title) {
+        this->title = title;
+    }
+}
+function describe(Task task, Priority minimum = Priority::High): string {
+    string urgent = task->priority->value >= minimum->value ? "urgent" : "later";
+    return f"{task->title}: {task->status->value}, {urgent}";
+}
+Task task = new Task("write docs");
+print(describe(task), describe(task, Priority::Low));
+
+// A backed enum is written to JSON as its value.
+print(json_encode(task));
+
+// A switch with a default can list only some cases.
+foreach ([Suit::Hearts, Suit::Clubs] as each) {
+    switch (each) {
+        case Suit::Hearts:
+            print("hearts");
+        default:
+            print("not hearts");
+    }
+}

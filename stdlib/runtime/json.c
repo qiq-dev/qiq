@@ -168,8 +168,19 @@ static void qiq_encode_string(QiqBuffer *out, const char *text);
 static void qiq_encode_time_value(QiqEncoder *encoder, const char *json, const int64_t *slots) {
     char *end;
     if (json[1] == 'S') {
-        // A value written as one of its strings (a Url).
+        // A value written as one of its strings (a Url, or a string-backed enum's value).
         qiq_encode_string(&encoder->out, (const char *)(uintptr_t)slots[strtol(json + 2, NULL, 10)]);
+        return;
+    }
+    if (json[1] == 'I') {
+        // An int-backed enum, written as its value.
+        char number[24];
+        qiq_format_int(number, slots[strtol(json + 2, NULL, 10)]);
+        qiq_buffer_text(&encoder->out, number);
+        return;
+    }
+    if (json[1] == 'N') {
+        encoder->error = "a pure enum can't be written as JSON: only a backed enum (enum Name: string, or enum Name: int) has a value to write";
         return;
     }
     if (json[1] == 'T') {

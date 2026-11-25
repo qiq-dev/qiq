@@ -1120,9 +1120,30 @@ struct ClassDef {
     static_properties: Vec<StaticProperty>,
     constants: Vec<Constant>,
     methods: Vec<Function>,
+    /// Set for an `enum`: its cases, each a single object made by the
+    /// compiler (see emit_enum_globals).
+    enumeration: Option<Enumeration>,
     /// Where the class's name is, for errors about the class as a whole.
     line: usize,
     column: usize,
+}
+
+/// An enum: a final class whose only values are its cases. Each case is an
+/// object with a readonly `name` property and, for a backed enum, a readonly
+/// `value`; the compiler adds the static methods cases(), and for a backed
+/// enum from() and tryFrom().
+#[derive(Debug, Clone)]
+struct Enumeration {
+    /// `enum Name: int` or `enum Name: string`; None for a pure enum.
+    backing: Option<ValueType>,
+    cases: Vec<EnumCase>,
+}
+
+#[derive(Debug, Clone)]
+struct EnumCase {
+    name: String,
+    /// The backing value, a literal of the enum's backing type.
+    value: Option<Expr>,
 }
 
 #[derive(Debug)]
@@ -1421,6 +1442,9 @@ struct Parser {
     current_class: Option<u32>,
     /// Its parent; `parent::` refers to it.
     current_parent: Option<u32>,
+    /// While parsing an enum: the names of the cases declared so far, which
+    /// its methods' parameter defaults can name.
+    current_enum_cases: Option<Vec<String>>,
     /// Top-level functions, classes, and interfaces declared `private`:
     /// importable only within the same module (qiq.mod).
     private_names: HashSet<String>,
@@ -1478,13 +1502,15 @@ impl Parser {
                 let declaration = matches!(
                     next,
                     Some(TokenKind::Class | TokenKind::Abstract | TokenKind::Final | TokenKind::Interface | TokenKind::Function)
-                );
+                ) || self.at_enum(self.cursor + 1);
                 if !declaration {
-                    return Err(self.error("expected a function, class, or interface after 'private'"));
+                    return Err(self.error("expected a function, class, enum, or interface after 'private'"));
                 }
                 self.advance();
-                // The declared name: the first identifier after the keywords.
-                let name = self.tokens[self.cursor..]
+                // The declared name: the first identifier after the keywords
+                // (for an enum, after the word `enum`).
+                let skip = usize::from(self.at_enum(self.cursor));
+                let name = self.tokens[self.cursor + skip..]
                     .iter()
                     .find_map(|token| match &token.kind {
                         TokenKind::Identifier(name) => Some(name.clone()),
@@ -1519,7 +1545,9 @@ impl Parser {
                 if !matches!(self.current().kind, TokenKind::Class) {
                     return Err(self.error("expected 'class' after the class modifiers"));
                 }
-                self.parse_class(is_abstract, is_final)?;
+                self.parse_class(is_abstract, is_final, false)?;
+            } else if self.at_enum(self.cursor) {
+                self.parse_class(false, true, true)?;
             } else if matches!(self.current().kind, TokenKind::Interface) {
                 self.parse_interface()?;
             } else if matches!(self.current().kind, TokenKind::Function) && !self.at_function_type() {
@@ -1609,6 +1637,21 @@ impl Parser {
             },
             other => other,
         };
+        // A case of the parameter's enum: `Suit suit = Suit::Hearts`.
+        if let (ValueType::Class(class_id), Expr::StaticProperty(StaticTarget::Class { class_id: target, .. }, case)) = (value_type, &default) {
+            if *target == class_id {
+                let known = match self.classes.get(class_id as usize) {
+                    Some(class) => class.enumeration.as_ref().map(|enumeration| enumeration.cases.iter().any(|known| known.name == *case)),
+                    // The enum being parsed, whose methods these are.
+                    None => self.current_enum_cases.as_ref().map(|cases| cases.contains(case)),
+                };
+                match known {
+                    Some(true) => return Ok(default),
+                    Some(false) => return Err(error_at(self, format!("default for '{name}' must be one of the enum's cases, and '{case}' isn't one"))),
+                    None => {}
+                }
+            }
+        }
         let literal_type = match default {
             Expr::Number(_) => ValueType::Int,
             Expr::Decimal(_) => ValueType::Double,
@@ -1813,11 +1856,38 @@ impl Parser {
         })
     }
 
-    fn parse_class(&mut self, is_abstract: bool, is_final: bool) -> Result<(), String> {
-        self.expect(TokenKind::Class, "expected 'class'")?;
+    /// Whether the tokens at `at` start an enum declaration, `enum Name`.
+    /// `enum` is a keyword only there, so it can still be used as a name.
+    fn at_enum(&self, at: usize) -> bool {
+        matches!(self.tokens.get(at).map(|token| &token.kind), Some(TokenKind::Identifier(word)) if word == "enum")
+            && matches!(self.tokens.get(at + 1).map(|token| &token.kind), Some(TokenKind::Identifier(_)))
+    }
+
+    /// A class, or with `is_enum` an enum (`enum Name[: int|string] { case ...; }`),
+    /// which is a final class whose values are its cases (see Enumeration).
+    fn parse_class(&mut self, is_abstract: bool, is_final: bool, is_enum: bool) -> Result<(), String> {
+        let kind = if is_enum { "enum" } else { "class" };
+        if is_enum {
+            self.advance();
+        } else {
+            self.expect(TokenKind::Class, "expected 'class'")?;
+        }
         let (line, column) = (self.current().line, self.current().column);
-        let name = self.expect_identifier("expected class name")?;
+        let name = self.expect_identifier(&format!("expected {kind} name"))?;
         self.check_class_name_is_free(&name)?;
+        let backing = if is_enum && matches!(self.current().kind, TokenKind::Colon) {
+            self.advance();
+            let at = self.error("");
+            match self.parse_value_type() {
+                Ok(backing @ (ValueType::Int | ValueType::String)) => Some(backing),
+                _ => return Err(format!("{at}an enum can only be backed by int or string, as in `enum {name}: string`")),
+            }
+        } else {
+            None
+        };
+        if is_enum && matches!(self.current().kind, TokenKind::Extends) {
+            return Err(self.error(&format!("enum '{name}' can't extend a class; it can implement interfaces")));
+        }
         let parent_class = if matches!(self.current().kind, TokenKind::Extends) {
             self.advance();
             let parent_name = self.expect_identifier("expected parent class name after extends")?;
@@ -1828,6 +1898,9 @@ impl Parser {
                 return Err(self.error(&format!(
                     "class '{name}' cannot extend interface '{parent_name}'; use implements"
                 )));
+            }
+            if self.classes[parent_id as usize].enumeration.is_some() {
+                return Err(self.error(&format!("class '{name}' cannot extend enum '{parent_name}'")));
             }
             if self.classes[parent_id as usize].is_final {
                 return Err(self.error(&format!("class '{name}' cannot extend final class '{parent_name}'")));
@@ -1846,13 +1919,19 @@ impl Parser {
         self.class_names.insert(name.clone(), class_id);
         self.current_class = Some(class_id);
         self.current_parent = parent_class;
-        self.expect(TokenKind::LeftBrace, "expected '{' after class name")?;
+        self.expect(TokenKind::LeftBrace, &format!("expected '{{' after {kind} name"))?;
 
         let mut properties = Vec::new();
         let mut static_properties = Vec::new();
         let mut constants: Vec<Constant> = Vec::new();
         let mut methods = Vec::new();
+        let mut cases: Vec<EnumCase> = Vec::new();
         while !matches!(self.current().kind, TokenKind::RightBrace | TokenKind::End) {
+            if is_enum && matches!(self.current().kind, TokenKind::Case) {
+                cases.push(self.parse_enum_case(&name, backing, &cases, &constants)?);
+                self.current_enum_cases = Some(cases.iter().map(|case| case.name.clone()).collect());
+                continue;
+            }
             // Modifiers, in any order: abstract, final, static, and one visibility.
             let mut is_abstract_method = false;
             let mut is_final_method = false;
@@ -1890,8 +1969,9 @@ impl Parser {
                 let constant = self.parse_constant(explicit_visibility.unwrap_or(Visibility::Public))?;
                 if constants.iter().any(|existing| existing.name == constant.name)
                     || static_properties.iter().any(|property: &StaticProperty| property.name == constant.name)
+                    || cases.iter().any(|case| case.name == constant.name)
                 {
-                    return Err(format!("{}:{}: '{}' is already declared in class '{name}'", constant.line, constant.column, constant.name));
+                    return Err(format!("{}:{}: '{}' is already declared in {kind} '{name}'", constant.line, constant.column, constant.name));
                 }
                 constants.push(constant);
                 continue;
@@ -1926,6 +2006,17 @@ impl Parser {
                     }
                     if method.name == "__construct" {
                         return Err(format!("{start}a constructor can't be static"));
+                    }
+                }
+                if is_enum {
+                    if method.name == "__construct" {
+                        return Err(format!("{start}enum '{name}' can't have a constructor: its cases are its only values"));
+                    }
+                    if matches!(method.name.as_str(), "cases" | "from" | "tryFrom") {
+                        return Err(format!("{start}enum '{name}' can't declare '{}': every enum has it", method.name));
+                    }
+                    if is_abstract_method {
+                        return Err(format!("{start}enum '{name}' can't have abstract methods"));
                     }
                 }
                 // One name, one method: no overloading, and a static and an
@@ -1973,6 +2064,11 @@ impl Parser {
                 methods.push(method);
             } else {
                 self.reject_fn_keyword()?;
+                if is_enum {
+                    return Err(self.error(&format!(
+                        "enum '{name}' can't have properties: each case is one fixed value; use a constant, or a method"
+                    )));
+                }
                 if is_abstract_method {
                     return Err(self.error("abstract can only modify a method"));
                 }
@@ -2032,9 +2128,16 @@ impl Parser {
                 });
             }
         }
-        self.expect(TokenKind::RightBrace, "expected '}' after class body")?;
+        self.expect(TokenKind::RightBrace, &format!("expected '}}' after {kind} body"))?;
         self.current_class = None;
         self.current_parent = None;
+        self.current_enum_cases = None;
+        let enumeration = if is_enum {
+            self.add_enum_members(class_id, &name, backing, &cases, &mut properties, &mut methods);
+            Some(Enumeration { backing, cases })
+        } else {
+            None
+        };
         self.classes.push(ClassDef {
             parent_class,
             interfaces,
@@ -2048,10 +2151,159 @@ impl Parser {
             static_properties,
             constants,
             methods,
+            enumeration,
             line,
             column,
         });
         Ok(())
+    }
+
+    /// `case Name;` or, in a backed enum, `case Name = value;`.
+    fn parse_enum_case(
+        &mut self,
+        enum_name: &str,
+        backing: Option<ValueType>,
+        cases: &[EnumCase],
+        constants: &[Constant],
+    ) -> Result<EnumCase, String> {
+        self.advance();
+        let at = self.error("");
+        let name = self.expect_identifier("expected the case's name after 'case'")?;
+        if cases.iter().any(|case| case.name == name) || constants.iter().any(|constant| constant.name == name) {
+            return Err(format!("{at}'{name}' is already declared in enum '{enum_name}'"));
+        }
+        let value = if matches!(self.current().kind, TokenKind::Equals) {
+            self.advance();
+            let value_at = self.error("");
+            let value = match self.parse_expression()? {
+                Expr::Negate(operand) if matches!(*operand, Expr::Number(_)) => match *operand {
+                    Expr::Number(number) => Expr::Number(number.wrapping_neg()),
+                    _ => unreachable!(),
+                },
+                other => other,
+            };
+            let fits = match (backing, &value) {
+                (None, _) => {
+                    return Err(format!(
+                        "{value_at}case '{name}' has a value, but enum '{enum_name}' isn't backed; declare it as `enum {enum_name}: int` or `enum {enum_name}: string`"
+                    ));
+                }
+                (Some(ValueType::Int), Expr::Number(_)) | (Some(ValueType::String), Expr::Text(_)) => true,
+                _ => false,
+            };
+            if !fits {
+                let wanted = if backing == Some(ValueType::Int) { "an int" } else { "a string" };
+                return Err(format!("{value_at}case '{name}' needs {wanted} literal as its value"));
+            }
+            let duplicate = cases.iter().find(|case| match (&case.value, &value) {
+                (Some(Expr::Number(a)), Expr::Number(b)) => a == b,
+                (Some(Expr::Text(a)), Expr::Text(b)) => a == b,
+                _ => false,
+            });
+            if let Some(duplicate) = duplicate {
+                return Err(format!("{value_at}case '{name}' has the same value as case '{}'", duplicate.name));
+            }
+            Some(value)
+        } else {
+            if let Some(backing) = backing {
+                let wanted = if backing == ValueType::Int { "int" } else { "string" };
+                return Err(format!("{at}case '{name}' needs a value, as in `case {name} = ...;`: enum '{enum_name}' is backed by {wanted}"));
+            }
+            None
+        };
+        self.expect(TokenKind::Semicolon, "expected ';' after the case")?;
+        Ok(EnumCase { name, value })
+    }
+
+    /// An enum's readonly `name` (and `value`) properties, and its static
+    /// methods cases(), from(), and tryFrom(), written as qiq would write them.
+    /// Their statements are at line 0, so an exception from() throws is placed
+    /// where the program called it (see locate_exception).
+    fn add_enum_members(
+        &mut self,
+        class_id: u32,
+        enum_name: &str,
+        backing: Option<ValueType>,
+        cases: &[EnumCase],
+        properties: &mut Vec<Property>,
+        methods: &mut Vec<Function>,
+    ) {
+        let property = |name: &str, value_type| Property {
+            name: name.to_string(),
+            value_type,
+            visibility: Visibility::Public,
+            default: None,
+            default_at: (0, 0),
+            readonly: true,
+        };
+        properties.push(property("name", ValueType::String));
+        if let Some(backing) = backing {
+            properties.push(property("value", backing));
+        }
+        let statement = |kind| Statement { kind, line: 0, column: 0 };
+        let case_of = |case: &EnumCase| {
+            Expr::StaticProperty(StaticTarget::Class { class_id, forwards: false }, case.name.clone())
+        };
+        let enum_type = ValueType::Class(class_id);
+        let method = |this: &Self, name: &str, parameters: Vec<Parameter>, return_type, body| Function {
+            name: name.to_string(),
+            parameters,
+            return_type,
+            body,
+            visibility: Visibility::Public,
+            is_abstract: false,
+            is_final: false,
+            is_static: true,
+            returns_static: false,
+            module: this.module,
+            symbol: this.qualified_symbol(name, "qiq."),
+            is_extern: false,
+            binds_values: false,
+            line: 0,
+            column: 0,
+        };
+        let all = statement(StatementKind::Return(Some(Expr::ArrayLiteral(cases.iter().map(case_of).collect()))));
+        let cases_type = self.array_of(enum_type);
+        methods.push(method(self, "cases", Vec::new(), cases_type, vec![all]));
+        let Some(backing) = backing else { return };
+        // switch (value) { case <value>: return Enum::<Case>; ... }
+        let lookup = || {
+            if cases.is_empty() {
+                return Vec::new();
+            }
+            let switch_cases = cases
+                .iter()
+                .map(|case| SwitchCase {
+                    values: vec![case.value.clone().expect("a backed enum's cases have values")],
+                    body: vec![statement(StatementKind::Return(Some(case_of(case))))],
+                })
+                .collect();
+            vec![statement(StatementKind::Switch { subject: Expr::Variable("value".to_string()), cases: switch_cases, default: None })]
+        };
+        let parameter = || vec![Parameter { value_type: backing, name: "value".to_string(), default: None, variadic: false }];
+        let mut try_from = lookup();
+        try_from.push(statement(StatementKind::Return(Some(Expr::Null))));
+        methods.push(method(self, "tryFrom", parameter(), enum_type, try_from));
+        // `"x" is not a valid backing value for enum Status`, as PHP says.
+        let shown = if backing == ValueType::String {
+            Expr::Binary(
+                BinaryOp::Add,
+                Box::new(Expr::Binary(BinaryOp::Add, Box::new(Expr::Text("\"".to_string())), Box::new(Expr::Variable("value".to_string())))),
+                Box::new(Expr::Text("\"".to_string())),
+            )
+        } else {
+            Expr::Call("to_string".to_string(), vec![Expr::Variable("value".to_string())])
+        };
+        let message = Expr::Binary(
+            BinaryOp::Add,
+            Box::new(shown),
+            Box::new(Expr::Text(format!(" is not a valid backing value for enum {enum_name}"))),
+        );
+        let mut from = lookup();
+        if let Some(&invalid) = self.class_names.get("InvalidArgumentException") {
+            from.push(statement(StatementKind::Throw(Expr::NewObject(invalid, vec![message]))));
+        }
+        methods.push(method(self, "from", parameter(), enum_type, from));
     }
 
     /// A class or interface name must not repeat a declared, imported, or
@@ -2176,6 +2428,7 @@ impl Parser {
             static_properties: Vec::new(),
             constants,
             methods,
+            enumeration: None,
             line,
             column,
         });
@@ -3765,6 +4018,8 @@ const ARRAY_DATA_OFFSET: usize = 8;
 const OBJECT_HEADER_FIELDS: usize = 1;
 /// QIQ_KIND_STRING in the runtime's QiqHeader.
 const STRING_KIND: u32 = 0x7169_0001;
+/// QIQ_KIND_OBJECT, for the objects of enum cases (see emit_enum_globals).
+const OBJECT_KIND: u32 = 0x7169_0004;
 
 impl Emitter {
     fn new(
@@ -3965,6 +4220,7 @@ impl Emitter {
         }
         functions_ir.push_str(&std::mem::take(&mut self.closure_functions));
         let static_globals = self.emit_static_property_globals()?;
+        let enum_globals = self.emit_enum_globals();
 
         let raise_function = self.emit_raise_function()?;
         let exception_symbol = self.classes[self.exception_class()? as usize].symbol.clone();
@@ -3983,6 +4239,7 @@ impl Emitter {
             ir.push('\n');
         }
         ir.push_str(&self.emit_class_names());
+        ir.push_str(&enum_globals);
         ir.push_str(&static_globals);
         ir.push_str(&self.emit_late_tables());
         ir.push_str("@qiq_pending_exception = external global ptr\n");
@@ -4504,6 +4761,12 @@ impl Emitter {
                         let in_constructor = self.current_method.as_deref() == Some("__construct")
                             && self.current_class == Some(owner_class)
                             && matches!(object_expression, Expr::Variable(name) if name == "this");
+                        if self.classes[owner_class as usize].enumeration.is_some() {
+                            return Err(format!(
+                                "property '{property_name}' of enum {} can't be changed: each case is one fixed value",
+                                self.classes[owner_class as usize].name
+                            ));
+                        }
                         if !in_constructor {
                             return Err(format!(
                                 "property '{property_name}' is readonly: only {}'s constructor can set it, as this->{property_name}",
@@ -4950,9 +5213,14 @@ impl Emitter {
                 }
                 StatementKind::Switch { subject, cases, default } => {
                     let subject = self.emit_expression(subject, &variables, &mut body)?;
-                    if !subject.value_type.is_scalar() {
+                    // A switch on an enum: its cases are the enum's.
+                    let enum_subject = match subject.value_type {
+                        ValueType::Class(class_id) if self.classes[class_id as usize].enumeration.is_some() => Some(class_id),
+                        _ => None,
+                    };
+                    if !subject.value_type.is_scalar() && enum_subject.is_none() {
                         return Err(format!(
-                            "switch requires an int, double, bool, byte, string, or char, found {}",
+                            "switch requires an int, double, bool, byte, string, char, or enum, found {}",
                             self.type_name(subject.value_type)
                         ));
                     }
@@ -4960,13 +5228,35 @@ impl Emitter {
                     self.next_label += 1;
                     let end_label = format!("switch.end{id}");
                     let default_label = format!("switch.default{id}");
-                    let unmatched = if default.is_some() { default_label.clone() } else { end_label.clone() };
+                    // Without a default, a switch on an enum must handle every
+                    // case; then only null reaches the end, and it throws.
+                    let exhaustive = match enum_subject {
+                        Some(class_id) if default.is_none() => {
+                            self.check_enum_switch(class_id, cases)?;
+                            true
+                        }
+                        Some(class_id) => {
+                            self.check_enum_switch_values(class_id, cases)?;
+                            false
+                        }
+                        None => false,
+                    };
+                    let unmatched = if default.is_some() {
+                        default_label.clone()
+                    } else if exhaustive {
+                        format!("switch.null{id}")
+                    } else {
+                        end_label.clone()
+                    };
 
                     // Duplicate literal values can never be reached.
                     let mut seen: Vec<String> = Vec::new();
                     for case in cases {
                         for value in &case.values {
                             let key = match value {
+                                Expr::StaticProperty(target, name) if enum_subject.is_some() => {
+                                    Some(format!("case {}::{name}", self.classes[Self::static_target_class(*target) as usize].name))
+                                }
                                 Expr::Number(n) => Some(format!("int {n}")),
                                 Expr::Decimal(d) => Some(format!("double {}", d.to_bits())),
                                 Expr::Text(t) => Some(format!("string {t:?}")),
@@ -5024,9 +5314,16 @@ impl Emitter {
                     if cases.is_empty() {
                         body.push_str(&format!("  br label %{unmatched}\n"));
                     }
+                    if exhaustive {
+                        let enum_name = self.classes[enum_subject.expect("an enum switch") as usize].name.clone();
+                        let text = self.string_literal(format!("switch on a null {enum_name}").as_bytes());
+                        body.push_str(&format!("{unmatched}:\n  call void @qiq_raise(i32 0, ptr {text})\n"));
+                        self.emit_exception_check(&mut body);
+                        body.push_str("  unreachable\n");
+                    }
 
                     // Bodies: each ends by leaving the switch (no fallthrough).
-                    let mut reaches_end = default.is_none();
+                    let mut reaches_end = default.is_none() && !exhaustive;
                     let blocks = cases
                         .iter()
                         .enumerate()
@@ -5919,6 +6216,7 @@ impl Emitter {
             static_properties: Vec::new(),
             constants: Vec::new(),
             methods: Vec::new(),
+            enumeration: None,
             line: 0,
             column: 0,
         });
@@ -6202,7 +6500,22 @@ impl Emitter {
                 return Ok(found);
             }
         }
-        Err(format!("class '{}' has no method '{name}'", class.name))
+        Err(self.no_method(class_id, name))
+    }
+
+    /// The error for calling a method `class_id` doesn't have.
+    fn no_method(&self, class_id: u32, name: &str) -> String {
+        let class = &self.classes[class_id as usize];
+        if let Some(enumeration) = &class.enumeration {
+            if enumeration.backing.is_none() && matches!(name, "from" | "tryFrom") {
+                return format!(
+                    "enum '{}' has no method '{name}': only a backed enum, such as `enum {}: string`, has from and tryFrom",
+                    class.name, class.name
+                );
+            }
+            return format!("enum '{}' has no method '{name}'", class.name);
+        }
+        format!("class '{}' has no method '{name}'", class.name)
     }
 
     /// The class a static:: or self:: call was made on, at run time: the
@@ -6323,6 +6636,9 @@ impl Emitter {
             Expr::Character(_) => scalar(self, ValueType::Char),
             Expr::Null if is_reference(expected) => Ok(()),
             Expr::Null => mismatch(self, ValueType::Null),
+            Expr::StaticProperty(target, constant_name) if self.enum_case(Self::static_target_class(*target), constant_name).is_some() => {
+                scalar(self, ValueType::Class(Self::static_target_class(*target)))
+            }
             Expr::StaticProperty(target, constant_name) => {
                 let class_id = Self::static_target_class(*target);
                 let Some((constant_owner, constant)) = self.find_constant(class_id, constant_name) else {
@@ -6488,7 +6804,12 @@ impl Emitter {
     ) -> Result<(String, StaticProperty), String> {
         let class_id = Self::static_target_class(target);
         let (owner, property) = self.find_static_property(class_id, name).ok_or_else(|| {
-            format!("class '{}' has no constant or static property '{name}'", self.classes[class_id as usize].name)
+            let class = &self.classes[class_id as usize];
+            if class.enumeration.is_some() {
+                format!("enum '{}' has no case or constant '{name}'", class.name)
+            } else {
+                format!("class '{}' has no constant or static property '{name}'", class.name)
+            }
         })?;
         self.check_visibility(property.visibility, owner, name)?;
         let address = match target {
@@ -9198,6 +9519,17 @@ impl Emitter {
                     };
                     return Err(format!("json_decode can't create a {} yet: decode it as a string and read that with {reader}", class.name));
                 }
+                if let Some(enumeration) = &class.enumeration {
+                    let how = match enumeration.backing {
+                        Some(backing) => format!(
+                            "decode its value as {} and read that with {}::from",
+                            if backing == ValueType::Int { "an int" } else { "a string" },
+                            class.name
+                        ),
+                        None => format!("decode its name as a string and find it in {}::cases()", class.name),
+                    };
+                    return Err(format!("json_decode can't create enum {} yet: {how}", class.name));
+                }
                 if class.is_interface || class.is_abstract {
                     return Err(format!(
                         "json_decode can't create {}, which is {}; decode into a concrete class",
@@ -9709,6 +10041,11 @@ impl Emitter {
             return None;
         }
         let (line, _) = self.position?;
+        // Statements the compiler wrote, such as an enum's from(), are at line
+        // 0: their exceptions are placed where the program called them.
+        if line == 0 {
+            return None;
+        }
         let symbol = self.classes[self.exception_class().ok()? as usize].symbol.clone();
         let file = self.module_paths.get(self.current_module).cloned().unwrap_or_default();
         let file = self.string_literal(file.as_bytes());
@@ -9948,6 +10285,104 @@ impl Emitter {
         ))
     }
 
+    /// The case of enum `class_id` that a switch's case value names, as in
+    /// `case Suit::Hearts:` or `case self::Hearts:`.
+    fn named_enum_case(&self, class_id: u32, value: &Expr) -> Result<String, String> {
+        let enum_name = &self.classes[class_id as usize].name;
+        match value {
+            Expr::StaticProperty(target, name)
+                if Self::static_target_class(*target) == class_id && self.enum_case(class_id, name).is_some() =>
+            {
+                Ok(name.clone())
+            }
+            _ => {
+                let example = self.classes[class_id as usize]
+                    .enumeration
+                    .as_ref()
+                    .and_then(|enumeration| enumeration.cases.first())
+                    .map_or(String::new(), |case| format!(", such as {enum_name}::{}", case.name));
+                Err(format!("a case in a switch on enum {enum_name} must be one of its cases{example}"))
+            }
+        }
+    }
+
+    fn check_enum_switch_values(&self, class_id: u32, cases: &[SwitchCase]) -> Result<Vec<String>, String> {
+        let mut named = Vec::new();
+        for case in cases {
+            for value in &case.values {
+                named.push(self.named_enum_case(class_id, value)?);
+            }
+        }
+        Ok(named)
+    }
+
+    /// A switch on an enum without a default must handle all its cases.
+    fn check_enum_switch(&self, class_id: u32, cases: &[SwitchCase]) -> Result<(), String> {
+        let named = self.check_enum_switch_values(class_id, cases)?;
+        let class = &self.classes[class_id as usize];
+        let missing: Vec<String> = class
+            .enumeration
+            .as_ref()
+            .map(|enumeration| enumeration.cases.iter().filter(|case| !named.contains(&case.name)).map(|case| format!("{}::{}", class.name, case.name)).collect())
+            .unwrap_or_default();
+        if !missing.is_empty() {
+            return Err(format!(
+                "switch on enum {} doesn't handle {}; add {}, or a default",
+                class.name,
+                missing.join(", "),
+                if missing.len() == 1 { "a case for it" } else { "cases for them" }
+            ));
+        }
+        Ok(())
+    }
+
+    /// The LLVM type of an enum case's object: the header, then the class id,
+    /// `name`, and for a backed enum `value` (see emit_enum_globals).
+    fn enum_object_type(enumeration: &Enumeration) -> &'static str {
+        match enumeration.backing {
+            None => "{ i32, i32, i32, i32, i64, ptr }",
+            Some(ValueType::Int) => "{ i32, i32, i32, i32, i64, ptr, i64 }",
+            Some(_) => "{ i32, i32, i32, i32, i64, ptr, ptr }",
+        }
+    }
+
+    /// `Enum::Case`: a pointer to the case's object, if `class_id` is an
+    /// enum with that case.
+    fn enum_case(&self, class_id: u32, name: &str) -> Option<String> {
+        let class = &self.classes[class_id as usize];
+        let enumeration = class.enumeration.as_ref()?;
+        let index = enumeration.cases.iter().position(|case| case.name == name)?;
+        Some(format!(
+            "getelementptr inbounds ({}, ptr @qiq_enum.{}.{index}, i32 0, i32 4)",
+            Self::enum_object_type(enumeration),
+            class.symbol
+        ))
+    }
+
+    /// Each enum case's object, made once as a global: an object whose
+    /// reference count is static, like a string literal's, so it's never
+    /// freed and `==` (which compares objects by identity) compares cases.
+    fn emit_enum_globals(&mut self) -> String {
+        let mut ir = String::new();
+        for class_id in 0..self.classes.len() {
+            let Some(enumeration) = self.classes[class_id].enumeration.clone() else { continue };
+            let symbol = self.classes[class_id].symbol.clone();
+            let layout = Self::enum_object_type(&enumeration);
+            for (index, case) in enumeration.cases.iter().enumerate() {
+                let name = self.string_literal(case.name.as_bytes());
+                let value = match &case.value {
+                    Some(Expr::Number(number)) => format!(", i64 {number}"),
+                    Some(Expr::Text(text)) => format!(", ptr {}", self.string_literal(text.as_bytes())),
+                    _ => String::new(),
+                };
+                ir.push_str(&format!(
+                    "@qiq_enum.{symbol}.{index} = internal global {layout} {{ i32 -1, i32 0, i32 {OBJECT_KIND}, i32 0, i64 {class_id}, ptr {name}{value} }}, align 16\n"
+                ));
+            }
+        }
+        ir
+    }
+
     /// `@qiq_class_names`: each class's name, indexed by class id, for
     /// reporting uncaught exceptions.
     fn emit_class_names(&self) -> String {
@@ -9967,6 +10402,13 @@ impl Emitter {
             "@qiq_class_names = unnamed_addr constant [{} x ptr] [{}], align 8\n",
             entries.len(),
             entries.join(", ")
+        ));
+        // Which classes are enums, whose objects print as Enum::Case.
+        let enums: Vec<String> = self.classes.iter().map(|class| format!("i8 {}", u8::from(class.enumeration.is_some()))).collect();
+        ir.push_str(&format!(
+            "@qiq_class_is_enum = unnamed_addr constant [{} x i8] [{}], align 1\n",
+            enums.len(),
+            enums.join(", ")
         ));
         // For freeing objects and finding cycles: per class, one character
         // per field after the class id: '2' for a reference that can be part
@@ -10014,6 +10456,15 @@ impl Emitter {
                 text = format!("!D{}", slot_of(&fields, "micros").unwrap_or(0));
             } else if self.stdlib_class("Url") == Some(class_id) {
                 text = format!("!S{}", slot_of(&fields, "text").unwrap_or(0));
+            } else if let Some(enumeration) = &self.classes[class_id as usize].enumeration {
+                // A backed enum is written as its value, as PHP does; a pure
+                // enum has no value to write ("!N", an error).
+                let value = slot_of(&fields, "value").unwrap_or(0);
+                text = match enumeration.backing {
+                    Some(ValueType::String) => format!("!S{value}"),
+                    Some(_) => format!("!I{value}"),
+                    None => "!N".to_string(),
+                };
             }
             let special = text.starts_with('!');
             for (property, slot) in fields.iter().filter(|(property, _)| property.visibility == Visibility::Public && !special) {
@@ -10651,7 +11102,7 @@ impl Emitter {
                             slot: None,
                         });
                     }
-                    return Err(format!("class '{class_name}' has no method '{method_name}'"));
+                    return Err(self.no_method(class_id, method_name));
                 };
                 self.use_class(owner);
                 let owner_name = self.classes[owner as usize].name.clone();
@@ -10759,6 +11210,9 @@ impl Emitter {
                 }))
             }
             Expr::StaticProperty(target, name) => {
+                if let Some(operand) = self.enum_case(Self::static_target_class(*target), name) {
+                    return Ok(Value { value_type: ValueType::Class(Self::static_target_class(*target)), operand, slot: None });
+                }
                 if let Some((owner, constant)) = self.find_constant(Self::static_target_class(*target), name) {
                     self.check_visibility(constant.visibility, owner, name)?;
                     let (literal, value_type) = self.constant_value(owner, &constant, 0)?;
@@ -10780,6 +11234,9 @@ impl Emitter {
             Expr::NewStatic(enclosing, arguments) => {
                 let enclosing = *enclosing;
                 let enclosing_name = self.classes[enclosing as usize].name.clone();
+                if self.classes[enclosing as usize].enumeration.is_some() {
+                    return Err(format!("cannot create enum '{enclosing_name}' with new; use its cases"));
+                }
                 let constructor_of = |this: &Self, class_id: u32| -> Vec<Parameter> {
                     this.find_implementation(class_id, "__construct")
                         .and_then(|owner| {
@@ -10840,6 +11297,10 @@ impl Emitter {
             }
             Expr::NewObject(class_id, arguments) => {
                 let class = self.classes[*class_id as usize].name.clone();
+                if let Some(enumeration) = &self.classes[*class_id as usize].enumeration {
+                    let example = enumeration.cases.first().map_or(String::new(), |case| format!(", such as {class}::{}", case.name));
+                    return Err(format!("cannot create enum '{class}' with new; use its cases{example}"));
+                }
                 if self.classes[*class_id as usize].is_interface {
                     return Err(format!("cannot instantiate interface '{class}'"));
                 }
@@ -12426,6 +12887,7 @@ impl<'a> Loader<'a> {
             allow_extern: is_stdlib,
             current_class: None,
             current_parent: None,
+            current_enum_cases: None,
             private_names: HashSet::new(),
             next_hidden: 0,
             promoted: Vec::new(),
@@ -14998,6 +15460,54 @@ mod tests {
     }
 
     #[test]
+    fn rejects_invalid_enums() {
+        let declared = "enum Suit { case Hearts; case Spades; } enum Level: int { case Low = 1; case High = 2; } ";
+        let cases = [
+            ("Suit s = new Suit();", "cannot create enum 'Suit' with new; use its cases, such as Suit::Hearts"),
+            ("function f(Suit s): int { switch (s) { case Suit::Hearts: return 1; } }", "switch on enum Suit doesn't handle Suit::Spades; add a case for it, or a default"),
+            ("Suit s = Suit::Hearts; switch (s) { case Level::Low: print(1); default: print(2); }", "a case in a switch on enum Suit must be one of its cases, such as Suit::Hearts"),
+            ("Suit s = Suit::Hearts; switch (s) { case Suit::Hearts, Suit::Hearts: print(1); case Suit::Spades: print(2); }", "duplicate case value Suit::Hearts"),
+            ("Suit s = Suit::Hearts; s->name = \"x\";", "property 'name' of enum Suit can't be changed"),
+            ("print(Suit::Clovers);", "enum 'Suit' has no case or constant 'Clovers'"),
+            ("print(Suit::from(\"Hearts\"));", "enum 'Suit' has no method 'from': only a backed enum, such as `enum Suit: string`, has from and tryFrom"),
+            ("print(Level::from(\"1\"));", "argument type mismatch calling 'Level::from': expected int, found string"),
+            ("Suit s = Level::Low;", "cannot initialize Suit variable 's' with Level"),
+            ("class C extends Suit {}", "class 'C' cannot extend enum 'Suit'"),
+            ("enum E { case A = 1; }", "case 'A' has a value, but enum 'E' isn't backed"),
+            ("enum E: int { case A; }", "case 'A' needs a value, as in `case A = ...;`: enum 'E' is backed by int"),
+            ("enum E: int { case A = \"x\"; }", "case 'A' needs an int literal as its value"),
+            ("enum E: string { case A = \"x\"; case B = \"x\"; }", "case 'B' has the same value as case 'A'"),
+            ("enum E: double { case A; }", "an enum can only be backed by int or string"),
+            ("enum E { case A; case A; }", "'A' is already declared in enum 'E'"),
+            ("enum E { case A; const A = 1; }", "'A' is already declared in enum 'E'"),
+            ("enum E { public int x; }", "enum 'E' can't have properties"),
+            ("enum E { function __construct() {} }", "enum 'E' can't have a constructor"),
+            ("enum E { case A; static function cases(): E[] { return []; } }", "enum 'E' can't declare 'cases': every enum has it"),
+            ("enum E extends Suit { case A; }", "enum 'E' can't extend a class; it can implement interfaces"),
+            ("function f(Suit s = Suit::Clubs): void {}", "default for 's' must be one of the enum's cases, and 'Clubs' isn't one"),
+            ("class K { public Suit s = Suit::Clubs; }", "the default for 's' must be a constant, and 'Clubs' isn't one"),
+            ("class T { public Level l; } T t = json_decode(\"{}\");", "json_decode can't create enum Level yet: decode its value as an int and read that with Level::from"),
+        ];
+        for (code, message) in cases {
+            let source = format!("{declared}{code}");
+            let error = compile_source(&source).unwrap_err();
+            assert!(error.contains(message), "{code}: expected '{message}', got '{error}'");
+        }
+        // `enum` is a keyword only where an enum is declared.
+        assert!(compile_source("string enum = \"ok\"; print(enum);").is_ok());
+    }
+
+    #[test]
+    fn enum_cases_are_static_objects() {
+        let ir = compile_source("enum Level: int { case Low = 1; case High = 2; } Level l = Level::High; print(l->value);").unwrap();
+        assert!(ir.contains("@qiq_enum.Level.1 = internal global { i32, i32, i32, i32, i64, ptr, i64 } { i32 -1, i32 0, i32 1902706692, i32 0, i64"), "{ir}");
+        // Reading a case allocates nothing.
+        let main = main_ir(&ir);
+        assert!(main.contains("getelementptr inbounds ({ i32, i32, i32, i32, i64, ptr, i64 }, ptr @qiq_enum.Level.1, i32 0, i32 4)"), "{main}");
+        assert!(!main.contains("qiq_object_new"), "{main}");
+    }
+
+    #[test]
     fn rejects_invalid_variadic_parameters_and_calls() {
         let j = "function j(string separator, string ...parts): string { return separator; } ";
         let cases = [
@@ -15497,7 +16007,7 @@ mod tests {
             ("switch (1) { default: print(1); default: print(2); }", "a switch can have only one default"),
             ("switch (1) { case 1: continue; }", "continue is only valid inside a loop"),
             ("function f(int n): int { switch (n) { case 1: return 1; } }", "non-void function must return a value on every path"),
-            ("int[] xs = [1]; switch (xs) { case xs: print(1); }", "switch requires an int, double, bool, byte, string, or char, found int[]"),
+            ("int[] xs = [1]; switch (xs) { case xs: print(1); }", "switch requires an int, double, bool, byte, string, char, or enum, found int[]"),
             ("switch (1) { }", "a switch needs at least one case"),
             ("switch (1) { print(1); }", "expected 'case' or 'default' in switch"),
             ("byte b = 1; switch (b) { case 300: print(1); }", "300 doesn't fit in a byte (0 to 255)"),

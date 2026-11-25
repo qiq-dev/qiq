@@ -18,6 +18,8 @@
 
 // Each class's name, indexed by class id; defined in every compiled program.
 extern const char *qiq_class_names[];
+// 1 for an enum, whose objects print as Enum::Case.
+extern const uint8_t qiq_class_is_enum[];
 
 
 // Where values are written: standard output, or a string being built by
@@ -124,10 +126,14 @@ static void qiq_write_value(const char *descriptor, uint64_t bits, int nested) {
         if (nested) qiq_write_quoted(pointer, '\'');
         else fputs(pointer, qiq_out);
         return;
-    case 'o':
+    case 'o': {
         // The object's own class, which may be a subclass of its declared type.
-        fputs(qiq_class_names[*(const int64_t *)pointer], qiq_out);
+        int64_t class_id = *(const int64_t *)pointer;
+        fputs(qiq_class_names[class_id], qiq_out);
+        // An enum case: its name is the first property, after the class id.
+        if (qiq_class_is_enum[class_id]) fprintf(qiq_out, "::%s", ((char *const *)pointer)[1]);
         return;
+    }
     case 'a': {
         const char *element = descriptor + 1;
         size_t size = qiq_element_size(*element);
