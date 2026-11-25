@@ -55,7 +55,7 @@ while (i < 3) {
 <p>A function can end with <code>while (true) { ... }</code> instead of a <code>return</code> when the loop has no <code>break</code> and only leaves by returning or throwing.</p>
 
 <h2>foreach</h2>
-<p><code>foreach (collection as value)</code> visits each element of an array, each value of a map, or each character of a string. <code>foreach (collection as key =&gt; value)</code> also binds the index (for arrays and strings, counting from <code>0</code>) or the map key.</p>
+<p><code>foreach (collection as value)</code> visits each element of an array, each value of a map, each character of a string, or each value of an <a href="#iterating-objects">object that can be iterated</a>. <code>foreach (collection as key =&gt; value)</code> also binds the index (for arrays and strings, counting from <code>0</code>) or the map key.</p>
 
 ```qiq
 foreach (["a", "b"] as index => letter) {
@@ -79,6 +79,82 @@ ada 36
 ```
 
 <p>Strings iterate by Unicode character, not by byte. Maps iterate in the order their keys were added. The loop variables are new variables for each iteration and can't be reassigned.</p>
+
+<h3 id="iterating-objects">Iterating your own types</h3>
+<p><code>foreach</code> also works on objects of classes that implement one of two <a href="generics.html">generic</a> interfaces, available in every file without an import:</p>
+<ul>
+<li><code>Iterator&lt;T&gt;</code>, with <code>hasNext(): bool</code> and <code>next(): T</code>, gives values one at a time; <code>foreach</code> calls <code>next()</code> while <code>hasNext()</code> returns true.</li>
+<li><code>Iterable&lt;T&gt;</code>, with <code>iterator(): Iterator&lt;T&gt;</code>, is a collection: <code>foreach</code> asks it for a new iterator each time, so it can be looped over more than once.</li>
+</ul>
+
+```qiq
+class Countdown implements Iterator<int> {
+    private int n;
+
+    function __construct(int from) {
+        this->n = from;
+    }
+
+    function hasNext(): bool {
+        return this->n > 0;
+    }
+
+    function next(): int {
+        this->n--;
+        return this->n + 1;
+    }
+}
+
+class ArrayIterator<T> implements Iterator<T> {
+    private T[] items;
+    private int position = 0;
+
+    function __construct(T[] items) {
+        this->items = items;
+    }
+
+    function hasNext(): bool {
+        return this->position < len(this->items);
+    }
+
+    function next(): T {
+        T item = this->items[this->position];
+        this->position++;
+        return item;
+    }
+}
+
+class Bag<T> implements Iterable<T> {
+    private T[] items = [];
+
+    function add(T item): Bag<T> {
+        array_push(this->items, item);
+        return this;
+    }
+
+    function iterator(): Iterator<T> {
+        return new ArrayIterator(this->items);
+    }
+}
+
+foreach (new Countdown(3) as n) {
+    print(n);
+}
+Bag<string> bag = new Bag();
+bag->add("a")->add("b");
+foreach (bag as i => item) {
+    print(i, item);
+}
+```
+```output
+3
+2
+1
+0 a
+1 b
+```
+
+<p>The loop variable has the iterator's type <code>T</code>, and <code>foreach (object as i =&gt; value)</code> counts <code>i</code> from 0, as for an array. <code>break</code>, <code>continue</code>, and <code>return</code> work as in any loop, so an iterator can go on forever, as a <code>Fibonacci</code> one can, and the loop stops it. A function can take any collection with a parameter of type <code>Iterable&lt;int&gt;</code>.</p>
 
 <h3>Counting with range</h3>
 <p>qiq has no C-style <code>for</code> loop. To do something <code>n</code> times, loop over <a href="function.range.html"><code>range(n)</code></a>, which counts from 0 up to <code>n - 1</code>, and not at all when <code>n</code> is 0 (or less), like <code>for (i = 0; i &lt; n; i++)</code>. To count between two numbers, use <code>range(start, end, step)</code>: the end is included, as in PHP, and the step defaults to <code>1</code>.</p>

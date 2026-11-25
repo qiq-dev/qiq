@@ -20,6 +20,7 @@ date.qiq
 exceptions.qiq
 file.qiq
 http.qiq
+iterators.qiq
 math.qiq
 memory.qiq
 net.qiq

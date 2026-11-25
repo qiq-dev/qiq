@@ -1,0 +1,27 @@
+// Iteration for your own types. foreach works on an object that implements
+// Iterable<T>, calling its iterator(), or that is an Iterator<T> itself:
+//
+//   class Countdown implements Iterator<int> {
+//       private int n;
+//       function __construct(int from) { this->n = from; }
+//       function hasNext(): bool { return this->n > 0; }
+//       function next(): int { this->n--; return this->n + 1; }
+//   }
+//
+//   foreach (new Countdown(3) as n) { print(n); }   // 3, 2, 1
+//
+// Both interfaces are available in every file without an import.
+
+// Gives values one at a time.
+interface Iterator<T> {
+    // Whether there's another value.
+    function hasNext(): bool;
+    // The next value. foreach calls it only after hasNext() returns true.
+    function next(): T;
+}
+
+// Something foreach can loop over, from the start, each time: a collection
+// that makes a new Iterator for each loop.
+interface Iterable<T> {
+    function iterator(): Iterator<T>;
+}

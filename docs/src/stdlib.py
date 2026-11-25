@@ -20,7 +20,7 @@ NULL_STRING = "<code>RuntimeException</code> if a string argument is <code>null<
 OVERVIEW = (
     "The everyday parts of the standard library are available in every file without an <code>import</code>, "
     "like PHP's built-in functions: the general functions (<code>len</code>, <code>print</code>, the conversions, "
-    "and the array, map, and JSON functions), the string functions, and the exception classes. They can't be "
+    "and the array, map, and JSON functions), the string functions, the exception classes, and the <code>Iterator</code> and <code>Iterable</code> interfaces that let <a href=\"control-structures.html#iterating-objects\">foreach loop over your own types</a>. They can't be "
     "redeclared: declaring your own <code>substr</code> is a compile error. The rest is in modules that you "
     "import by name, like Go's packages:</p>\n"
     "<table><thead><tr><th>Import path</th><th>Contents</th></tr></thead><tbody>"

@@ -3475,12 +3475,13 @@ impl Parser {
                     self.advance();
                     let arguments = self.parse_arguments()?;
                     self.expect(TokenKind::RightParen, "expected ')' after constructor arguments")?;
-                    return Ok(Expr::NewGeneric(application.generic, Some(application.arguments), arguments));
+                    Expr::NewGeneric(application.generic, Some(application.arguments), arguments)
+                } else {
+                    self.expect(TokenKind::LeftBracket, "expected '[size]' after the array element type")?;
+                    let size = self.parse_expression()?;
+                    self.expect(TokenKind::RightBracket, "expected ']' after array size")?;
+                    Expr::NewArray(element_type, Box::new(size))
                 }
-                self.expect(TokenKind::LeftBracket, "expected '[size]' after the array element type")?;
-                let size = self.parse_expression()?;
-                self.expect(TokenKind::RightBracket, "expected ']' after array size")?;
-                Expr::NewArray(element_type, Box::new(size))
             }
             TokenKind::New => {
                 self.advance();
@@ -5930,6 +5931,16 @@ impl Emitter {
                     // The loop holds its own reference, so reassigning the
                     // variable it came from inside the loop can't free it.
                     let collection = self.hold(collection, &mut body);
+                    // An object: an Iterable<T>'s iterator, or an Iterator<T>.
+                    if let ValueType::Class(class_id) = collection.value_type {
+                        let (ir, loop_terminated) =
+                            self.emit_object_foreach(statement, class_id, collection, key_name.as_deref(), value_name, loop_body, &variables, return_type, is_main)?;
+                        body.push_str(&ir);
+                        if loop_terminated {
+                            terminated = true;
+                        }
+                        continue;
+                    }
                     // For a map: the additions count at the start, to detect keys
                     // added during the loop.
                     let mut map_version = None;
@@ -5972,7 +5983,10 @@ impl Emitter {
                             map_version = Some(version);
                             (Some(descriptor.key_type), descriptor.value_type, length, 2)
                         } else {
-                            return Err("foreach requires an array, map, or string".to_string());
+                            return Err(format!(
+                                "foreach requires an array, map, string, or an object that implements Iterable<T> or Iterator<T>, found {}",
+                                self.type_name(collection.value_type)
+                            ));
                         };
 
                     let label_id = self.next_label;
@@ -6767,6 +6781,91 @@ impl Emitter {
             }
         }
         Ok(())
+    }
+
+    /// The class made from generic class or interface `generic` that
+    /// `class_id` is, extends, or implements, if any.
+    fn generic_ancestor(&self, class_id: u32, generic: u32) -> Option<u32> {
+        let mut pending = vec![class_id];
+        let mut seen = Vec::new();
+        while let Some(current) = pending.pop() {
+            if seen.contains(&current) {
+                continue;
+            }
+            seen.push(current);
+            let class = &self.classes[current as usize];
+            if class.instance_of.as_ref().is_some_and(|(of, _)| *of == generic) {
+                return Some(current);
+            }
+            pending.extend(class.parent_class);
+            pending.extend(class.interfaces.iter().copied());
+        }
+        None
+    }
+
+    /// `foreach (object as [key =>] value)` over an object that implements
+    /// Iterable<T> or Iterator<T>, as the loop it stands for:
+    ///
+    ///     Iterator<T> #iterator = object->iterator();   // or the object
+    ///     int #index = 0;
+    ///     while (#iterator->hasNext()) {
+    ///         T value = #iterator->next();
+    ///         int key = #index; #index++;
+    ///         ...
+    ///     }
+    ///
+    /// The key, as for an array, counts from 0.
+    #[allow(clippy::too_many_arguments)]
+    fn emit_object_foreach(
+        &mut self,
+        statement: &Statement,
+        class_id: u32,
+        collection: Value,
+        key_name: Option<&str>,
+        value_name: &str,
+        loop_body: &[Statement],
+        variables: &HashMap<String, Value>,
+        return_type: ValueType,
+        is_main: bool,
+    ) -> Result<(String, bool), String> {
+        let type_name = self.type_name(collection.value_type);
+        let not_iterable = || {
+            format!("foreach requires an array, map, string, or an object that implements Iterable<T> or Iterator<T>, found {type_name}")
+        };
+        let iterable = self.stdlib_class("Iterable").and_then(|generic| self.generic_ancestor(class_id, generic));
+        let iterator = self.stdlib_class("Iterator").and_then(|generic| self.generic_ancestor(class_id, generic));
+        let id = self.next_generic_argument;
+        self.next_generic_argument += 1;
+        let source = format!("#foreach.object{id}");
+        let hidden_iterator = format!("#foreach.iterator{id}");
+        let index = format!("#foreach.index{id}");
+        let variable = |name: &str| Expr::Variable(name.to_string());
+        let call = |object: &str, method: &str| Expr::MethodCall(Box::new(Expr::Variable(object.to_string())), method.to_string(), Vec::new());
+        let (iterator_type, start) = match (iterable, iterator) {
+            (Some(_), _) => {
+                let (_, returned, ..) = self.find_method(class_id, "iterator")?;
+                (returned, call(&source, "iterator"))
+            }
+            (None, Some(_)) => (collection.value_type, variable(&source)),
+            (None, None) => return Err(not_iterable()),
+        };
+        let ValueType::Class(iterator_class) = iterator_type else { return Err(not_iterable()) };
+        let (_, value_type, ..) = self.find_method(iterator_class, "next")?;
+        let at = |kind| Statement::like(statement, kind);
+        let mut each = vec![at(StatementKind::Declare(value_type, value_name.to_string(), call(&hidden_iterator, "next")))];
+        if let Some(key_name) = key_name {
+            each.push(at(StatementKind::Declare(ValueType::Int, key_name.to_string(), variable(&index))));
+            each.push(at(StatementKind::Assign(index.clone(), Expr::Binary(BinaryOp::Add, Box::new(variable(&index)), Box::new(Expr::Number(1))))));
+        }
+        each.extend(loop_body.iter().cloned());
+        let statements = vec![
+            at(StatementKind::Declare(iterator_type, hidden_iterator.clone(), start)),
+            at(StatementKind::Declare(ValueType::Int, index.clone(), Expr::Number(0))),
+            at(StatementKind::While { condition: call(&hidden_iterator, "hasNext"), body: each }),
+        ];
+        let mut scope = variables.clone();
+        scope.insert(source, Value { slot: None, ..collection });
+        self.emit_block(&statements, &scope, return_type, is_main)
     }
 
     /// Runs `work` with a Monomorphizer over the emitter's tables; the
@@ -14720,6 +14819,7 @@ const STDLIB_ROOT: &str = "<stdlib>";
 const STDLIB_MODULES: &[(&str, Option<&str>, &str)] = &[
     ("string.qiq", None, include_str!("../stdlib/string.qiq")),
     ("exceptions.qiq", None, include_str!("../stdlib/exceptions.qiq")),
+    ("iterators.qiq", None, include_str!("../stdlib/iterators.qiq")),
     ("file.qiq", Some("std/file"), include_str!("../stdlib/file.qiq")),
     ("date.qiq", Some("std/time"), include_str!("../stdlib/date.qiq")),
     ("memory.qiq", Some("std/memory"), include_str!("../stdlib/memory.qiq")),
@@ -15672,7 +15772,13 @@ mod tests {
     fn rejects_foreach_over_unsupported_values() {
         assert!(compile_source("int value = 2; foreach(value as item) { print(item); }")
             .unwrap_err()
-            .contains("foreach requires an array, map, or string"));
+            .contains("foreach requires an array, map, string, or an object that implements Iterable<T> or Iterator<T>, found int"));
+        assert!(compile_source("class P {} foreach (new P() as item) { print(item); }")
+            .unwrap_err()
+            .contains("found P"));
+        // The loop variable has the iterator's type.
+        let typed = "class C implements Iterator<int> { function hasNext(): bool { return false; } function next(): int { return 1; } } foreach (new C() as x) { string s = x; }";
+        assert!(compile_source(typed).unwrap_err().contains("cannot initialize string variable 's' with int"));
     }
 
     #[test]

@@ -1,0 +1,58 @@
+// Iterating your own types: foreach over an object that implements
+// Iterator<T> (it's looped over directly) or Iterable<T> (its iterator() is).
+class Countdown implements Iterator<int> {
+    private int n;
+    function __construct(int from) { this->n = from; }
+    function hasNext(): bool { return this->n > 0; }
+    function next(): int { this->n--; return this->n + 1; }
+}
+class ListIterator<T> implements Iterator<T> {
+    private T[] items;
+    private int position = 0;
+    function __construct(T[] items) { this->items = items; }
+    function hasNext(): bool { return this->position < len(this->items); }
+    function next(): T { T item = this->items[this->position]; this->position++; return item; }
+}
+class Bag<T> implements Iterable<T> {
+    private T[] items = [];
+    function add(T item): Bag<T> { array_push(this->items, item); return this; }
+    function iterator(): Iterator<T> { return new ListIterator(this->items); }
+}
+class FibIterator implements Iterator<int> {
+    private int a = 0;
+    private int b = 1;
+    function hasNext(): bool { return true; }
+    function next(): int { int value = this->a; int sum = this->a + this->b; this->a = this->b; this->b = sum; return value; }
+}
+
+class Fibonacci implements Iterable<int> {
+    function iterator(): Iterator<int> { return new FibIterator(); }
+}
+
+foreach (new Countdown(3) as n) { print(n); }
+Bag<string> bag = new Bag();
+bag->add("a")->add("b")->add("c");
+foreach (bag as i => word) { print(i, word); }
+foreach (bag as word) {
+    if (word == "b") { continue; }
+    print(word);
+}
+foreach (new Fibonacci() as value) {
+    if (value > 20) { break; }
+    print(value);
+}
+Iterable<string> seen = bag;
+foreach (seen as w) { print(w + "!"); }
+function total(Iterable<int> values): int {
+    int sum = 0;
+    foreach (values as v) { sum += v; }
+    return sum;
+}
+print(total(new Bag<int>()->add(4)->add(5)));
+function firstOver(Iterable<int> values, int limit): int {
+    foreach (values as v) {
+        if (v > limit) { return v; }
+    }
+    return -1;
+}
+print(firstOver(new Fibonacci(), 50));
