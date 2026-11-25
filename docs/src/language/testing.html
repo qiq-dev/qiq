@@ -1,9 +1,9 @@
 <!-- title: Testing -->
 <h1>Testing</h1>
-<p>A test is a top-level function whose name starts with <code>test_</code> and which takes a <code>T</code> from <code>std/testing</code>. <code>qiq test</code> finds the tests, runs each one, and reports the ones that fail, like Go's <code>go test</code>.</p>
+<p>A test is a top-level function whose name starts with <code>test_</code> and which takes a <code>Test</code> from <code>std/testing</code>. <code>qiq test</code> finds the tests, runs each one, and reports the ones that fail, like Go's <code>go test</code>.</p>
 
 ```qiq
-import T from "std/testing";
+import Test from "std/testing";
 import argv from "std/os";
 
 function slug(string title): string {
@@ -12,7 +12,7 @@ function slug(string title): string {
 
 print(slug(argv()[1]));
 
-function test_slug(T t): void {
+function test_slug(Test t): void {
     t->equal(slug("Hello World"), "hello-world");
     t->equal(slug("  Trim Me "), "trim-me");
 }
@@ -70,7 +70,7 @@ FAIL	slug.qiq	0.74s
 <p>Tests can also be public methods named <code>test_...</code> in a class, which suits tests that share a setup. Each test runs on a new instance of its class, so tests can't leak state into each other through its properties: its constructor and <code>setUp()</code>, if it has one, run first, and <code>tearDown()</code> runs after the test, even when the test fails. Both can come from a parent class.</p>
 
 ```qiq
-import T from "std/testing";
+import Test from "std/testing";
 import Database from "std/sql";
 
 class AccountTest {
@@ -85,12 +85,12 @@ class AccountTest {
         this->db->close();
     }
 
-    public function test_deposit(T t): void {
+    public function test_deposit(Test t): void {
         this->db->execute("INSERT INTO accounts (balance) VALUES (?)", 100);
         t->equal(this->db->queryOne("SELECT balance FROM accounts")->getInt("balance"), 100);
     }
 
-    public function test_starts_empty(T t): void {
+    public function test_starts_empty(Test t): void {
         t->equal(len(this->db->query("SELECT * FROM accounts")), 0);
     }
 }
@@ -102,13 +102,13 @@ class AccountTest {
 <p>Many cases of one check fit a loop over an array:</p>
 
 ```qiq
-import T from "std/testing";
+import Test from "std/testing";
 
 class Case {
     function __construct(public string input, public string want) {}
 }
 
-function test_slug_cases(T t): void {
+function test_slug_cases(Test t): void {
     Case[] cases = [new Case("A B", "a-b"), new Case("x", "x"), new Case("", "")];
     foreach (cases as c) {
         t->log(f"input \"{c->input}\"");

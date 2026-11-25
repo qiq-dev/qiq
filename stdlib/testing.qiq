@@ -1,10 +1,10 @@
 // Testing, for `qiq test`. A test is a top-level function whose name starts
-// with test_ and which takes a T, in the program itself or in a file of
+// with test_ and which takes a Test, in the program itself or in a file of
 // its own:
 //
-//   import T from "std/testing";
+//   import Test from "std/testing";
 //
-//   function test_add(T t): void {
+//   function test_add(Test t): void {
 //       t->equal(add(2, 3), 5);
 //   }
 //
@@ -27,7 +27,7 @@ class __TestFailed extends Exception {}
 class __TestSkipped extends Exception {}
 
 // The test being run, for its assertions.
-final class T {
+final class Test {
     private string name;
     private string[] logs;
 
@@ -163,8 +163,8 @@ function __testing_start(bool verbose): void {
 
 // Runs one test and reports it, as Go's testing package does: failures
 // always, and passes and skips with -v.
-function __testing_run(string name, function(T): void test): void {
-    T t = new T(name);
+function __testing_run(string name, function(Test): void test): void {
+    Test t = new Test(name);
     if (__Run::verbose) {
         println(f"=== RUN   {name}");
     }

@@ -8098,7 +8098,7 @@ impl Emitter {
 
     /// `to_int`, `to_double`, `to_byte`, and `to_string`: built in rather than
     /// declared in the standard library because each accepts several types.
-    /// A call to one of std/testing's T assertions. Each gets an `at`
+    /// A call to one of std/testing's Test assertions. Each gets an `at`
     /// argument with the caller's file:line, unless it was given one. equal
     /// and notEqual compare their values with == (so the types must match,
     /// and arrays and maps compare by contents), describe both as print
@@ -12027,7 +12027,7 @@ impl Emitter {
                 self.emit_null_check(&object, object_expression, &format!("cannot call method '{method_name}' on null"), body);
                 // std/testing's assertions: given their caller's file:line,
                 // and equal and notEqual compiled for the types given.
-                if self.stdlib_class("T") == Some(class_id) {
+                if self.stdlib_class("Test") == Some(class_id) {
                     if let Some(value) = self.emit_test_assertion(&object, method_name, arguments, variables, body)? {
                         return Ok(value);
                     }
@@ -14786,7 +14786,7 @@ struct FoundTest {
 
 /// Compiles `path` for `qiq test`. A test is a top-level function whose name
 /// starts with `test_`, or a public method with such a name in a top-level
-/// class; either takes a T from std/testing and returns void. A test method
+/// class; either takes a Test from std/testing and returns void. A test method
 /// runs on a new instance of its class, made with no arguments: its
 /// setUp() runs first and its tearDown() after, even if the test fails.
 /// The file's top-level statements don't run; main calls each test (whose
@@ -14806,7 +14806,7 @@ pub fn compile_tests(path: &str, filter: Option<&str>, verbose: bool) -> Result<
     let mut program = load_program(Path::new(path), &read_file)?;
     let entry = program.modules[0].path.clone();
     let testing = program.modules.iter().position(|module| module.is_stdlib && module.path.ends_with("testing.qiq"));
-    let t_class = testing.and_then(|testing| program.classes.iter().position(|class| class.name == "T" && class.module as usize == testing));
+    let t_class = testing.and_then(|testing| program.classes.iter().position(|class| class.name == "Test" && class.module as usize == testing));
     let takes_t = |function: &Function| {
         function.parameters.len() == 1
             && t_class.is_some_and(|t| function.parameters[0].value_type == ValueType::Class(t as u32))
@@ -14820,7 +14820,7 @@ pub fn compile_tests(path: &str, filter: Option<&str>, verbose: bool) -> Result<
         }
         if !takes_t(function) {
             return Err(format!(
-                "{entry}:{}:{}: test function '{}' must take a T and return void: function {}(T t): void, with import T from \"std/testing\";",
+                "{entry}:{}:{}: test function '{}' must take a Test and return void: function {}(Test t): void, with import Test from \"std/testing\";",
                 function.line, function.column, function.name, function.name
             ));
         }
@@ -14841,7 +14841,7 @@ pub fn compile_tests(path: &str, filter: Option<&str>, verbose: bool) -> Result<
         for method in &tests {
             if method.is_static || method.visibility != Visibility::Public || !takes_t(method) {
                 return Err(format!(
-                    "{}: test method '{}::{}' must be public, not static, take a T, and return void: public function {}(T t): void",
+                    "{}: test method '{}::{}' must be public, not static, take a Test, and return void: public function {}(Test t): void",
                     at(method), class.name, method.name, method.name
                 ));
             }
@@ -14882,7 +14882,7 @@ pub fn compile_tests(path: &str, filter: Option<&str>, verbose: bool) -> Result<
             } else {
                 format!("\n    test->{}(t);", method.name)
             };
-            wrappers.push_str(&format!("\nfunction {wrapper}(__QiqT t): void {{\n    {} test = new {}();{set_up}{run}\n}}\n", class.name, class.name));
+            wrappers.push_str(&format!("\nfunction {wrapper}(__QiqTest t): void {{\n    {} test = new {}();{set_up}{run}\n}}\n", class.name, class.name));
             methods.push(FoundTest { name: format!("{}::{}", class.name, method.name), line: method.line, column: method.column, function: wrapper });
         }
     }
@@ -14895,7 +14895,7 @@ pub fn compile_tests(path: &str, filter: Option<&str>, verbose: bool) -> Result<
         // their numbers; it names T anew in case the file imports it as
         // something else.
         let original = read_file(&entry_path)?;
-        let source = format!("import T as __QiqT from \"std/testing\"; {original}\n{wrappers}");
+        let source = format!("import Test as __QiqTest from \"std/testing\"; {original}\n{wrappers}");
         let read_with_wrappers = |file: &Path| if normalize_path(file) == entry_path { Ok(source.clone()) } else { read_file(file) };
         program = load_program(Path::new(path), &read_with_wrappers)?;
         found.extend(methods);
@@ -14903,7 +14903,7 @@ pub fn compile_tests(path: &str, filter: Option<&str>, verbose: bool) -> Result<
     found.sort_by_key(|test| (test.line, test.column));
     let tests: Vec<&FoundTest> = found.iter().filter(|test| filter.is_none_or(|filter| test.name.contains(filter))).collect();
     // The runner's functions, callable from the entry file.
-    let testing = testing.expect("a test takes a T, so std/testing is loaded");
+    let testing = testing.expect("a test takes a Test, so std/testing is loaded");
     for runner in ["__testing_start", "__testing_run", "__testing_finish"] {
         let symbol = program.modules[testing].functions.get(runner).cloned().ok_or("std/testing has no runner")?;
         program.modules[0].functions.insert(runner.to_string(), symbol);
@@ -15179,7 +15179,7 @@ mod tests {
         };
         let tests = file(
             "tool.qiq",
-            "import T from \"std/testing\";\nprint(\"main\");\nfunction helper(): int { return 1; }\nfunction test_b(T t): void { t->equal(helper(), 1); }\nfunction test_a(T t): void { t->isTrue(true); }\n",
+            "import Test from \"std/testing\";\nprint(\"main\");\nfunction helper(): int { return 1; }\nfunction test_b(Test t): void { t->equal(helper(), 1); }\nfunction test_a(Test t): void { t->isTrue(true); }\n",
         );
         // The test functions, in the order they're written, and the filter.
         let program = super::compile_tests(&tests, None, false).unwrap().unwrap();
@@ -15192,18 +15192,18 @@ mod tests {
         // functions, and T imported under another name.
         let classes = file(
             "classes.qiq",
-            "import T as Check from \"std/testing\";\nfunction test_one(Check t): void {}\nclass ATest {\n    function setUp(): void {}\n    public function test_two(Check t): void {}\n    function helper(): void {}\n}\nfunction test_three(Check t): void {}\n",
+            "import Test as Check from \"std/testing\";\nfunction test_one(Check t): void {}\nclass ATest {\n    function setUp(): void {}\n    public function test_two(Check t): void {}\n    function helper(): void {}\n}\nfunction test_three(Check t): void {}\n",
         );
         let program = super::compile_tests(&classes, None, false).unwrap().unwrap();
         assert_eq!(program.tests, ["test_one", "ATest::test_two", "test_three"]);
         assert_eq!(super::compile_tests(&classes, Some("ATest"), false).unwrap().unwrap().tests, ["ATest::test_two"]);
-        let constructor = super::compile_tests(&file("needs.qiq", "import T from \"std/testing\";\nclass N {\n    function __construct(int n) {}\n    function test_x(T t): void {}\n}\n"), None, false).unwrap_err();
+        let constructor = super::compile_tests(&file("needs.qiq", "import Test from \"std/testing\";\nclass N {\n    function __construct(int n) {}\n    function test_x(Test t): void {}\n}\n"), None, false).unwrap_err();
         assert!(constructor.contains("needs.qiq:3:14: test class 'N' needs a constructor without required arguments"), "{constructor}");
         // No tests: nothing to run.
         assert!(super::compile_tests(&file("plain.qiq", "print(1);\n"), None, false).unwrap().is_none());
         // A test_ function that doesn't take a T.
         let wrong = super::compile_tests(&file("wrong.qiq", "function test_x(int n): void {}\n"), None, false).unwrap_err();
-        assert!(wrong.ends_with("wrong.qiq:1:10: test function 'test_x' must take a T and return void: function test_x(T t): void, with import T from \"std/testing\";"), "{wrong}");
+        assert!(wrong.ends_with("wrong.qiq:1:10: test function 'test_x' must take a Test and return void: function test_x(Test t): void, with import Test from \"std/testing\";"), "{wrong}");
         let _ = std::fs::remove_dir_all(&directory);
     }
 

@@ -43,7 +43,7 @@ runs on any x86-64 Linux machine without qiq or any libraries installed. qiq
 needs no other tools: LLVM, the runtime, libc, and the linker are built in.
 --emit-llvm also writes the generated LLVM IR next to the output (<output>.ll).
 
-`qiq test` runs each top-level function named test_... that takes a T from
+`qiq test` runs each top-level function named test_... that takes a Test from
 std/testing, in the files given, or in every .qiq file below the current
 directory that has one. A file's own top-level code doesn't run. -run runs only
 the tests whose names contain <text>; -v lists every test, not just failures.
@@ -311,7 +311,7 @@ fn command_test(mut args: impl Iterator<Item = String>) -> Result<i32, String> {
         }
     }
     if files.is_empty() {
-        println!("qiq: no test files found (a test is a function named test_... that takes a T from std/testing)");
+        println!("qiq: no test files found (a test is a function named test_... that takes a Test from std/testing)");
         return Ok(0);
     }
     let work = TempDir::new("test")?;
