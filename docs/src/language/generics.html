@@ -217,7 +217,10 @@ print(largest([new Money(5), new Money(12), new Money(7)])->cents);
 ```
 
 <h2>How it works</h2>
-<p>The compiler makes a copy of a generic class or function for each set of type arguments the program uses, with the types filled in, so generic code runs exactly as fast as code written for those types: a <code>Stack&lt;int&gt;</code> stores plain ints. Generic code is also checked once on its own, even if nothing uses it, with each <code>T</code> standing for its bound, or for a type with no methods; a mistake shows up there rather than at some later use. One case is only caught when the code is used: comparing a <code>T</code> with <code>null</code> is an error when <code>T</code> is a type that can't be null, such as <code>int</code>.</p>
+<p>The compiler makes a copy of a generic class or function for each set of type arguments the program uses, with the types filled in, so generic code runs exactly as fast as code written for those types: a <code>Stack&lt;int&gt;</code> stores plain ints. Generic code is also checked once on its own, even if nothing uses it, with each <code>T</code> standing for its bound, or for a type with no methods; a mistake shows up there rather than at some later use.</p>
+
+<h2>Type parameters and null</h2>
+<p>A <code>T</code> without a bound could be a type that can't be null, such as <code>int</code>, so generic code can't treat it as able to be null: comparing it with <code>null</code>, setting it to <code>null</code>, and giving it a <code>??</code> fallback are errors, such as <code>a T can't be compared with null: T could be a type that can't be null, such as int</code>. A <code>T</code> with a bound is always an object, so it can be <code>null</code>. <code>??</code> on a map or array element of type <code>T</code> (<code>items[key] ?? fallback</code>) works either way, since it tests for a missing key or index.</p>
 
 <h2>Rules</h2>
 <ul>

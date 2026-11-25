@@ -4271,6 +4271,10 @@ struct Emitter {
     generic_expectation: Option<ValueType>,
     /// Numbers the hidden variables that hold generic calls' arguments.
     next_generic_argument: usize,
+    /// The stand-ins for type parameters without a bound, while checking
+    /// generic code (see check_generic_code): such a T could be an int, so
+    /// it can't be null.
+    unbounded_stand_ins: Vec<u32>,
     /// Named functions used as values, by symbol: their adapter and class.
     function_references: Vec<(String, u32)>,
     map_types: Vec<MapType>,
@@ -4420,6 +4424,7 @@ impl Emitter {
             pending_generic_methods: Vec::new(),
             generic_expectation: None,
             next_generic_argument: 0,
+            unbounded_stand_ins: Vec::new(),
             signatures,
             module_functions: modules.iter().map(|module| module.functions.clone()).collect(),
             module_paths: modules.iter().map(|module| module.path.clone()).collect(),
@@ -4633,7 +4638,8 @@ impl Emitter {
         }
         for class_id in 0..self.classes.len() as u32 {
             if !self.classes[class_id as usize].is_interface && self.has_property_defaults(class_id) {
-                let ir = self.emit_defaults_function(class_id)?;
+                let module = self.classes[class_id as usize].module;
+                let ir = self.emit_defaults_function(class_id).map_err(|error| self.in_module(module, error))?;
                 functions_ir.push_str(&ir);
                 functions_ir.push('\n');
             }
@@ -6125,6 +6131,8 @@ impl Emitter {
         let null_test = (left.value_type == ValueType::Null && nullable(right.value_type))
             || (right.value_type == ValueType::Null && nullable(left.value_type));
         if null_test {
+            self.null_for_unbounded(left.value_type, "be compared with null")?;
+            self.null_for_unbounded(right.value_type, "be compared with null")?;
             let predicate = match operator {
                 CompareOp::Equal => "eq",
                 CompareOp::NotEqual => "ne",
@@ -6703,6 +6711,9 @@ impl Emitter {
                     let name = this.generics.params[*param as usize].name.clone();
                     let class_id = this.add_synthetic_class(&name, Vec::new());
                     this.classes[class_id as usize].is_abstract = true;
+                    if this.generics.params[*param as usize].bound.is_none() {
+                        this.unbounded_stand_ins.push(class_id);
+                    }
                     stand_ins.insert(*param, ValueType::Class(class_id));
                 }
             }
@@ -6781,6 +6792,21 @@ impl Emitter {
 
     fn has_params(&self, value_type: ValueType) -> bool {
         type_has_params(value_type, &self.generics, &self.array_types, &self.map_types, &self.function_types)
+    }
+
+    /// When `value_type` is a type parameter without a bound (in generic
+    /// code being checked), the error for treating it as able to be null:
+    /// it could be an int.
+    fn null_for_unbounded(&self, value_type: ValueType, doing: &str) -> Result<(), String> {
+        match value_type {
+            ValueType::Class(class_id) if self.unbounded_stand_ins.contains(&class_id) => {
+                let name = &self.classes[class_id as usize].name;
+                Err(format!(
+                    "a {name} can't {doing}: {name} could be a type that can't be null, such as int; give {name} a bound, as in {name}: SomeInterface, if it's always an object"
+                ))
+            }
+            _ => Ok(()),
+        }
     }
 
     /// The type arguments for a call of a generic function or constructor
@@ -7714,7 +7740,10 @@ impl Emitter {
         let saved_method = self.current_method.take();
         for (property, slot) in self.class_fields(class_id) {
             let Some(default) = &property.default else { continue };
-            let value = self.emit_expecting(default, Some(property.value_type), &HashMap::new(), &mut body)?;
+            let (line, column) = property.default_at;
+            let value = self
+                .emit_expecting(default, Some(property.value_type), &HashMap::new(), &mut body)
+                .map_err(|error| at(line, column, error))?;
             if is_reference(property.value_type) {
                 self.take(&value, &mut body);
             }
@@ -9054,6 +9083,7 @@ impl Emitter {
             }
             _ => {
                 let value = self.emit_expression(left, variables, body)?;
+                self.null_for_unbounded(value.value_type, "have a ?? fallback")?;
                 if !is_reference(value.value_type) {
                     return Err(format!(
                         "'??' needs a map or array element, or a value that can be null (a ?int or other nullable scalar, string, char, array, map, or object); found {}",
@@ -10820,6 +10850,9 @@ impl Emitter {
             // `null` can be stored wherever a reference is expected: a string,
             // char, array, map, or object variable, property, element, map
             // value, argument, or return value.
+            Expr::Null if expected.is_some_and(|expected| self.null_for_unbounded(expected, "be null").is_err()) => {
+                self.null_for_unbounded(expected.expect("checked above"), "be null").map(|_| unreachable!())
+            }
             Expr::Null if expected.is_some_and(is_reference) => Ok(Value {
                 value_type: expected.expect("checked above"),
                 operand: "null".to_string(),
@@ -17167,6 +17200,12 @@ mod tests {
             ("interface Repo<T> { function find(): T; } class R implements Repo<string> { function find(): int { return 1; } }", "method 'R::find' does not match the signature declared by interface 'Repo<string>'"),
             ("interface Cmp<T> { function compareTo(T other): int; } function top<T: Cmp<T>>(T[] items): T { return items[0]; } print(top([new Plain()]));", "top's type parameter T must be a Cmp<Plain>, but Plain isn't one"),
             ("class B<T: Box<int>> {}", "a bound can't be a generic class; it can be a generic interface"),
+            // An unbounded T could be an int, so it can't be null.
+            ("function g<T>(T x): bool { return x == null; }", "function 'g<T>': a T can't be compared with null: T could be a type that can't be null, such as int"),
+            ("function g<T>(): T { return null; }", "a T can't be null"),
+            ("function g<T>(T x): T { return true ? x : null; }", "a T can't be null"),
+            ("function g<T>(T x, T y): T { return x ?? y; }", "a T can't have a ?? fallback"),
+            ("class B<T> { public T value = null; }", "1:180: a T can't be null"),
             ("print(1 instanceof Box);", "instanceof can't test for generic class Box"),
             ("function f<T>(?T x): void {}", "?T isn't supported"),
             ("function f<T, T>(T x): void {}", "type parameter 'T' is declared more than once"),
@@ -17177,6 +17216,13 @@ mod tests {
             let error = compile_source(&source).unwrap_err();
             assert!(error.contains(message), "{code}: expected '{message}', got '{error}'");
         }
+    }
+
+    #[test]
+    fn bounded_type_parameters_can_be_null() {
+        // A T with a bound is always an object.
+        let source = "interface I {} class C implements I {} function g<T: I>(T x): T { return x == null ? null : x; } function h<T>(map[string, T] m): T { return m[\"k\"] ?? m[\"j\"]; } print(g(new C()) != null);";
+        assert!(compile_source(source).is_ok());
     }
 
     #[test]
