@@ -33,10 +33,10 @@ The language has classes with inheritance, interfaces, static members, anonymous
 
 ## Install
 
-Download the binary from the [Releases](../../releases) page. Its file name includes the version and platform, for example `qiq-0.2.0-x86_64-linux`. Rename it to `qiq`, make it executable, and put it on your `PATH`:
+Download the binary from the [Releases](../../releases) page. Its file name includes the version and platform, for example `qiq-0.4.0-x86_64-linux`. Rename it to `qiq`, make it executable, and put it on your `PATH`:
 
 ```sh
-mv qiq-0.2.0-x86_64-linux qiq
+mv qiq-0.4.0-x86_64-linux qiq
 chmod +x qiq
 sudo mv qiq /usr/local/bin/
 qiq version
