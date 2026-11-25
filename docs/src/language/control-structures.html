@@ -212,6 +212,43 @@ ok not found error
 <li>A switch with a <code>default</code> in which every branch returns or throws ends a function's code path, and so does such a switch on an enum that handles every case.</li>
 </ul>
 
+<h2 id="match">match</h2>
+<p><code>match</code> is an expression: it compares a value with each arm's values in order and gives the result of the first arm that has an equal one. It's <code>switch</code> for choosing a value, without a variable to fill in.</p>
+
+```qiq
+enum Status {
+    case Active;
+    case Archived;
+    case Draft;
+}
+
+function label(Status status): string {
+    return match (status) {
+        Status::Active => "on",
+        Status::Archived, Status::Draft => "off",
+    };
+}
+
+int code = 404;
+string text = match (code) {
+    200, 204 => "ok",
+    404 => "not found",
+    default => "error " + to_string(code),
+};
+print(label(Status::Draft), text);
+```
+```output
+off not found
+```
+
+<ul>
+<li>Arms are separated by commas, with one allowed after the last; an arm lists one or more values, then <code>=&gt;</code> and its result. <code>default</code> gives the result when no value matches.</li>
+<li>The value can be an <code>int</code>, <code>double</code>, <code>bool</code>, <code>byte</code>, <code>string</code>, <code>char</code>, or <a href="enums.html">enum</a>, as for <code>switch</code>. It's evaluated once, and only the chosen arm's result is.</li>
+<li>The arms' results must have the same type. The match has the type it's used as, such as a variable's or a return type, or else its first arm's; an arm can be <code>null</code> where that type allows it.</li>
+<li>Without a <code>default</code>, a match on an enum must handle every case, as a switch must. Any other value that matches no arm throws <code>UnhandledMatchException</code>, as in <code>no match arm for 7</code>.</li>
+<li><code>match</code> is a keyword only before <code>(...) {</code>, so it can still name a function or variable.</li>
+</ul>
+
 <h2>break and continue</h2>
 <p><code>break</code> leaves the innermost loop or switch. <code>continue</code> skips to the next iteration of the innermost loop; inside a switch inside a loop, it goes to the loop.</p>
 

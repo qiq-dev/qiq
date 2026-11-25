@@ -12,6 +12,7 @@
 // │   │   └── ConstraintViolationException
 // │   │       └── UniqueViolationException
 // │   ├── ProcessException
+// │   ├── UnhandledMatchException
 // │   ├── KeyNotFoundException
 // │   ├── OutOfRangeException
 // │   └── InvalidUtf8Exception
@@ -97,6 +98,9 @@ class Exception {
 
 // Errors that can only be detected while the program runs.
 class RuntimeException extends Exception {}
+
+// A match expression without a default had no arm for its value.
+class UnhandledMatchException extends RuntimeException {}
 
 // Reading or writing files failed.
 class IOException extends RuntimeException {}

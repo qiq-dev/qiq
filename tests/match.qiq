@@ -1,0 +1,40 @@
+// match: an expression that picks a value by comparing one value with each arm.
+enum Status: string {
+    case Active = "active";
+    case Archived = "archived";
+    case Draft = "draft";
+}
+function label(Status s): string {
+    return match (s) {
+        Status::Active => "on",
+        Status::Archived, Status::Draft => "off",
+    };
+}
+print(label(Status::Active), label(Status::Draft));
+int code = 404;
+string text = match (code) {
+    200, 204 => "ok",
+    404 => "not found",
+    default => "error " + to_string(code),
+};
+print(text, match (500) { 200 => "ok", default => "other" });
+double factor = match ("b") { "a" => 1.5, "b" => 2.5 };
+print(factor);
+?int maybe = match (true) { true => 5, false => null };
+print(maybe);
+string[] parts = match (1) { 1 => ["x"], default => [] };
+print(parts);
+function match(int x): int { return x + 1; }
+print(match(1));
+try {
+    print(match (7) { 1 => "one" });
+} catch (UnhandledMatchException e) {
+    print(e::class, e->getMessage());
+}
+try {
+    print(match ("q") { "a" => 1 });
+} catch (UnhandledMatchException e) {
+    print(e->getMessage());
+}
+function next(): int { print("evaluated once"); return 2; }
+print(match (next()) { 1 => "first", 2 => "second", 3 => "third" });

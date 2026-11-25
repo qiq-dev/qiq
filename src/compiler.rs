@@ -1374,6 +1374,9 @@ enum Expr {
     MapLiteral(Vec<(Expr, Expr)>),
     /// `name: value` in a call's argument list; only valid there.
     NamedArgument(String, Box<Expr>),
+    /// `match (subject) { a, b => x, c => y, default => z }`: the value of the
+    /// first arm with a value equal to the subject (see emit_match).
+    Match(Box<Expr>, Vec<MatchArm>, Option<Box<Expr>>),
     /// `...values` in a call's argument list: an array passed as the values
     /// of a variadic parameter. Only valid as the last positional argument
     /// of a call to a function with one (see pack_variadic_arguments).
@@ -1523,6 +1526,13 @@ struct SwitchCase {
     /// The values this case matches; any one of them selects it.
     values: Vec<Expr>,
     body: Vec<Statement>,
+}
+
+/// One arm of a match: its values, any of which selects it, and its result.
+#[derive(Debug, Clone)]
+struct MatchArm {
+    values: Vec<Expr>,
+    result: Expr,
 }
 
 #[derive(Debug, Clone)]
@@ -3410,6 +3420,69 @@ impl Parser {
         Ok(Expr::Binary(BinaryOp::Power, Box::new(base), Box::new(exponent)))
     }
 
+    /// Whether the tokens start a match expression: `match (...) {`. `match`
+    /// is a keyword only there, so it can still name a function or variable.
+    fn at_match(&self) -> bool {
+        if !matches!(self.tokens.get(self.cursor + 1).map(|token| &token.kind), Some(TokenKind::LeftParen)) {
+            return false;
+        }
+        let mut depth = 0;
+        for (offset, token) in self.tokens[self.cursor + 1..].iter().enumerate() {
+            match token.kind {
+                TokenKind::LeftParen => depth += 1,
+                TokenKind::RightParen => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return matches!(self.tokens.get(self.cursor + 2 + offset).map(|token| &token.kind), Some(TokenKind::LeftBrace));
+                    }
+                }
+                TokenKind::End => return false,
+                _ => {}
+            }
+        }
+        false
+    }
+
+    /// `match (subject) { a, b => x, default => y }`, from `match`. Arms are
+    /// separated by commas; one after the last is allowed.
+    fn parse_match(&mut self) -> Result<Expr, String> {
+        self.advance(); // match
+        self.expect(TokenKind::LeftParen, "expected '(' after 'match'")?;
+        let subject = self.parse_expression()?;
+        self.expect(TokenKind::RightParen, "expected ')' after the match value")?;
+        self.expect(TokenKind::LeftBrace, "expected '{' before the match arms")?;
+        let mut arms = Vec::new();
+        let mut default = None;
+        while !matches!(self.current().kind, TokenKind::RightBrace | TokenKind::End) {
+            if matches!(self.current().kind, TokenKind::Default) {
+                if default.is_some() {
+                    return Err(self.error("a match can have only one default"));
+                }
+                self.advance();
+                self.expect(TokenKind::FatArrow, "expected '=>' after default")?;
+                default = Some(Box::new(self.parse_expression()?));
+            } else {
+                let mut values = vec![self.parse_expression()?];
+                while matches!(self.current().kind, TokenKind::Comma) {
+                    self.advance();
+                    values.push(self.parse_expression()?);
+                }
+                self.expect(TokenKind::FatArrow, "expected '=>' after the arm's values")?;
+                let result = self.parse_expression()?;
+                arms.push(MatchArm { values, result });
+            }
+            if !matches!(self.current().kind, TokenKind::Comma) {
+                break;
+            }
+            self.advance();
+        }
+        self.expect(TokenKind::RightBrace, "expected '}' after the match arms (separate arms with commas)")?;
+        if arms.is_empty() && default.is_none() {
+            return Err(self.error("a match needs at least one arm"));
+        }
+        Ok(Expr::Match(Box::new(subject), arms, default))
+    }
+
     fn parse_primary(&mut self) -> Result<Expr, String> {
         let (line, column) = (self.current().line, self.current().column);
         if self.at_function_type() {
@@ -3620,6 +3693,7 @@ impl Parser {
                     .ok_or_else(|| self.error("static:: can only be used inside a class"))?;
                 self.parse_static_member(StaticTarget::Late { enclosing })?
             }
+            TokenKind::Identifier(name) if name == "match" && self.at_match() => self.parse_match()?,
             TokenKind::Identifier(name) => {
                 self.advance();
                 if matches!(self.current().kind, TokenKind::LeftParen) {
@@ -9265,6 +9339,178 @@ impl Emitter {
         Ok(result)
     }
 
+    /// `match (subject) { values => result, ..., default => result }`. The
+    /// subject is evaluated once and compared with each arm's values in
+    /// order, as a switch does (the same types, and for an enum, its cases);
+    /// only the chosen arm's result is evaluated. The result has the type
+    /// it's used as (`expected`), or else its first arm's that isn't `null`;
+    /// it goes through a stack slot, as with `?:`. Without a default, a
+    /// match on an enum must handle every case (only null reaches the end,
+    /// and throws), and any other value that matches no arm throws
+    /// UnhandledMatchException.
+    fn emit_match(
+        &mut self,
+        subject_expression: &Expr,
+        arms: &[MatchArm],
+        default: Option<&Expr>,
+        expected: Option<ValueType>,
+        variables: &HashMap<String, Value>,
+        body: &mut String,
+    ) -> Result<Value, String> {
+        let subject = self.emit_expression(subject_expression, variables, body)?;
+        let enum_subject = match subject.value_type {
+            ValueType::Class(class_id) if self.classes[class_id as usize].enumeration.is_some() => Some(class_id),
+            _ => None,
+        };
+        if !subject.value_type.is_scalar() && enum_subject.is_none() {
+            return Err(format!(
+                "match requires an int, double, bool, byte, string, char, or enum, found {}{}",
+                self.type_name(subject.value_type),
+                self.null_hint(subject.value_type)
+            ));
+        }
+        let cases: Vec<SwitchCase> = arms.iter().map(|arm| SwitchCase { values: arm.values.clone(), body: Vec::new() }).collect();
+        let exhaustive = match enum_subject {
+            Some(class_id) if default.is_none() => {
+                self.check_enum_switch(class_id, &cases).map_err(|error| error.replacen("switch", "match", 1))?;
+                true
+            }
+            Some(class_id) => {
+                self.check_enum_switch_values(class_id, &cases).map_err(|error| error.replacen("switch", "match", 1))?;
+                false
+            }
+            None => false,
+        };
+        let id = self.next_label;
+        self.next_label += 1;
+        let end_label = format!("match.end{id}");
+        let unmatched = format!("match.unmatched{id}");
+        let arm_label = |index: usize| format!("match.arm{id}.{index}");
+        // Tests, in order; the first value equal to the subject picks its arm.
+        let mut seen: Vec<String> = Vec::new();
+        let tests: Vec<(usize, &Expr)> = arms.iter().enumerate().flat_map(|(index, arm)| arm.values.iter().map(move |value| (index, value))).collect();
+        for (position, (index, value_expression)) in tests.iter().enumerate() {
+            let key = match value_expression {
+                Expr::Number(n) => Some(format!("{n}")),
+                Expr::Text(t) => Some(format!("{t:?}")),
+                Expr::Character(c) => Some(format!("{c:?}")),
+                Expr::Boolean(b) => Some(format!("{b}")),
+                Expr::StaticProperty(target, name) if enum_subject.is_some() => {
+                    Some(format!("{}::{name}", self.classes[Self::static_target_class(*target) as usize].name))
+                }
+                _ => None,
+            };
+            if let Some(key) = key {
+                if seen.contains(&key) {
+                    return Err(format!("duplicate match value {key}"));
+                }
+                seen.push(key);
+            }
+            self.open_scope();
+            let value = self.emit_expecting(value_expression, Some(subject.value_type), variables, body)?;
+            if value.value_type != subject.value_type {
+                return Err(format!(
+                    "a match value must be {}, found {}",
+                    self.type_name(subject.value_type),
+                    self.type_name(value.value_type)
+                ));
+            }
+            let matched = self.emit_comparison(subject.clone(), CompareOp::Equal, value, body)?;
+            self.close_scope(body);
+            let next = if position + 1 == tests.len() { unmatched.clone() } else { format!("match.test{id}.{}", position + 1) };
+            body.push_str(&format!("  br i1 {}, label %{}, label %{next}\n", matched.operand, arm_label(*index)));
+            if position + 1 < tests.len() {
+                body.push_str(&format!("{next}:\n"));
+            }
+        }
+        if tests.is_empty() {
+            body.push_str(&format!("  br label %{unmatched}\n"));
+        }
+        // The results: those that need a type to have one (`null`, `[]`,
+        // `{}`) after the others, so they can take theirs.
+        let needs_type = |expression: &Expr| match expression {
+            Expr::Null => true,
+            Expr::ArrayLiteral(elements) => elements.is_empty(),
+            Expr::MapLiteral(entries) => entries.is_empty(),
+            _ => false,
+        };
+        let mut results: Vec<(String, &Expr)> = arms.iter().enumerate().map(|(index, arm)| (arm_label(index), &arm.result)).collect();
+        if let Some(default) = default {
+            results.push((unmatched.clone(), default));
+        }
+        let expected = expected.filter(|expected| !matches!(expected, ValueType::Void | ValueType::Null));
+        let mut result_type = expected;
+        let slot = self.new_register();
+        let mut slot_declared = false;
+        for later in [false, true] {
+            for (label, expression) in &results {
+                if needs_type(expression) != later {
+                    continue;
+                }
+                body.push_str(&format!("{label}:\n"));
+                self.open_scope();
+                let value = self.emit_expecting(expression, result_type, variables, body)?;
+                if value.value_type == ValueType::Void || (value.value_type == ValueType::Null && !matches!(expression, Expr::Null)) {
+                    return Err("an arm of match has no value (it calls a void function)".to_string());
+                }
+                let value_type = *result_type.get_or_insert(value.value_type);
+                if !self.is_assignable(value_type, value.value_type) && !(value.value_type == ValueType::Null && is_reference(value_type)) {
+                    return Err(format!(
+                        "the arms of match must have the same type: {} and {}",
+                        self.type_name(value_type),
+                        self.type_name(value.value_type)
+                    ));
+                }
+                if !slot_declared {
+                    self.entry_allocas.push_str(&format!("  {slot} = alloca {}, align 8\n", value_type.llvm()));
+                    slot_declared = true;
+                }
+                let operand = if value.value_type == ValueType::Null { "null".to_string() } else { self.take(&value, body) };
+                self.close_scope(body);
+                body.push_str(&format!("  store {} {operand}, ptr {slot}, align 8\n  br label %{end_label}\n", value_type.llvm()));
+            }
+        }
+        let Some(result_type) = result_type else {
+            return Err("can't tell the type of this match: its arms are all null; use it where its type is known".to_string());
+        };
+        if result_type == ValueType::Null {
+            return Err("can't tell the type of this match: its arms are all null; use it where its type is known".to_string());
+        }
+        // No arm matched: a null enum, or a value no arm has.
+        if default.is_none() {
+            body.push_str(&format!("{unmatched}:\n"));
+            if exhaustive {
+                let enum_name = self.classes[enum_subject.expect("an enum match") as usize].name.clone();
+                let text = self.string_literal(format!("match on a null {enum_name}").as_bytes());
+                body.push_str(&format!("  call void @qiq_raise(i32 0, ptr {text})\n"));
+                self.emit_exception_check(body);
+                body.push_str("  unreachable\n");
+            } else {
+                let class_id = self.stdlib_class("UnhandledMatchException").ok_or("the standard library has no UnhandledMatchException")?;
+                self.use_class(class_id);
+                // The message's temporaries are released here, on this path only.
+                self.open_scope();
+                let described = self.emit_described(&subject, body)?;
+                let mut scope = variables.clone();
+                scope.insert("#match.value".to_string(), described);
+                let message = Expr::Binary(BinaryOp::Add, Box::new(Expr::Text("no match arm for ".to_string())), Box::new(Expr::Variable("#match.value".to_string())));
+                let exception = self.emit_expression(&Expr::NewObject(class_id, vec![message]), &scope, body)?;
+                let operand = self.take(&exception, body);
+                self.close_scope(body);
+                if let Some(locate) = self.locate_exception_at(&operand, true) {
+                    body.push_str(&locate);
+                }
+                let (handler, cleanup) = self.handler_cleanup();
+                body.push_str(&cleanup);
+                body.push_str(&format!("  store ptr {operand}, ptr @qiq_pending_exception, align 8\n  br label %{handler}\n"));
+            }
+        }
+        let result = self.new_register();
+        body.push_str(&format!("{end_label}:\n  {result} = load {}, ptr {slot}, align 8\n", result_type.llvm()));
+        let value = Value { value_type: result_type, operand: result, slot: None };
+        Ok(if is_reference(result_type) { self.own(value) } else { value })
+    }
+
     /// `condition ? then : otherwise`. Only the branch chosen runs; its
     /// value goes through a stack slot (holding one reference, for
     /// reference types), as with `??`. The branches must have the same type,
@@ -10876,6 +11122,9 @@ impl Emitter {
                 Expr::Ternary(condition, then, otherwise) => {
                     return self.emit_ternary(condition, then, otherwise, expected, variables, body);
                 }
+                Expr::Match(subject, arms, default) => {
+                    return self.emit_match(subject, arms, default.as_deref(), expected, variables, body);
+                }
                 _ => {
                     let value = self.emit_expecting(expression, Some(scalar.value_type()), variables, body)?;
                     if value.value_type == scalar.value_type() {
@@ -10918,6 +11167,7 @@ impl Emitter {
             Expr::MapLiteral(entries) => self.emit_map_literal(entries, expected, variables, body),
             Expr::Closure(closure) => self.emit_closure(closure, expected, variables, body),
             Expr::Ternary(condition, then, otherwise) => self.emit_ternary(condition, then, otherwise, expected, variables, body),
+            Expr::Match(subject, arms, default) => self.emit_match(subject, arms, default.as_deref(), expected, variables, body),
             // Database::queryAs reads rows into the type its result is used as.
             Expr::MethodCall(_, name, _) if matches!(name.as_str(), "queryAs" | "queryOneAs" | "nextAs" | "fetchAs") => {
                 self.call_expectation = expected;
@@ -12591,6 +12841,7 @@ impl Emitter {
             Expr::NewGeneric(generic, type_arguments, arguments) => {
                 self.emit_new_generic(*generic, type_arguments.as_deref(), arguments, None, variables, body)
             }
+            Expr::Match(subject, arms, default) => self.emit_match(subject, arms, default.as_deref(), None, variables, body),
             Expr::NewObject(class_id, arguments) => {
                 let class = self.classes[*class_id as usize].name.clone();
                 if let Some(enumeration) = &self.classes[*class_id as usize].enumeration {
@@ -13671,6 +13922,16 @@ impl Monomorphizer<'_> {
                     self.subst_expr(value, bindings)?;
                 }
             }
+            Expr::Match(subject, arms, default) => {
+                self.subst_expr(subject, bindings)?;
+                for arm in arms {
+                    self.subst_exprs(&mut arm.values, bindings)?;
+                    self.subst_expr(&mut arm.result, bindings)?;
+                }
+                if let Some(default) = default {
+                    self.subst_expr(default, bindings)?;
+                }
+            }
         }
         Ok(())
     }
@@ -14081,6 +14342,16 @@ fn expression_names(expression: &Expr, used: &mut std::collections::BTreeSet<Str
             each(&arguments.iter().collect::<Vec<_>>(), used, declared);
         }
         Expr::NewObject(_, arguments) | Expr::NewGeneric(_, _, arguments) | Expr::ArrayLiteral(arguments) => each(&arguments.iter().collect::<Vec<_>>(), used, declared),
+        Expr::Match(subject, arms, default) => {
+            expression_names(subject, used, declared);
+            for arm in arms {
+                each(&arm.values.iter().collect::<Vec<_>>(), used, declared);
+                expression_names(&arm.result, used, declared);
+            }
+            if let Some(default) = default {
+                expression_names(default, used, declared);
+            }
+        }
         Expr::MapLiteral(entries) => {
             for (key, value) in entries {
                 each(&[key, value], used, declared);
@@ -17415,6 +17686,30 @@ mod tests {
         // A program without nullable scalars allocates no boxes.
         let plain = compile_source("int b = 6; print(b + 1);").unwrap();
         assert!(!main_ir(&plain).contains("qiq_object_new"));
+    }
+
+    #[test]
+    fn rejects_invalid_matches() {
+        let declared = "enum S { case A; case B; } ";
+        let cases = [
+            ("function f(S s): int { return match (s) { S::A => 1 }; }", "match on enum S doesn't handle S::B; add a case for it, or a default"),
+            ("print(match (1) { 1 => \"a\", 2 => 3 });", "the arms of match must have the same type: string and int"),
+            ("print(match (1) { 1 => \"a\", 1 => \"b\" });", "duplicate match value 1"),
+            ("print(match (1) { \"x\" => 1 });", "a match value must be int, found string"),
+            ("print(match (1) { 1 => null });", "can't tell the type of this match: its arms are all null"),
+            ("int[] xs = []; print(match (xs) { default => 1 });", "match requires an int, double, bool, byte, string, char, or enum, found int[]"),
+            ("print(match (1) { 1 => \"a\" 2 => \"b\" });", "expected '}' after the match arms (separate arms with commas)"),
+            ("print(match (1) { });", "a match needs at least one arm"),
+            ("print(match (1) { default => 1, default => 2 });", "a match can have only one default"),
+            ("function v(): void {} print(match (1) { 1 => v() });", "an arm of match has no value"),
+        ];
+        for (code, message) in cases {
+            let source = format!("{declared}{code}");
+            let error = compile_source(&source).unwrap_err();
+            assert!(error.contains(message), "{code}: expected '{message}', got '{error}'");
+        }
+        // `match` is a keyword only before `(...) {`.
+        assert!(compile_source("function match(int x): int { return x; } int match = match(1); print(match);").is_ok());
     }
 
     #[test]

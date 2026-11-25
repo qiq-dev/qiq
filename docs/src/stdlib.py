@@ -3586,6 +3586,7 @@ EXCEPTION_CLASSES = """<h1>Exception classes</h1>
 │   │   └── ConstraintViolationException
 │   │       └── UniqueViolationException
 │   ├── ProcessException
+│   ├── UnhandledMatchException
 │   ├── KeyNotFoundException
 │   ├── OutOfRangeException
 │   └── InvalidUtf8Exception
@@ -3623,6 +3624,7 @@ EXCEPTION_CLASSES = """<h1>Exception classes</h1>
 <tr><td><code>DatabaseException</code></td><td>A <a href="class.database.html">database</a> couldn't be opened or rejected a statement (an SQL error, a broken constraint, a missing table, a lock held for more than 5 seconds), the wrong number of values was given for a statement's placeholders, or a <a href="class.row.html">Row</a> getter was asked for a column that doesn't exist or holds another type. <code>getSqlState()</code> gives the SQLSTATE and <code>getCode()</code> the database's error number; see <a href="class.database.html">Errors</a>.</td></tr>
 <tr><td><code>ConstraintViolationException</code></td><td>A statement broke a constraint: <code>NOT NULL</code>, <code>CHECK</code>, a foreign key, or a unique key. A subclass of <code>DatabaseException</code>.</td></tr>
 <tr><td><code>UniqueViolationException</code></td><td>A row would duplicate another's value in a unique key or primary key. A subclass of <code>ConstraintViolationException</code>.</td></tr>
+<tr><td><code>UnhandledMatchException</code></td><td>A <a href="control-structures.html#match">match</a> without a <code>default</code> had no arm for its value. The message shows the value.</td></tr>
 <tr><td><code>ProcessException</code></td><td>A command given to <a href="function.exec.html">exec</a> or <a href="function.shell.html">shell</a> couldn't be run (it wasn't found or isn't executable, or the working directory doesn't exist), or ran past its timeout. A command that exits with an error status doesn't throw; check <code>exitCode</code>.</td></tr>
 <tr><td><code>KeyNotFoundException</code></td><td>A map lookup used a key that isn't in the map.</td></tr>
 <tr><td><code>OutOfRangeException</code></td><td>An array index is below 0 or not less than the array's length.</td></tr>
