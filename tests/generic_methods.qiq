@@ -1,0 +1,118 @@
+// Generic methods in interfaces and abstract classes, overridden generic
+// methods, and calls through them that reach each class's own copy.
+
+interface Bag<T> {
+    function size(): int;
+    function convert<U>(function(T): U change): Bag<U>;
+    function toArray(): T[];
+}
+
+class ListBag<T> implements Bag<T> {
+    private T[] items;
+    function __construct(T[] items) { this->items = items; }
+    function size(): int { return len(this->items); }
+    function convert<U>(function(T): U change): Bag<U> {
+        U[] result = [];
+        foreach (this->items as item) { array_push(result, change(item)); }
+        return new ListBag<U>(result);
+    }
+    function toArray(): T[] { return this->items; }
+}
+
+class ReversedBag<T> implements Bag<T> {
+    private T[] items;
+    function __construct(T[] items) { this->items = items; }
+    function size(): int { return len(this->items); }
+    function convert<V>(function(T): V change): Bag<V> {
+        V[] result = [];
+        int i = len(this->items) - 1;
+        while (i >= 0) { array_push(result, change(this->items[i])); i--; }
+        return new ReversedBag<V>(result);
+    }
+    function toArray(): T[] { return this->items; }
+}
+
+function describeBag(Bag<int> numbers): string {
+    Bag<string> labels = numbers->convert(fn(n) => f"#{n}");
+    return implode(",", labels->toArray());
+}
+
+print(describeBag(new ListBag<int>([1, 2, 3])));
+print(describeBag(new ReversedBag<int>([1, 2, 3])));
+Bag<int> bag = new ListBag<int>([4, 5]);
+print(bag->convert(fn(n) => to_double(n) * 1.5)->toArray());
+
+// Abstract base with an overridable generic method.
+abstract class Tagged {
+    abstract function tag<T: key>(T label): string;
+    function twice<T: key>(T label): string { return this->tag(label) + this->tag(label); }
+}
+class Round extends Tagged {
+    function tag<T: key>(T label): string { return "(" + to_string(label) + ")"; }
+}
+class Boxed extends Tagged {
+    function tag<X: key>(X label): string { return "[" + to_string(label) + "]"; }
+}
+Tagged[] taggedItems = [new Round(), new Boxed()];
+foreach (taggedItems as s) { print(s->tag(1), s->twice("a")); }
+
+// Overriding a concrete generic method.
+class Wrapper {
+    function wrap<T>(T value): T[] { return [value]; }
+}
+class TwiceWrapper extends Wrapper {
+    function wrap<T>(T value): T[] { return [value, value]; }
+}
+Wrapper wrapper = new TwiceWrapper();
+print(wrapper->wrap(7), (new Wrapper())->wrap("x"));
+
+// A generic class made only inside a copy can override too, and map can
+// name a method.
+interface Sequence<T> {
+    function map<U>(function(T): U change): Sequence<U>;
+    function keep(function(T): bool test): Sequence<T>;
+    function items(): T[];
+    function pairWith<U>(U other): Sequence<(T, U)>;
+}
+
+class SeqList<T> implements Sequence<T> {
+    protected T[] values;
+    function __construct(T[] values) { this->values = values; }
+    function map<U>(function(T): U change): Sequence<U> {
+        U[] result = [];
+        foreach (this->values as v) { array_push(result, change(v)); }
+        return new SeqList<U>(result);
+    }
+    function keep(function(T): bool test): Sequence<T> {
+        T[] result = [];
+        foreach (this->values as v) { if (test(v)) { array_push(result, v); } }
+        return new SeqList<T>(result);
+    }
+    function items(): T[] { return this->values; }
+    // Calls another generic method of the interface, through `this`.
+    function pairWith<U>(U other): Sequence<(T, U)> {
+        return this->map(fn(T v) => (v, other));
+    }
+}
+
+// A generic subclass that overrides, only made inside a copy at the end.
+class LoggedSeq<T> extends SeqList<T> {
+    function map<U>(function(T): U change): Sequence<U> {
+        print("logged map");
+        return parent::map(change);
+    }
+}
+
+function seqLengths(Sequence<string> words): int[] {
+    return words->map(fn(w) => len(w))->keep(fn(n) => n > 1)->items();
+}
+
+print(seqLengths(new SeqList<string>(["a", "bb", "ccc"])));
+Sequence<int> numbers = new SeqList<int>([1, 2]);
+print(numbers->pairWith("x")->items());
+print(numbers->map(fn(n) => n * 10)->map(fn(n) => f"{n}!")->items());
+
+function makeLoggedSeq(): Sequence<string> {
+    return new LoggedSeq<string>(["q", "rr"]);
+}
+print(seqLengths(makeLoggedSeq()));

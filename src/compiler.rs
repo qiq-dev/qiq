@@ -858,6 +858,10 @@ struct Generics {
     /// values: `(int, string)` is __Tuple2<int, string> (stdlib/tuples.qiq).
     /// Empty until that file is loaded.
     tuple_templates: HashMap<usize, u32>,
+    /// Each generic method name and type arguments a copy has been made
+    /// for: a copy's name is `<name>.g<index here>`, the same in every class,
+    /// so the copies of an overridden method override each other.
+    method_keys: Vec<(String, Vec<ValueType>)>,
 }
 
 impl Generics {
@@ -1441,6 +1445,11 @@ fn not_generic(callee: &str) -> String {
     format!("{callee} isn't generic, so it takes no type arguments")
 }
 
+/// Whether `name` is a generic method's copy, as `map.g3` is of `map`.
+fn is_generic_copy(name: &str) -> bool {
+    name.contains(".g")
+}
+
 /// `call`, with its type arguments if the call gave some.
 fn with_type_arguments(type_arguments: Option<Vec<ValueType>>, call: Expr) -> Expr {
     match type_arguments {
@@ -1941,15 +1950,13 @@ impl Parser {
     ) -> Result<Function, String> {
         self.advance();
         let (line, column) = (self.current().line, self.current().column);
-        let name = self.expect_identifier("expected function name")?;
+        // A method can be named `map` (a keyword only where a type is).
+        let name = if owner_class.is_some() { self.expect_member_name("expected method name")? } else { self.expect_identifier("expected function name")? };
         let name_for_symbol = self.qualified_symbol(&name, "qiq.");
         // `function first<T>(T[] items): T`
         let scope_size = self.type_scope.len();
         let type_params = if matches!(self.current().kind, TokenKind::Less) {
-            if owner_class.is_some() && is_abstract {
-                return Err(self.error("abstract and interface methods can't have their own type parameters yet"));
-            }
-            if is_abstract {
+            if owner_class.is_none() && is_abstract {
                 return Err(self.error("extern functions can't be generic"));
             }
             if owner_class.is_some() && name == "__construct" {
@@ -4054,7 +4061,7 @@ impl Parser {
                 expression = Expr::Index(Box::new(expression), Box::new(index));
             } else if matches!(self.current().kind, TokenKind::Arrow) {
                 self.advance();
-                let member = self.expect_identifier("expected member name after '.'")?;
+                let member = self.expect_member_name("expected member name after '->'")?;
                 let type_arguments = self.parse_call_type_arguments()?;
                 if matches!(self.current().kind, TokenKind::LeftParen) {
                     self.advance();
@@ -4070,7 +4077,7 @@ impl Parser {
                 self.advance();
                 self.next_hidden += 1;
                 let placeholder = format!("#{}", self.next_hidden);
-                let member = self.expect_identifier("expected a property or method name after '?->'")?;
+                let member = self.expect_member_name("expected a property or method name after '?->'")?;
                 let type_arguments = self.parse_call_type_arguments()?;
                 let first = if matches!(self.current().kind, TokenKind::LeftParen) {
                     self.advance();
@@ -4143,7 +4150,7 @@ impl Parser {
             self.advance();
             return Ok(Expr::ClassName(target));
         }
-        let member = self.expect_identifier("expected a method or property name after '::'")?;
+        let member = self.expect_member_name("expected a method or property name after '::'")?;
         let type_arguments = self.parse_call_type_arguments()?;
         if !matches!(self.current().kind, TokenKind::LeftParen) {
             return Ok(Expr::StaticProperty(target, member));
@@ -4604,6 +4611,17 @@ impl Parser {
         }
     }
 
+    /// A property or method name, where `map` is a name rather than the
+    /// start of a map type: after `->`, `?->`, or `::`, and in a class's
+    /// `function map(...)`.
+    fn expect_member_name(&mut self, message: &str) -> Result<String, String> {
+        if matches!(self.current().kind, TokenKind::Map) {
+            self.advance();
+            return Ok("map".to_string());
+        }
+        self.expect_identifier(message)
+    }
+
     fn expect_identifier(&mut self, message: &str) -> Result<String, String> {
         match self.current().kind.clone() {
             TokenKind::Identifier(name) => {
@@ -4764,6 +4782,11 @@ struct Emitter {
     generics: Generics,
     /// Copies of generic functions made while emitting, waiting to be emitted.
     pending_generic_functions: Vec<Function>,
+    /// Generic methods called (class or interface the call names, method,
+    /// type arguments): every class below it that declares or inherits its
+    /// own version of the method needs a copy for those arguments too, so
+    /// a dispatched call finds one (see satisfy_generic_demands).
+    generic_method_demands: Vec<(u32, String, Vec<ValueType>)>,
     /// Copies made to check generic code with `K: key` parameters as int and
     /// as string ("function SYMBOL", "method CLASS NAME", or "class CLASS"),
     /// and the note their errors get (see key_check_note).
@@ -4933,6 +4956,7 @@ impl Emitter {
         Self {
             generics,
             pending_generic_functions: Vec::new(),
+            generic_method_demands: Vec::new(),
             key_check_notes: HashMap::new(),
             pending_generic_methods: Vec::new(),
             emitted_classes: Vec::new(),
@@ -5072,6 +5096,8 @@ impl Emitter {
         let mut extern_declarations = String::new();
         let mut emitted: Vec<&str> = Vec::new();
         loop {
+            // Copies of overriding generic methods that calls so far need.
+            self.satisfy_generic_demands()?;
             let pending: Vec<&Function> = program
                 .functions
                 .iter()
@@ -7874,16 +7900,22 @@ impl Emitter {
             return Ok(made.3.clone());
         }
         let class_name = self.classes[class_id as usize].name.clone();
-        if self.is_overridden(class_id, &template.name) {
-            return Err(format!("generic method '{class_name}::{}' can't be overridden", template.name));
-        }
         let copies = self.generics.method_instances.iter().filter(|made| made.0 == class_id && made.1 == template.name).count();
         if copies >= 64 {
             return Err(format!("generic method {class_name}::{} has been made for 64 different type arguments", template.name));
         }
         let names: Vec<String> = types.iter().map(|value_type| self.type_name(*value_type)).collect();
+        // The same name in every class for the same method and arguments.
+        let key = (template.name.clone(), types.clone());
+        let key = match self.generics.method_keys.iter().position(|existing| *existing == key) {
+            Some(index) => index,
+            None => {
+                self.generics.method_keys.push(key);
+                self.generics.method_keys.len() - 1
+            }
+        };
         let mut method = template.clone();
-        method.name = format!("{}.g{copies}", template.name);
+        method.name = format!("{}.g{key}", template.name);
         method.type_params = Vec::new();
         let bindings = Bindings { given: false, types: template.type_params.iter().copied().zip(types.clone()).collect(), own_class: None, parent: None };
         let owner = format!("{class_name}::{}", template.name);
@@ -7895,8 +7927,51 @@ impl Emitter {
         self.generics.method_instances.push((class_id, template.name.clone(), types, method.name.clone()));
         self.classes[class_id as usize].methods.push(method.clone());
         let name = method.name.clone();
-        self.pending_generic_methods.push((class_id, method));
+        // An abstract copy (of an interface's or abstract class's method)
+        // has no body to emit; it makes calls through it dispatched.
+        if !method.is_abstract {
+            self.pending_generic_methods.push((class_id, method));
+        }
         Ok(name)
+    }
+
+    /// Makes the copies that the generic method calls so far need, in the
+    /// classes below the class or interface each call named, which declare
+    /// (or inherit from a class below it) their own version of the method,
+    /// so dispatched calls find one. Copies of methods in classes that
+    /// nothing uses are left out; the emitter calls this again as classes
+    /// and calls appear, until nothing new is needed.
+    fn satisfy_generic_demands(&mut self) -> Result<(), String> {
+        let mut index = 0;
+        while index < self.generic_method_demands.len() {
+            let (owner, name, types) = self.generic_method_demands[index].clone();
+            index += 1;
+            for class_id in 0..self.classes.len() as u32 {
+                if class_id == owner || !self.is_subclass(class_id, owner) || !self.classes[class_id as usize].type_params.is_empty() {
+                    continue;
+                }
+                let used = self.used_classes.iter().any(|&used| used == class_id || self.is_subclass(used, class_id));
+                if !used {
+                    continue;
+                }
+                // The nearest class (this one or a parent below `owner`) that
+                // declares its own version.
+                let mut current = Some(class_id);
+                while let Some(candidate) = current {
+                    if candidate == owner {
+                        break;
+                    }
+                    let declared = self.classes[candidate as usize].methods.iter().find(|method| method.name == name && !method.type_params.is_empty()).cloned();
+                    if let Some(template) = declared {
+                        let module = self.classes[candidate as usize].module;
+                        self.generic_method_instance(candidate, &template, types.clone()).map_err(|error| self.in_module(module, error))?;
+                        break;
+                    }
+                    current = self.classes[candidate as usize].parent_class;
+                }
+            }
+        }
+        Ok(())
     }
 
     /// `new Box<int>(...)`, or `new Box(...)` with the type arguments from
@@ -12871,6 +12946,65 @@ impl Emitter {
         }
     }
 
+    /// For a method that overrides or implements `other`: each of its own
+    /// type parameters with the one in the same position of `other`'s, when
+    /// they have as many and the same bounds; otherwise what differs.
+    fn type_params_correspond(&self, method: &Function, other: &Function, other_name: &str) -> Result<Vec<(u32, u32)>, String> {
+        if method.type_params.len() != other.type_params.len() {
+            let count = |function: &Function| match function.type_params.len() {
+                0 => "no type parameters".to_string(),
+                1 => "1 type parameter".to_string(),
+                n => format!("{n} type parameters"),
+            };
+            return Err(format!("it has {}, and {other_name} has {}", count(method), count(other)));
+        }
+        let params: Vec<(u32, u32)> = method.type_params.iter().copied().zip(other.type_params.iter().copied()).collect();
+        for (mine, theirs) in &params {
+            let (mine, theirs) = (&self.generics.params[*mine as usize], &self.generics.params[*theirs as usize]);
+            let same_bound = match (mine.bound, theirs.bound) {
+                (None, None) => true,
+                (Some(a), Some(b)) => self.same_type(a, b, &params),
+                _ => false,
+            };
+            if !same_bound || mine.objects_only != theirs.objects_only || mine.keys_only != theirs.keys_only {
+                let bound = |param: &TypeParamDef| match (param.bound, param.objects_only, param.keys_only) {
+                    (Some(bound), ..) => format!("{}: {}", param.name, self.type_name(bound)),
+                    (None, true, _) => format!("{}: object", param.name),
+                    (None, _, true) => format!("{}: key", param.name),
+                    _ => format!("{} (no bound)", param.name),
+                };
+                return Err(format!("its type parameter {} must have the same bound as {other_name}'s {}", bound(mine), bound(theirs)));
+            }
+        }
+        Ok(params)
+    }
+
+    /// Whether `a` and `b` are the same type, where a type parameter of `a`
+    /// in `params` stands for the one it's paired with in `b`.
+    fn same_type(&self, a: ValueType, b: ValueType, params: &[(u32, u32)]) -> bool {
+        match (a, b) {
+            (ValueType::TypeParam(x), ValueType::TypeParam(y)) => x == y || params.contains(&(x, y)),
+            (ValueType::Array(_), ValueType::Array(_)) => {
+                self.same_type(self.element_of(a).expect("array"), self.element_of(b).expect("array"), params)
+            }
+            (ValueType::Map(x), ValueType::Map(y)) => {
+                let (x, y) = (self.map_types[x as usize], self.map_types[y as usize]);
+                self.same_type(x.key_type, y.key_type, params) && self.same_type(x.value_type, y.value_type, params)
+            }
+            (ValueType::Function(x), ValueType::Function(y)) => {
+                let (x, y) = (&self.function_types[x as usize], &self.function_types[y as usize]);
+                x.parameters.len() == y.parameters.len()
+                    && x.parameters.iter().zip(&y.parameters).all(|(p, q)| self.same_type(*p, *q, params))
+                    && self.same_type(x.return_type, y.return_type, params)
+            }
+            (ValueType::Applied(x), ValueType::Applied(y)) => {
+                let (x, y) = (&self.generics.applications[x as usize], &self.generics.applications[y as usize]);
+                x.generic == y.generic && x.arguments.len() == y.arguments.len() && x.arguments.iter().zip(&y.arguments).all(|(p, q)| self.same_type(*p, *q, params))
+            }
+            _ => a == b,
+        }
+    }
+
     fn validate_class_contract(&self, class_id: u32, class: &ClassDef) -> Result<(), String> {
         // A redeclared static property must keep its type: static:: reads it
         // through the declaring class's type.
@@ -12919,7 +13053,8 @@ impl Emitter {
         // Methods redeclared from a superclass or interface must keep the
         // same signature and must not reduce visibility.
         for method in &class.methods {
-            if method.name == "__construct" {
+            // Copies of generic methods are checked through their methods.
+            if method.name == "__construct" || is_generic_copy(&method.name) {
                 continue;
             }
             // A class's own interfaces are checked below with a more specific
@@ -12931,20 +13066,25 @@ impl Emitter {
                 .chain(supertypes.iter())
                 .find_map(|&super_id| self.find_method(super_id, &method.name).ok());
             if let Some((parent_parameters, parent_return, parent_visibility, owner, _)) = inherited {
-                let generic = |candidate: &Function| !candidate.type_params.is_empty() || candidate.name.contains('.');
-                let inherited_generic = self.classes[owner as usize].methods.iter().any(|candidate| candidate.name == method.name && generic(candidate));
-                if generic(method) || inherited_generic {
-                    return Err(at(method.line, method.column, format!(
-                        "method '{}::{}' overrides a method, and generic methods can't be overridden yet",
-                        class.name, method.name
-                    )));
-                }
+                // A generic method overrides one with as many type
+                // parameters, with the same bounds, and the same signature
+                // once its parameters are named as the other's.
+                let parent_method = self.classes[owner as usize].methods.iter().find(|candidate| candidate.name == method.name).cloned().expect("find_method found it");
+                let params = match self.type_params_correspond(method, &parent_method, &format!("{}::{}", self.classes[owner as usize].name, method.name)) {
+                    Ok(params) => params,
+                    Err(problem) => {
+                        return Err(at(method.line, method.column, format!(
+                            "method '{}::{}' does not match the inherited signature: {problem}",
+                            class.name, method.name
+                        )));
+                    }
+                };
                 let same_types = method.parameters.len() == parent_parameters.len()
                     && method
                         .parameters
                         .iter()
                         .zip(&parent_parameters)
-                        .all(|(left, right)| left.value_type == right.value_type);
+                        .all(|(left, right)| self.same_type(left.value_type, right.value_type, &params));
                 // `: static` matches only `: static` (they name different classes).
                 let inherited_returns_static = class
                     .parent_class
@@ -12960,7 +13100,7 @@ impl Emitter {
                 let same_return = if method.returns_static || inherited_returns_static {
                     method.returns_static == inherited_returns_static
                 } else {
-                    method.return_type == parent_return
+                    self.same_type(method.return_type, parent_return, &params)
                 };
                 if !same_types || !same_return {
                     return Err(at(method.line, method.column, format!(
@@ -12983,7 +13123,7 @@ impl Emitter {
         }
 
         if !class.is_abstract {
-            if let Some(method) = class.methods.iter().find(|method| method.is_abstract) {
+            if let Some(method) = class.methods.iter().find(|method| method.is_abstract && !is_generic_copy(&method.name)) {
                 return Err(at(method.line, method.column, format!(
                     "class '{}' must be abstract because method '{}' is abstract",
                     class.name, method.name
@@ -12992,7 +13132,7 @@ impl Emitter {
             let mut ancestor = class.parent_class;
             while let Some(current_id) = ancestor {
                 let current = &self.classes[current_id as usize];
-                for method in current.methods.iter().filter(|method| method.is_abstract) {
+                for method in current.methods.iter().filter(|method| method.is_abstract && !is_generic_copy(&method.name)) {
                     if self.find_class_method(class_id, &method.name).is_some_and(|m| m.is_abstract) {
                         return Err(format!(
                             "concrete class '{}' must implement abstract method '{}'",
@@ -13010,7 +13150,7 @@ impl Emitter {
         self.collect_interfaces(class_id, &mut interfaces);
         for interface_id in interfaces {
             let interface = &self.classes[interface_id as usize];
-            for required in &interface.methods {
+            for required in interface.methods.iter().filter(|required| !is_generic_copy(&required.name)) {
                 match self.find_class_method(class_id, &required.name) {
                     Some(method) => {
                         if method.is_static {
@@ -13019,13 +13159,19 @@ impl Emitter {
                                 class.name, required.name, interface.name, required.name
                             ));
                         }
-                        let matches = method.return_type == required.return_type
+                        let params = self.type_params_correspond(method, required, &format!("{}::{}", interface.name, required.name)).map_err(|problem| {
+                            format!(
+                                "method '{}::{}' does not match the signature declared by interface '{}': {problem}",
+                                class.name, required.name, interface.name
+                            )
+                        })?;
+                        let matches = self.same_type(method.return_type, required.return_type, &params)
                             && method.parameters.len() == required.parameters.len()
                             && method
                                 .parameters
                                 .iter()
                                 .zip(&required.parameters)
-                                .all(|(left, right)| left.value_type == right.value_type);
+                                .all(|(left, right)| self.same_type(left.value_type, right.value_type, &params));
                         if !matches {
                             return Err(format!(
                                 "method '{}::{}' does not match the signature declared by interface '{}'",
@@ -13301,7 +13447,11 @@ impl Emitter {
                     let expected = generic_expectation.map(|expected| (template.return_type, expected));
                     let (types, mut scope, rewritten) =
                         self.infer_type_arguments(&template.parameters, &template.type_params, &callee, arguments, expected, explicit, variables, body)?;
-                    let copy = self.generic_method_instance(method_owner, &template, types)?;
+                    let copy = self.generic_method_instance(method_owner, &template, types.clone())?;
+                    let demand = (method_owner, method_name.clone(), types);
+                    if !self.generic_method_demands.contains(&demand) {
+                        self.generic_method_demands.push(demand);
+                    }
                     let receiver = format!("#generic.receiver{}", self.next_generic_argument);
                     self.next_generic_argument += 1;
                     scope.insert(receiver.clone(), Value { slot: None, ..object });
@@ -13338,9 +13488,15 @@ impl Emitter {
                 // or one a subclass overrides, is looked up at run time in a
                 // dispatch table indexed by the class id in the object's header,
                 // so the object's own implementation runs. Others are called directly.
+                // A generic method's copy (`map.g3`) is overridden when the
+                // method itself is: the overriding class's copy may not have
+                // been made yet.
+                let declared_name = method_name.split_once(".g").map_or(method_name.as_str(), |(name, _)| name);
                 let dynamic = is_abstract
                     || (visibility != Visibility::Private
-                        && (self.is_overridden(method_owner, method_name) || self.may_gain_subclasses(method_owner)));
+                        && (self.is_overridden(method_owner, method_name)
+                            || self.is_overridden(method_owner, declared_name)
+                            || self.may_gain_subclasses(method_owner)));
                 // A dispatched call that omits optional arguments goes through
                 // adapters, so the running class's defaults apply.
                 let mut supplied: Vec<usize> = resolved.iter().map(|(index, _)| *index).collect();
@@ -18599,10 +18755,8 @@ mod tests {
             ("final class F<T> {} class G extends F<int> {}", "cannot extend final class 'F'"),
             ("abstract class A<T> {} A<int> a = new A<int>();", "cannot instantiate abstract class 'A<int>'"),
             ("enum E<T> { case A; }", "an enum can't be generic"),
-            ("interface I { function m<U>(U x): void; }", "abstract and interface methods can't have their own type parameters yet"),
             ("class A { function __construct<U>(U x) {} }", "a constructor can't have its own type parameters"),
             ("class A { function m<U>(U x): int { return x + 1; } }", "function 'm<U>': '+' requires two ints or two doubles"),
-            ("class A { function m<U>(U x): U { return x; } } class B extends A { function m<U>(U x): U { return x; } }", "method 'B::m' overrides a method, and generic methods can't be overridden yet"),
             // Generic interfaces: implementations must match with the arguments filled in.
             ("interface Repo<T> { function find(): T; } class R implements Repo<string> { function find(): int { return 1; } }", "method 'R::find' does not match the signature declared by interface 'Repo<string>'"),
             ("interface Cmp<T> { function compareTo(T other): int; } function top<T: Cmp<T>>(T[] items): T { return items[0]; } print(top([new Plain()]));", "top's type parameter T must be a Cmp<Plain>, but Plain isn't one"),
@@ -18646,6 +18800,36 @@ mod tests {
         ];
         for (code, message) in cases {
             let error = compile_source(&format!("{declared}{code}")).err().unwrap_or_else(|| panic!("{code}: compiled"));
+            assert!(error.contains(message), "{code}: expected '{message}', got '{error}'");
+        }
+    }
+
+    #[test]
+    fn generic_methods_in_interfaces_and_overrides() {
+        // An interface's generic method, implemented twice, and a generic
+        // method overridden: calls are dispatched to each class's copy.
+        let source = "interface I { function m<U>(U x): U[]; } class A implements I { function m<U>(U x): U[] { return [x]; } } class B implements I { function m<V>(V y): V[] { return [y, y]; } } class P { function w<T>(T x): T { return x; } } class Q extends P { function w<T>(T x): T { return x; } } function f(I i): int { return len(i->m(1)); } P p = new Q(); print(f(new A()), f(new B()), p->w(\"s\"));";
+        let ir = compile_source(source).unwrap_or_else(|error| panic!("{error}"));
+        let f = &ir[ir.find("define i64 @f(").unwrap()..];
+        assert!(f[..f.find("\n}").unwrap()].contains("@qiq_dispatch_I_m.g"), "{f}");
+        // Each class's copy for int has the same name, so the table lists both.
+        let table = ir.lines().find(|line| line.starts_with("@qiq_dispatch_I_m.g")).unwrap();
+        assert!(table.contains("@qiq_A_m.g") && table.contains("@qiq_B_m.g"), "{table}");
+        // `map` can name a method.
+        assert!(compile_source("class L { function map(int x): int { return x; } } L l = new L(); print(l->map(1)); map[string, int] m = {};").is_ok());
+        let cases = [
+            ("interface I { function m<U>(U x): U; } class A implements I { function m(int x): int { return x; } }", "method 'A::m' does not match the signature declared by interface 'I': it has no type parameters, and I::m has 1 type parameter"),
+            ("interface I { function m<U>(U x): U; } class A implements I { function m<U, V>(U x): U { return x; } }", "it has 2 type parameters, and I::m has 1 type parameter"),
+            ("interface I { function m<U>(U x): U; } class A implements I { function m<U>(U x): int { return 1; } }", "method 'A::m' does not match the signature declared by interface 'I'"),
+            ("interface I { function m<U>(U x): U; } class A implements I {}", "class 'A' must implement method 'm' from interface 'I'"),
+            ("interface S {} interface I { function m<U: S>(U x): U; } class A implements I { function m<U>(U x): U { return x; } }", "its type parameter U (no bound) must have the same bound as I::m's U: S"),
+            ("class A { function m<U>(U x): U { return x; } } class B extends A { function m<V>(V x): V[] { return [x]; } }", "method 'B::m' does not match the inherited signature"),
+            ("class A { function m<U>(U x): U { return x; } } class B extends A { function m(int x): int { return x; } }", "it has no type parameters, and A::m has 1 type parameter"),
+            ("class A { function m<U: key>(U x): U { return x; } } class B extends A { function m<U: object>(U x): U { return x; } }", "its type parameter U: object must have the same bound as A::m's U: key"),
+            ("function map(int x): int { return x; }", "expected function name"),
+        ];
+        for (code, message) in cases {
+            let error = compile_source(code).err().unwrap_or_else(|| panic!("{code}: compiled"));
             assert!(error.contains(message), "{code}: expected '{message}', got '{error}'");
         }
     }

@@ -143,6 +143,49 @@ print(label->value, label);
 #42 Box<string>
 ```
 
+<h3 id="overriding-generic-methods">In interfaces, and overriding</h3>
+<p>An interface or abstract class can declare a generic method, and a class can override a generic method it inherits. The overriding method has as many type parameters, with the same bounds, and the same signature once its type parameters are named as the original's (the names themselves can differ). A call through the interface or base class runs the object's own version, as for any method. This is what typed collection interfaces need:</p>
+
+```qiq
+interface Collection<T> {
+    function map<U>(function(T): U change): Collection<U>;
+    function toArray(): T[];
+}
+
+class ArrayList<T> implements Collection<T> {
+    function __construct(private T[] items) {}
+
+    function map<U>(function(T): U change): Collection<U> {
+        U[] result = [];
+        foreach (this->items as item) {
+            array_push(result, change(item));
+        }
+        return new ArrayList<U>(result);
+    }
+
+    function toArray(): T[] {
+        return this->items;
+    }
+}
+
+class ReversedList<T> extends ArrayList<T> {
+    function toArray(): T[] {
+        return array_reverse(parent::toArray());
+    }
+}
+
+function labels(Collection<int> numbers): string[] {
+    return numbers->map(fn(n) => f"#{n}")->toArray();
+}
+
+print(labels(new ArrayList<int>([1, 2, 3])), labels(new ReversedList<int>([4, 5])));
+```
+```output
+["#1", "#2", "#3"] ["#4", "#5"]
+```
+
+<p>A method that should override a generic one but doesn't match says what differs, as in <code>method 'A::m' does not match the signature declared by interface 'I': it has no type parameters, and I::m has 1 type parameter</code>. <code>map</code> can name a method, as above, even though it's also the keyword that starts map types.</p>
+
 <h2>Inheritance</h2>
 <p>Generic classes take part in inheritance like any other: one can be abstract, extend a class, generic or not (<code>class Stack&lt;T&gt; extends Collection&lt;T&gt;</code>), and be extended, by another generic class or by an ordinary class for particular types (<code>class History extends Stack&lt;string&gt;</code>). <code>parent::</code> calls the parent's methods, and static members belong to each class made from the generic one: <code>Collection&lt;string&gt;</code> and <code>Collection&lt;int&gt;</code> each have their own.</p>
 
@@ -313,7 +356,7 @@ print(groupBy([1, 2, 3, 4], fn(n) => n % 2 == 0));
 <h2>Rules</h2>
 <ul>
 <li>A generic class's static property can be read with its type arguments (<code>Box&lt;int&gt;::count</code>), but only assigned inside the class, with <code>self::</code>.</li>
-<li>Interface and abstract methods can't have type parameters of their own yet, and generic methods can't be overridden. A constructor's type parameters are its class's.</li>
+<li>A constructor's type parameters are its class's.</li>
 <li><code>?T</code> isn't allowed, since <code>T</code> may already be a type that can be null. <code>instanceof</code> can't test for a generic class.</li>
 <li>A generic function can't be used as a function value.</li>
 <li>Type arguments are exact: a <code>Stack&lt;Dog&gt;</code> isn't a <code>Stack&lt;Animal&gt;</code>, even when a <code>Dog</code> is an <code>Animal</code>.</li>
