@@ -1688,7 +1688,11 @@ ARRAYS = {
         "<code>range</code> builds arrays of numbers or characters; the other functions grow and shrink <a href=\"arrays.html\">arrays</a> in place, like Python's list methods. They're "
         "built into the compiler, because they work with any element type. Indexes always run from 0 to "
         "<code>len(array) - 1</code>: removing an element moves the later ones down. Every variable that refers to the "
-        "array sees the change."
+        "array sees the change. <code>array_map</code>, <code>array_filter</code>, <code>array_reduce</code>, "
+        "<code>array_find_index</code>, <code>array_any</code> and <code>array_all</code> are "
+        "<a href=\"generics.html\">generic functions</a> written in qiq instead, so a call can name its arguments or "
+        "<a href=\"generics.html#giving-type-arguments\">give its type arguments</a>, as in "
+        "<code>array_map&lt;int, string&gt;(numbers, fn(n) =&gt; f\"#{n}\")</code>."
     ),
     "functions": [
         {
@@ -1956,7 +1960,9 @@ ARRAYS = {
             "return_description": "The new elements.",
             "errors": ["Whatever <code>callback</code> throws. A callback that returns nothing is a compile error."],
             "examples": [{"title": "Changing the type", "code": 'string[] labels = array_map([1, 2, 3], fn(n) => f"#{n}");\nint[] squares = array_map([1, 2, 3], fn(n) => n * n);\nprint(labels, squares);',
-                          "output": '["#1", "#2", "#3"] [1, 4, 9]'}],
+                          "output": '["#1", "#2", "#3"] [1, 4, 9]'},
+                         {"title": "Giving the types", "code": 'print(len(array_map<int, string>([], fn(n) => to_string(n))));',
+                          "output": "0"}],
             "see_also": ["array_filter", "array_reduce", "map_map"],
         },
         {

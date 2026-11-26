@@ -1,0 +1,74 @@
+// Array functions that take a callback. They're ordinary generic functions:
+// T and U come from the arguments, or from the type the result is used as,
+// so an anonymous function's parameters can leave out their types:
+//
+//   string[] labels = array_map([1, 2, 3], fn(n) => f"#{n}");
+//
+// The callback runs inside a foreach over the array, so one that changes
+// the array behaves as it would in a loop written by hand. Every function
+// here is available in every file without an import, and cannot be
+// redeclared. (array_find, usort, map_filter, and map_map are built into
+// the compiler.)
+
+// A new array of what `callback` returns for each element, in order.
+function array_map<T, U>(T[] array, function(T): U callback): U[] {
+    U[] result = [];
+    foreach (array as element) {
+        array_push(result, callback(element));
+    }
+    return result;
+}
+
+// A new array of the elements for which `callback` returns true, in order.
+function array_filter<T>(T[] array, function(T): bool callback): T[] {
+    T[] result = [];
+    foreach (array as element) {
+        if (callback(element)) {
+            array_push(result, element);
+        }
+    }
+    return result;
+}
+
+// `callback` called with `initial` and the first element, then with its
+// result and the second element, and so on: the last result, or `initial`
+// for an empty array.
+function array_reduce<T, U>(T[] array, function(U, T): U callback, U initial): U {
+    U result = initial;
+    foreach (array as element) {
+        result = callback(result, element);
+    }
+    return result;
+}
+
+// The index of the first element for which `callback` returns true, or -1.
+function array_find_index<T>(T[] array, function(T): bool callback): int {
+    foreach (array as index => element) {
+        if (callback(element)) {
+            return index;
+        }
+    }
+    return -1;
+}
+
+// Whether `callback` returns true for at least one element, stopping at the
+// first; false for an empty array.
+function array_any<T>(T[] array, function(T): bool callback): bool {
+    foreach (array as element) {
+        if (callback(element)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Whether `callback` returns true for every element, stopping at the first
+// that fails; true for an empty array.
+function array_all<T>(T[] array, function(T): bool callback): bool {
+    foreach (array as element) {
+        if (!callback(element)) {
+            return false;
+        }
+    }
+    return true;
+}

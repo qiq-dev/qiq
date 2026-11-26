@@ -289,6 +289,6 @@ print(largest([new Money(5), new Money(12), new Money(7)])->cents);
 <li>A generic class's static property can be read with its type arguments (<code>Box&lt;int&gt;::count</code>), but only assigned inside the class, with <code>self::</code>.</li>
 <li>Interface and abstract methods can't have type parameters of their own yet, and generic methods can't be overridden. A constructor's type parameters are its class's.</li>
 <li><code>?T</code> isn't allowed, since <code>T</code> may already be a type that can be null. <code>instanceof</code> can't test for a generic class.</li>
-<li>A generic function can't be used as a function value. The standard library's callback functions (<code>array_map</code>, <code>array_filter</code> and the like) aren't generic functions, so they can't be given type arguments.</li>
+<li>A generic function can't be used as a function value. A type parameter can't be a map's key type (<code>map[K, V]</code>), which is why <code>map_map</code> and <code>map_filter</code> are built into the compiler rather than generic functions like <code>array_map</code>.</li>
 <li>Type arguments are exact: a <code>Stack&lt;Dog&gt;</code> isn't a <code>Stack&lt;Animal&gt;</code>, even when a <code>Dog</code> is an <code>Animal</code>.</li>
 </ul>
