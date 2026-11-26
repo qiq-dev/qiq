@@ -1,0 +1,3 @@
+qiq: tests/stdlib/async_deadlock.qiq:7: uncaught RuntimeException: deadlock: every task is waiting (for a task, a channel, or the end of the program), so none can go on
+    at anonymous function (tests/stdlib/async_deadlock.qiq:7)
+    at main (tests/stdlib/async_deadlock.qiq:8)

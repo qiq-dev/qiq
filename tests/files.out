@@ -15,6 +15,7 @@ ada is 36
 lin is 29
 LICENSE
 arrays.qiq
+async.qiq
 collections.qiq
 crypto.qiq
 csv.qiq

@@ -1,0 +1,1 @@
+qiq: tests/stdlib/async_unawaited.qiq:6: uncaught RuntimeException: nobody awaited me

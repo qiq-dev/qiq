@@ -805,7 +805,16 @@ QIQ_GUARDED(int64_t, qiq_stdlib___datetime_parse, 0, (const char *text, const ch
 // ---------------------------------------------------------------------------
 // Sleeping
 
+// From fiber.c: with other fibers (std/async's tasks), sleeping lets them
+// run instead of stopping the whole program.
+int qiq_fibers_active(void);
+void qiq_fiber_sleep(uint64_t nanoseconds);
+
 static void qiq_sleep_for(struct timespec duration) {
+    if (qiq_fibers_active()) {
+        qiq_fiber_sleep((uint64_t)duration.tv_sec * 1000000000u + (uint64_t)duration.tv_nsec);
+        return;
+    }
     while (nanosleep(&duration, &duration) != 0 && errno == EINTR) {
     }
 }

@@ -1,0 +1,80 @@
+// std/async: tasks (spawn and launch), await and join, channels, and the
+// program waiting for its tasks at the end.
+import spawn, launch, yield_now, Task, Job, Channel, ChannelClosedException from "std/async";
+import usleep from "std/time";
+
+
+function slowSquare(int n, int ms): int {
+    usleep(ms * 1000);
+    print("squared", n);
+    return n * n;
+}
+
+Task<int> a = spawn(fn() => slowSquare(3, 30));
+Task<int> b = spawn(fn() => slowSquare(4, 10));
+print("started");
+print(a->await() + b->await());
+
+Channel<string> jobs = new Channel<string>(2);
+Job worker = launch(function(): void {
+    foreach (jobs as job) {
+        print("working on", job);
+    }
+    print("worker done");
+});
+jobs->send("a");
+jobs->send("b");
+jobs->send("c");
+jobs->close();
+worker->join();
+
+Task<int> failing = spawn(function(): int { throw new RuntimeException("boom"); });
+try {
+    failing->await();
+} catch (RuntimeException e) {
+    print("caught", e->getMessage());
+}
+
+// Main ends first: the program waits for the task.
+launch(function(): void { usleep(20000); print("late task done"); });
+// Unbuffered ping-pong.
+Channel<int> ping = new Channel<int>();
+Channel<int> pong = new Channel<int>();
+launch(function(): void {
+    foreach (ping as n) { pong->send(n * 10); }
+    pong->close();
+});
+launch(function(): void { ping->send(1); ping->send(2); ping->close(); });
+foreach (pong as v) { print("pong", v); }
+// finally across a switch, and nested tasks.
+Task<string> outer = spawn(function(): string {
+    try {
+        Task<int> inner = spawn(fn() => 41 + 1);
+        usleep(1000);
+        return "inner " + to_string(inner->await());
+    } finally {
+        print("finally ran");
+    }
+});
+print(outer->await());
+
+// A closed channel: sending throws, receiving throws once it's empty.
+Channel<int> done = new Channel<int>(1);
+done->send(7);
+done->close();
+print(done->receive(), done->isClosed());
+try {
+    done->send(8);
+} catch (ChannelClosedException e) {
+    print(e->getMessage());
+}
+try {
+    done->receive();
+} catch (ChannelClosedException e) {
+    print(e->getMessage());
+}
+// yield_now lets other ready tasks run.
+Job counter = launch(function(): void { print("counter ran"); });
+yield_now();
+print("after yield", counter->isDone());
+print("main done");

@@ -1824,10 +1824,14 @@ impl Parser {
         self.advance();
         let start = self.cursor;
         let mut function = self.parse_function_member(None, Visibility::Public, true)?;
+        // A parameter can also be a function value or an object, passed as a
+        // pointer to it (the runtime takes a reference if it keeps it, and
+        // calls a function value as compiled code does: see fiber.c).
         let unsupported = function
             .parameters
             .iter()
             .map(|parameter| parameter.value_type)
+            .filter(|value_type| !matches!(value_type, ValueType::Function(_) | ValueType::Class(_)))
             .chain(std::iter::once(function.return_type))
             .find(|value_type| *value_type != ValueType::Void && !self.only_scalars(*value_type));
         if let Some(value_type) = unsupported {
@@ -5283,17 +5287,23 @@ impl Emitter {
             ir.push_str(&self.emit_dispatch_table(*owner, method_name, Some(supplied)));
         }
         ir.push_str(
-            "\ndeclare i32 @printf(ptr, ...)\ndeclare i32 @strcmp(ptr, ptr)\ndeclare ptr @calloc(i64, i64)\ndeclare ptr @qiq_map_new(i32, i32)\ndeclare void @qiq_retain(ptr)\ndeclare void @qiq_release(ptr)\ndeclare ptr @qiq_object_new(i64, i64)\ndeclare void @qiq_map_set(ptr, i64, i64)\ndeclare i64 @qiq_map_get(ptr, i64)\ndeclare i64 @qiq_map_iteration_end(ptr)\ndeclare i64 @qiq_map_version(ptr)\ndeclare zeroext i1 @qiq_map_entry_live(ptr, i64, i64)\ndeclare zeroext i1 @qiq_map_find(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_map_has(ptr, i64)\ndeclare void @qiq_map_remove(ptr, i64)\ndeclare ptr @qiq_map_keys(ptr, i64, i32)\ndeclare ptr @qiq_map_values(ptr, i64, i32)\ndeclare zeroext i1 @qiq_map_contains_value(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_values_equal(ptr, ptr, ptr)\ndeclare zeroext i1 @qiq_nullable_equals(ptr, ptr, i64)\ndeclare i64 @qiq_map_key_at(ptr, i64)\ndeclare i64 @qiq_map_value_at(ptr, i64)\ndeclare ptr @qiq_map_merge(ptr, ptr)\ndeclare ptr @qiq_array_sort(ptr, i64, i32, i32, i1 zeroext)\ndeclare ptr @qiq_array_usort(ptr, i64, i32, ptr, ptr)\ndeclare i64 @qiq_array_index_of(ptr, i64, ptr, i64)\ndeclare ptr @qiq_array_slice(ptr, i64, i32, i64, i64, i1 zeroext)\ndeclare ptr @qiq_array_reverse(ptr, i64, i32)\ndeclare ptr @qiq_array_unique(ptr, i64, i32, ptr)\ndeclare i64 @qiq_array_sum_int(ptr)\ndeclare double @qiq_array_sum_double(ptr)\ndeclare i64 @qiq_array_sum_nullable_int(ptr)\ndeclare double @qiq_array_sum_nullable_double(ptr)\ndeclare ptr @qiq_map_filter_keys(ptr, ptr, i1 zeroext)\ndeclare ptr @qiq_map_filter_entries(ptr, ptr, ptr, i1 zeroext)\ndeclare ptr @qiq_map_flip(ptr, i32, i32)\ndeclare i64 @qiq_string_len(ptr)\ndeclare ptr @qiq_sprintf(ptr, ptr, ptr, i64)\ndeclare void @qiq_bind_values(ptr, ptr, i64)\ndeclare ptr @qiq_json_encode(ptr, i64, i1 zeroext)\ndeclare i64 @qiq_json_decode(ptr, ptr)\ndeclare i64 @qiq_csv_decode(ptr, ptr, ptr)\ndeclare ptr @qiq_csv_encode(ptr, ptr, ptr, ptr)\ndeclare i32 @qiq_string_equality(ptr, ptr)\ndeclare i32 @qiq_string_compare(ptr, ptr)\ndeclare ptr @qiq_string_char_at(ptr, i64)\ndeclare ptr @qiq_string_concat(ptr, ptr)\ndeclare i64 @qiq_int_divide(i64, i64)\ndeclare i64 @qiq_int_modulo(i64, i64)\ndeclare i64 @qiq_int_power(i64, i64)\ndeclare i64 @qiq_int_power_unchecked(i64, i64)\ndeclare i64 @qiq_int_shift_left(i64, i64)\ndeclare i64 @qiq_int_shift_right(i64, i64)\ndeclare double @llvm.pow.f64(double, double)\ndeclare double @llvm.fabs.f64(double)\ndeclare i64 @qiq_math_min_int(ptr)\ndeclare i64 @qiq_math_max_int(ptr)\ndeclare double @qiq_math_min_double(ptr)\ndeclare double @qiq_math_max_double(ptr)\ndeclare i64 @qiq_math_clamp_int(i64, i64, i64)\ndeclare double @qiq_math_clamp_double(double, double, double)\ndeclare void @qiq_uncaught(ptr, ptr, ptr, i64, ptr)\ndeclare ptr @qiq_array_new(i64, i64, i32)\ndeclare void @qiq_set_arguments(i32, ptr)\ndeclare void @qiq_check_callable(ptr)\ndeclare void @qiq_array_push(ptr, i64, i64)\ndeclare i64 @qiq_range_plan(i64, i64, i64, i1 zeroext, ptr)\ndeclare ptr @qiq_range_int(i64, i64, i64, i1 zeroext)\ndeclare ptr @qiq_range_count(i64)\ndeclare ptr @qiq_range_double(double, double, double, i1 zeroext)\ndeclare ptr @qiq_range_char(ptr, ptr, i64, i1 zeroext)\ndeclare i64 @qiq_array_pop(ptr, i64)\ndeclare i64 @qiq_array_shift(ptr, i64)\ndeclare void @qiq_array_insert(ptr, i64, i64, i64)\ndeclare ptr @qiq_array_splice(ptr, i64, i64, i64, i1 zeroext, ptr)\ndeclare ptr @qiq_array_with_tail(i64, ptr, i64, i32)\ndeclare i64 @qiq_array_length(ptr)\ndeclare i64 @qiq_len_string(ptr)\ndeclare i64 @qiq_len_array(ptr)\ndeclare i64 @qiq_len_map(ptr)\ndeclare void @qiq_array_check_index(ptr, i64)\ndeclare void @qiq_print_value(ptr, i64)\ndeclare ptr @qiq_describe_value(ptr, i64)\ndeclare void @qiq_print_space()\ndeclare void @qiq_print_newline()\ndeclare i64 @qiq_double_to_int(double)\ndeclare zeroext i8 @qiq_int_to_byte(i64)\ndeclare i64 @qiq_string_to_int(ptr)\ndeclare double @qiq_string_to_double(ptr)\ndeclare ptr @qiq_int_to_string(i64)\ndeclare ptr @qiq_double_to_string(double)\n",
+            "\ndeclare i32 @printf(ptr, ...)\ndeclare i32 @strcmp(ptr, ptr)\ndeclare ptr @calloc(i64, i64)\ndeclare ptr @qiq_map_new(i32, i32)\ndeclare void @qiq_retain(ptr)\ndeclare void @qiq_release(ptr)\ndeclare ptr @qiq_object_new(i64, i64)\ndeclare void @qiq_map_set(ptr, i64, i64)\ndeclare i64 @qiq_map_get(ptr, i64)\ndeclare i64 @qiq_map_iteration_end(ptr)\ndeclare i64 @qiq_map_version(ptr)\ndeclare zeroext i1 @qiq_map_entry_live(ptr, i64, i64)\ndeclare zeroext i1 @qiq_map_find(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_map_has(ptr, i64)\ndeclare void @qiq_map_remove(ptr, i64)\ndeclare ptr @qiq_map_keys(ptr, i64, i32)\ndeclare ptr @qiq_map_values(ptr, i64, i32)\ndeclare zeroext i1 @qiq_map_contains_value(ptr, i64, ptr)\ndeclare zeroext i1 @qiq_values_equal(ptr, ptr, ptr)\ndeclare zeroext i1 @qiq_nullable_equals(ptr, ptr, i64)\ndeclare i64 @qiq_map_key_at(ptr, i64)\ndeclare i64 @qiq_map_value_at(ptr, i64)\ndeclare ptr @qiq_map_merge(ptr, ptr)\ndeclare ptr @qiq_array_sort(ptr, i64, i32, i32, i1 zeroext)\ndeclare ptr @qiq_array_usort(ptr, i64, i32, ptr, ptr)\ndeclare i64 @qiq_array_index_of(ptr, i64, ptr, i64)\ndeclare ptr @qiq_array_slice(ptr, i64, i32, i64, i64, i1 zeroext)\ndeclare ptr @qiq_array_reverse(ptr, i64, i32)\ndeclare ptr @qiq_array_unique(ptr, i64, i32, ptr)\ndeclare i64 @qiq_array_sum_int(ptr)\ndeclare double @qiq_array_sum_double(ptr)\ndeclare i64 @qiq_array_sum_nullable_int(ptr)\ndeclare double @qiq_array_sum_nullable_double(ptr)\ndeclare ptr @qiq_map_filter_keys(ptr, ptr, i1 zeroext)\ndeclare ptr @qiq_map_filter_entries(ptr, ptr, ptr, i1 zeroext)\ndeclare ptr @qiq_map_flip(ptr, i32, i32)\ndeclare i64 @qiq_string_len(ptr)\ndeclare ptr @qiq_sprintf(ptr, ptr, ptr, i64)\ndeclare void @qiq_bind_values(ptr, ptr, i64)\ndeclare ptr @qiq_json_encode(ptr, i64, i1 zeroext)\ndeclare i64 @qiq_json_decode(ptr, ptr)\ndeclare i64 @qiq_csv_decode(ptr, ptr, ptr)\ndeclare ptr @qiq_csv_encode(ptr, ptr, ptr, ptr)\ndeclare i32 @qiq_string_equality(ptr, ptr)\ndeclare i32 @qiq_string_compare(ptr, ptr)\ndeclare ptr @qiq_string_char_at(ptr, i64)\ndeclare ptr @qiq_string_concat(ptr, ptr)\ndeclare i64 @qiq_int_divide(i64, i64)\ndeclare i64 @qiq_int_modulo(i64, i64)\ndeclare i64 @qiq_int_power(i64, i64)\ndeclare i64 @qiq_int_power_unchecked(i64, i64)\ndeclare i64 @qiq_int_shift_left(i64, i64)\ndeclare i64 @qiq_int_shift_right(i64, i64)\ndeclare double @llvm.pow.f64(double, double)\ndeclare double @llvm.fabs.f64(double)\ndeclare i64 @qiq_math_min_int(ptr)\ndeclare i64 @qiq_math_max_int(ptr)\ndeclare double @qiq_math_min_double(ptr)\ndeclare double @qiq_math_max_double(ptr)\ndeclare i64 @qiq_math_clamp_int(i64, i64, i64)\ndeclare double @qiq_math_clamp_double(double, double, double)\ndeclare void @qiq_uncaught(ptr, ptr, ptr, i64, ptr)\ndeclare void @qiq_fibers_finish()\ndeclare ptr @qiq_array_new(i64, i64, i32)\ndeclare void @qiq_set_arguments(i32, ptr)\ndeclare void @qiq_check_callable(ptr)\ndeclare void @qiq_array_push(ptr, i64, i64)\ndeclare i64 @qiq_range_plan(i64, i64, i64, i1 zeroext, ptr)\ndeclare ptr @qiq_range_int(i64, i64, i64, i1 zeroext)\ndeclare ptr @qiq_range_count(i64)\ndeclare ptr @qiq_range_double(double, double, double, i1 zeroext)\ndeclare ptr @qiq_range_char(ptr, ptr, i64, i1 zeroext)\ndeclare i64 @qiq_array_pop(ptr, i64)\ndeclare i64 @qiq_array_shift(ptr, i64)\ndeclare void @qiq_array_insert(ptr, i64, i64, i64)\ndeclare ptr @qiq_array_splice(ptr, i64, i64, i64, i1 zeroext, ptr)\ndeclare ptr @qiq_array_with_tail(i64, ptr, i64, i32)\ndeclare i64 @qiq_array_length(ptr)\ndeclare i64 @qiq_len_string(ptr)\ndeclare i64 @qiq_len_array(ptr)\ndeclare i64 @qiq_len_map(ptr)\ndeclare void @qiq_array_check_index(ptr, i64)\ndeclare void @qiq_print_value(ptr, i64)\ndeclare ptr @qiq_describe_value(ptr, i64)\ndeclare void @qiq_print_space()\ndeclare void @qiq_print_newline()\ndeclare i64 @qiq_double_to_int(double)\ndeclare zeroext i8 @qiq_int_to_byte(i64)\ndeclare i64 @qiq_string_to_int(ptr)\ndeclare double @qiq_string_to_double(ptr)\ndeclare ptr @qiq_int_to_string(i64)\ndeclare ptr @qiq_double_to_string(double)\n",
         );
         ir.push_str(&extern_declarations);
         ir.push('\n');
         ir.push_str(&functions_ir);
         ir.push_str(&raise_function);
         // The command line goes to the runtime first, for argv().
-        ir.push_str("define i32 @main(i32 %argc, ptr %argv) {\nentry:\n  call void @qiq_set_arguments(i32 %argc, ptr %argv)\n");
+        ir.push_str("define i32 @main(i32 %argc, ptr %argv) {\nentry:\n  call void @qiq_set_arguments(i32 %argc, ptr %argv)\n  call void @qiq_statics_init()\n");
         ir.push_str(&main_allocas);
         ir.push_str(&main_body);
         if !main_terminated {
+            // Every task (std/async) ends before the program does, and one that
+            // threw unawaited is reported as uncaught (see fiber.c). Without
+            // tasks, this returns at once.
+            ir.push_str(
+                "  call void @qiq_fibers_finish()\n  %finish.pending = load ptr, ptr @qiq_pending_exception, align 8\n  %finish.thrown = icmp ne ptr %finish.pending, null\n  br i1 %finish.thrown, label %unwind, label %finish.done\nfinish.done:\n",
+            );
             ir.push_str("  ret i32 0\n");
         }
         // An exception reached the top level: report it and exit.
@@ -12528,16 +12538,33 @@ impl Emitter {
         ))
     }
 
-    /// One global per static property, holding its initial value.
+    /// One global per static property, holding its initial value, and
+    /// @qiq_statics_init, which main calls first: it makes the defaults that
+    /// aren't constants (an array, map, or tuple literal, made at run time)
+    /// and stores them in their globals, which start as null.
     fn emit_static_property_globals(&mut self) -> Result<String, String> {
         let mut ir = String::new();
+        let saved_allocas = std::mem::take(&mut self.entry_allocas);
+        let mut init = String::new();
         for class in self.classes.clone() {
             for property in &class.static_properties {
+                let global = format!("@qiq_static.{}.{}", class.symbol, property.name);
                 let initial = match &property.default {
                     Some(default) => {
                         let mut scratch = String::new();
+                        self.open_scope();
                         let value = self.emit_expecting(default, Some(property.value_type), &HashMap::new(), &mut scratch)?;
-                        value.operand
+                        if value.operand.starts_with('%') {
+                            // Made at run time: the global holds its reference.
+                            let operand = self.take(&value, &mut scratch);
+                            self.close_scope(&mut scratch);
+                            init.push_str(&scratch);
+                            init.push_str(&format!("  store {} {operand}, ptr {global}, align 8\n", property.value_type.llvm()));
+                            "null".to_string()
+                        } else {
+                            self.close_scope(&mut scratch);
+                            value.operand
+                        }
                     }
                     None => match property.value_type {
                         ValueType::Int | ValueType::Byte => "0".to_string(),
@@ -12546,14 +12573,11 @@ impl Emitter {
                         _ => "null".to_string(),
                     },
                 };
-                ir.push_str(&format!(
-                    "@qiq_static.{}.{} = internal global {} {initial}, align 8\n",
-                    class.symbol,
-                    property.name,
-                    property.value_type.llvm()
-                ));
+                ir.push_str(&format!("{global} = internal global {} {initial}, align 8\n", property.value_type.llvm()));
             }
         }
+        let allocas = std::mem::replace(&mut self.entry_allocas, saved_allocas);
+        ir.push_str(&format!("define internal void @qiq_statics_init() {{\nentry:\n{allocas}{init}  ret void\n}}\n"));
         Ok(ir)
     }
 
@@ -16264,6 +16288,7 @@ const STDLIB_MODULES: &[(&str, Option<&str>, &str)] = &[
     ("testing.qiq", Some("std/testing"), include_str!("../stdlib/testing.qiq")),
     ("csv.qiq", Some("std/csv"), include_str!("../stdlib/csv.qiq")),
     ("collections.qiq", Some("std/collections"), include_str!("../stdlib/collections.qiq")),
+    ("async.qiq", Some("std/async"), include_str!("../stdlib/async.qiq")),
 ];
 
 /// Standard library modules that have moved, as (old path, new path), so
@@ -17478,7 +17503,7 @@ mod tests {
         // One slot for `total` (the foreach counter is also an i64 slot).
         let slots = main_ir(&ir).lines().filter(|line| line.contains("= alloca i64") && !line.contains("foreach.slot")).count();
         assert_eq!(slots, 1, "slot allocated once:\n{ir}");
-        assert!(ir.contains("define i32 @main(i32 %argc, ptr %argv) {\nentry:\n  call void @qiq_set_arguments(i32 %argc, ptr %argv)\n  %v0 = alloca i64"));
+        assert!(ir.contains("define i32 @main(i32 %argc, ptr %argv) {\nentry:\n  call void @qiq_set_arguments(i32 %argc, ptr %argv)\n  call void @qiq_statics_init()\n  %v0 = alloca i64"));
     }
 
     #[test]
@@ -18572,7 +18597,7 @@ mod tests {
         let or = compile_source("function f(): bool { return true; } bool a = true; if (a || f()) { print(1); }").unwrap();
         assert!(or.contains("br i1 %v1, label %or.end0, label %or.rhs0\nor.rhs0:\n  %v3 = call i1 @f()"), "{or}");
         // The result slot is allocated once, in the entry block.
-        assert!(or.contains("entry:\n  call void @qiq_set_arguments(i32 %argc, ptr %argv)\n  %v0 = alloca i1, align 8\n  %v2 = alloca i1, align 1\n"), "{or}");
+        assert!(or.contains("entry:\n  call void @qiq_set_arguments(i32 %argc, ptr %argv)\n  call void @qiq_statics_init()\n  %v0 = alloca i1, align 8\n  %v2 = alloca i1, align 1\n"), "{or}");
     }
 
     #[test]
@@ -18812,6 +18837,17 @@ mod tests {
             let error = compile_source(&format!("{declared}{code}")).err().unwrap_or_else(|| panic!("{code}: compiled"));
             assert!(error.contains(message), "{code}: expected '{message}', got '{error}'");
         }
+    }
+
+    #[test]
+    fn static_array_and_map_defaults_are_made_at_startup() {
+        // `[]` and `{}` are made at run time, so main makes them first.
+        let ir = compile_source("class B {} class A { public static B[] xs = []; public static map[string, int] m = {}; public static int n = 3; } array_push(A::xs, new B()); print(len(A::xs), A::m, A::n);").unwrap_or_else(|error| panic!("{error}"));
+        assert!(ir.contains("@qiq_static.A.xs = internal global ptr null"), "{ir}");
+        assert!(ir.contains("@qiq_static.A.n = internal global i64 3"), "{ir}");
+        let init = &ir[ir.find("define internal void @qiq_statics_init()").unwrap()..];
+        assert!(init[..init.find("\n}").unwrap()].contains("store ptr"), "{init}");
+        assert!(ir.contains("call void @qiq_statics_init()"));
     }
 
     #[test]

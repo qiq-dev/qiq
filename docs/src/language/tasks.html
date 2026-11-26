@@ -1,0 +1,88 @@
+<!-- title: Tasks and concurrency -->
+<h1>Tasks and concurrency</h1>
+<p>A task is a function running concurrently with the rest of the program. Tasks are lightweight threads, called fibers, on the program's one thread: a task runs until it waits (for another task, a channel, or <code>sleep</code>), and then another runs. Only one runs at a time, so tasks need no locks and can share variables and objects safely; while waiting, they cost a little memory and no time. They come from <code>std/async</code>:</p>
+
+```qiq
+import spawn, Task from "std/async";
+import usleep from "std/time";
+
+function slowSquare(int n, int milliseconds): int {
+    usleep(milliseconds * 1000);
+    print("finished", n);
+    return n * n;
+}
+
+Task<int> a = spawn(fn() => slowSquare(3, 30));
+Task<int> b = spawn(fn() => slowSquare(4, 10));
+print("both started");
+print(a->await() + b->await());
+```
+```output
+both started
+finished 4
+finished 3
+25
+```
+
+<p>The two calls slept at the same time, so the program took about 30 milliseconds rather than 40.</p>
+
+<h2>Starting tasks</h2>
+<ul>
+<li><code>spawn(f)</code> starts <code>f</code>, a function that returns a value, as a task, and returns a <a href="class.task.html">Task&lt;T&gt;</a>. <code>task-&gt;await()</code> waits for it to end and returns its result.</li>
+<li><code>launch(f)</code> starts a function that returns nothing, and returns a <a href="class.task.html">Job</a>, whose <code>join()</code> waits for it.</li>
+<li>A started task first runs when the code that started it waits (for example in <code>await</code>), so starting several and then awaiting them runs them together.</li>
+<li><code>yield_now()</code> lets the other ready tasks run, for a task that computes for a long time without waiting.</li>
+</ul>
+
+<h2>Exceptions</h2>
+<p>An exception a task throws ends the task, and <code>await</code> (or <code>join</code>) throws it in the code waiting for it, so it can be caught there:</p>
+
+```qiq
+import spawn, Task from "std/async";
+
+Task<int> failing = spawn(function(): int {
+    throw new RuntimeException("the service is down");
+});
+try {
+    failing->await();
+} catch (RuntimeException e) {
+    print("caught:", e->getMessage());
+}
+```
+```output
+caught: the service is down
+```
+
+<p>A task that throws when nothing awaits it isn't lost: when the program ends, its exception is reported as an uncaught exception, and the program exits with status 1.</p>
+
+<h2>Channels</h2>
+<p>A <a href="class.channel.html">Channel&lt;T&gt;</a> passes values from tasks that send them to tasks that receive them, in order. <code>new Channel&lt;T&gt;(capacity)</code> holds up to <code>capacity</code> values, so <code>send</code> waits only when it's full; with no capacity, each <code>send</code> waits until a task receives the value. <code>close()</code> says no more are coming, and <code>foreach</code> receives values until the channel is closed and empty:</p>
+
+```qiq
+import launch, Channel, Job from "std/async";
+
+Channel<string> jobs = new Channel<string>(10);
+Job worker = launch(function(): void {
+    foreach (jobs as job) {
+        print("working on", job);
+    }
+});
+jobs->send("resize photo");
+jobs->send("send email");
+jobs->close();
+worker->join();
+```
+```output
+working on resize photo
+working on send email
+```
+
+<h2>The end of the program</h2>
+<p>The program ends when its main code and every task have ended: tasks still running when the main code finishes are waited for. <code>exit()</code> ends the program at once, tasks and all.</p>
+
+<h2>Deadlocks</h2>
+<p>When every task is waiting for something only another task could do, such as receiving from a channel nothing will send on, none can go on. Rather than hang, the program throws a <code>RuntimeException</code> in a waiting task: <code>deadlock: every task is waiting (for a task, a channel, or the end of the program), so none can go on</code>.</p>
+
+<h2>What waits, and what doesn't</h2>
+<p>Tasks let others run while they wait in <code>await</code>, <code>join</code>, a channel's <code>send</code> and <code>receive</code>, and <code>sleep</code> and <code>usleep</code> from <code>std/time</code>. Network and file operations, such as <code>http_get</code>, database queries, and reading files, don't yet: while one runs, every task waits for it. Making them let other tasks run is the next step for <code>std/async</code>.</p>
+<p>Tasks are concurrent, not parallel: they share one processor core. For work that needs several cores, run several processes, as the <a href="ref.http-server.html">HTTP server</a> does.</p>

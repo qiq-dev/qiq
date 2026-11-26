@@ -88,6 +88,7 @@ const SQLITE_OPTIONS: &[&str] = &[
 const MUSL_MEMCPY: &str = "vendor/musl-x86_64-memcpy.c";
 const RUNTIME_SOURCES: &[&str] = &[
     "core.c",
+    "fiber.c",
     "memory.c",
     "map.c",
     "strings.c",

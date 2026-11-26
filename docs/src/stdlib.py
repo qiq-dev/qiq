@@ -32,6 +32,7 @@ OVERVIEW = (
     "<tr><td><code>std/net/http</code></td><td>The <a href=\"ref.http.html\">HTTP client</a> and URL encoding</td></tr>"
     "<tr><td><code>std/net/http/server</code></td><td>The <a href=\"ref.http-server.html\">HTTP server</a></td></tr>"
     "<tr><td><code>std/crypto</code></td><td><a href=\"ref.crypto.html\">Hashing and encoding</a>: MD5, SHA-1, SHA-2, HMAC, hex, base64, and password hashing</td></tr>"
+    "<tr><td><code>std/async</code></td><td><a href=\"tasks.html\">Tasks</a>: <a href=\"ref.async.html\">spawn and launch</a>, the <a href=\"class.task.html\">Task and Job</a> classes, and <a href=\"class.channel.html\">Channel</a></td></tr>"
     "<tr><td><code>std/collections</code></td><td><a href=\"class.collection.html\">Collections</a>: the <a href=\"class.arraylist.html\">ArrayList</a>, <a href=\"class.hashmap.html\">HashMap</a>, <a href=\"class.set.html\">Set</a>, <a href=\"class.deque.html\">Deque</a>, and <a href=\"class.priorityqueue.html\">PriorityQueue</a> classes, alongside the built-in arrays and maps</td></tr>"
     "<tr><td><code>std/csv</code></td><td><a href=\"ref.csv.html\">CSV</a>: reading and writing CSV as rows, by column name, as objects, or a row at a time</td></tr>"
     "<tr><td><code>std/testing</code></td><td>The <a href=\"class.test.html\"><code>Test</code></a> class that <a href=\"testing.html\">tests</a> take, for <code>qiq test</code></td></tr>"
@@ -3459,7 +3460,52 @@ foreach (range(1, 7) as day) {
 writer-&gt;close();</pre>
 """
 
-CATEGORIES = [GENERAL, STRINGS, REGEX, MATH, ARRAYS, MAPS, FILES, CSV, DATES, JSON, HTTP, HTTP_SERVER, CRYPTO, PROGRAM, CONVERSIONS, OUTPUT]
+ASYNC = {
+    "slug": "async",
+    "title": "Tasks",
+    "intro": (
+        "Starting functions as <a href=\"tasks.html\">tasks</a> that run concurrently, from <code>std/async</code>: "
+        "<code>spawn</code> for a function that returns a value, <code>launch</code> for one that returns nothing. "
+        "The <a href=\"class.task.html\">Task and Job</a> classes wait for them, and <a href=\"class.channel.html\">Channel</a> passes values between them."
+    ),
+    "functions": [
+        {
+            "name": "spawn", "purpose": "Start a function as a task",
+            "params": [param("body", "function(): T", "The function to run; what it returns is the task's result.")],
+            "returns": "Task<T>",
+            "description": "Starts <code>body</code> as a task, running concurrently with the code that started it, and returns the <a href=\"class.task.html\">Task</a>. The task first runs when the code that started it waits, as in <code>await</code>. Its <code>await()</code> gives the result, or throws the exception the task threw.",
+            "return_description": "The task.",
+            "errors": ["None itself. An exception the task throws is thrown by <code>await</code>, or, if nothing awaits it, reported as uncaught when the program ends."],
+            "examples": [{"title": "Two at once", "code": 'import usleep from "std/time";\n\nTask<string> a = spawn(function(): string { usleep(20000); return "a"; });\nTask<string> b = spawn(function(): string { usleep(10000); return "b"; });\nprint(a->await() + b->await());',
+                          "output": "ab"}],
+            "see_also": ["launch", "Task"],
+        },
+        {
+            "name": "launch", "purpose": "Start a function that returns nothing as a task",
+            "params": [param("body", "function(): void", "The function to run.")],
+            "returns": "Job",
+            "description": "Starts <code>body</code> as a task, as <a href=\"function.spawn.html\">spawn</a> does, for a function that returns nothing, and returns the <a href=\"class.task.html\">Job</a>, whose <code>join()</code> waits for it.",
+            "return_description": "The job.",
+            "errors": ["None itself. An exception the job throws is thrown by <code>join</code>, or, if nothing joins it, reported as uncaught when the program ends."],
+            "examples": [{"title": "A background task", "code": 'Job job = launch(function(): void { print("in the background"); });\nprint("started");\njob->join();',
+                          "output": "started\nin the background"}],
+            "see_also": ["spawn", "Task"],
+        },
+        {
+            "name": "yield_now", "purpose": "Let the other tasks run",
+            "params": [],
+            "returns": "void",
+            "description": "Lets the other tasks that are ready to run go before this one goes on. Tasks take turns only when they wait, so a task that computes for a long time without waiting can call this now and then to let the others run.",
+            "return_description": "Nothing.",
+            "errors": [],
+            "examples": [{"title": "Taking turns", "code": 'Job other = launch(function(): void { print("other"); });\nprint("first");\nyield_now();\nprint("then");',
+                          "output": "first\nother\nthen"}],
+            "see_also": ["spawn", "launch"],
+        },
+    ],
+}
+
+CATEGORIES = [GENERAL, STRINGS, REGEX, MATH, ARRAYS, MAPS, FILES, CSV, DATES, JSON, HTTP, HTTP_SERVER, CRYPTO, PROGRAM, ASYNC, CONVERSIONS, OUTPUT]
 
 FILE_CLASS = """<h1>The File class</h1>
 <p>A <code>File</code> reads or writes a file a piece at a time: a line, or a chunk of bytes. Use it for files too large to load at once, for files you build up gradually, and for standard input and output. To read or write a whole file in one call, the <a href="ref.files.html">file functions</a> are simpler.</p>
@@ -4796,6 +4842,90 @@ write docs
 ```
 """
 
+
+TASK_CLASS = r"""<h1>The Task and Job classes</h1>
+<p>A function running as a task (see <a href="tasks.html">Tasks and concurrency</a>): <code>spawn(f)</code> returns a <code>Task&lt;T&gt;</code> for a function that returns a <code>T</code>, and <code>launch(f)</code> a <code>Job</code> for one that returns nothing. Import them from <code>std/async</code>.</p>
+<h2>Functions</h2>
+<table>
+<thead><tr><th>Function</th><th>Description</th></tr></thead>
+<tbody>
+<tr><td><code>spawn&lt;T&gt;(function(): T body): Task&lt;T&gt;</code></td><td>Starts <code>body</code> as a task and returns it. The task first runs when the code that started it waits.</td></tr>
+<tr><td><code>launch(function(): void body): Job</code></td><td>The same, for a function that returns nothing.</td></tr>
+<tr><td><code>yield_now(): void</code></td><td>Lets the other ready tasks run before this one goes on.</td></tr>
+</tbody>
+</table>
+<h2>Class synopsis</h2>
+""" + _synopsis("final class Task<T>", [
+    "function await(): T",
+    "function isDone(): bool",
+]) + "\n" + _synopsis("final class Job", [
+    "function join(): void",
+    "function isDone(): bool",
+]) + "\n" + _method_table([
+    ("Task::await()", "Waits for the task to end and returns its result. If the task threw an exception, <code>await</code> throws the same one. A task can be awaited any number of times."),
+    ("Job::join()", "Waits for the job to end, throwing its exception if it threw one."),
+    ("isDone()", "Whether it has ended, by returning or throwing."),
+]) + r"""
+<p>A task that throws when nothing awaits it is reported as an uncaught exception when the program ends. Waiting for a task that can never end (one waiting for the task waiting for it, for example) throws a <code>RuntimeException</code> saying there's a deadlock.</p>
+<h2>Example</h2>
+```qiq
+import spawn, Task from "std/async";
+
+Task<int>[] parts = [];
+foreach ([1, 2, 3] as n) {
+    array_push(parts, spawn(fn() => n * n));
+}
+int total = 0;
+foreach (parts as part) {
+    total += part->await();
+}
+print(total, parts[0]->isDone());
+```
+```output
+14 true
+```
+"""
+
+CHANNEL_CLASS = r"""<h1>The Channel class</h1>
+<p>Passes values from <a href="tasks.html">tasks</a> that send them to tasks that receive them, in order. Import it from <code>std/async</code>. A channel made with a capacity holds up to that many values, so <code>send</code> waits only when it's full; with no capacity, each <code>send</code> waits until a task receives the value. It's <code>Iterable&lt;T&gt;</code>: <code>foreach</code> receives values until the channel is closed and empty.</p>
+<h2>Class synopsis</h2>
+""" + _synopsis("final class Channel<T> implements Iterable<T>", [
+    "function __construct(int capacity = 0)",
+    "function send(T value): void",
+    "function receive(): T",
+    "function close(): void",
+    "function isClosed(): bool",
+    "function size(): int",
+]) + "\n" + _method_table([
+    ("__construct(capacity)", "A channel holding up to <code>capacity</code> values, or none (0)."),
+    ("send(value)", "Sends <code>value</code>, waiting while the channel is full (or, with no capacity, until a task receives it). Sending on a closed channel throws <code>ChannelClosedException</code>."),
+    ("receive()", "The next value, waiting until one is sent. Receiving from a channel that's closed and empty throws <code>ChannelClosedException</code>."),
+    ("close()", "Says no more values will be sent. Receiving goes on giving the values still in it, then the end."),
+    ("isClosed(), size()", "Whether it's closed, and how many values are waiting to be received."),
+]) + r"""
+<p><code>ChannelClosedException</code> is a <code>RuntimeException</code> from <code>std/async</code>.</p>
+<h2>Example</h2>
+```qiq
+import launch, Channel from "std/async";
+
+Channel<int> numbers = new Channel<int>();
+launch(function(): void {
+    foreach ([1, 2, 3] as n) {
+        numbers->send(n * 10);
+    }
+    numbers->close();
+});
+foreach (numbers as n) {
+    print(n);
+}
+```
+```output
+10
+20
+30
+```
+"""
+
 CLASS_PAGES = [
     ("class.file.html", "The File class", "Reading and writing files a line or a chunk at a time, including standard input and output.", FILE_CLASS),
     ("class.response.html", "The Response class", "The result of an HTTP request: status, headers, and body.", RESPONSE_CLASS),
@@ -4820,6 +4950,8 @@ CLASS_PAGES = [
     ("class.set.html", "The Set class", "Values without repeats, with a fast contains, and union, intersection, and difference.", SET_CLASS),
     ("class.deque.html", "The Deque class", "Adding and removing at either end in constant time: a queue or a stack.", DEQUE_CLASS),
     ("class.priorityqueue.html", "The PriorityQueue class", "Taking out the first value by an order of your choosing, such as the smallest.", PRIORITYQUEUE_CLASS),
+    ("class.task.html", "The Task and Job classes", "Functions running as tasks: spawn and launch, and waiting for them with await and join.", TASK_CLASS),
+    ("class.channel.html", "The Channel class", "Passes values between tasks, in order, waiting when there's nothing to receive or no room.", CHANNEL_CLASS),
     ("class.iterator.html", "The Iterator and Iterable interfaces", "What foreach needs to loop over objects, and the standard library classes that implement them.", ITERATOR_INTERFACES),
     ("exception-classes.html", "Exception classes", "The exception classes thrown by the language and the standard library.", EXCEPTION_CLASSES),
 ]

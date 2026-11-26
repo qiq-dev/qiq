@@ -58,6 +58,7 @@ LANGUAGE = [
     ("Language reference", "enums", "Enums"),
     ("Language reference", "generics", "Generics"),
     ("Language reference", "exceptions", "Exceptions"),
+    ("Language reference", "tasks", "Tasks and concurrency"),
     ("Language reference", "modules", "Modules"),
     ("Language reference", "packages", "Packages"),
     ("Language reference", "testing", "Testing"),

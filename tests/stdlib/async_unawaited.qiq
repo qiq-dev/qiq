@@ -1,0 +1,7 @@
+// test: exit 1
+// A task that throws when nothing awaits it is reported as uncaught when the
+// program ends.
+import spawn, Task from "std/async";
+
+Task<int> task = spawn(function(): int { throw new RuntimeException("nobody awaited me"); });
+print("main done");

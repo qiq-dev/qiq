@@ -20,6 +20,7 @@ MODULES = [
     ("testing.qiq", "std/testing"),
     ("csv.qiq", "std/csv"),
     ("collections.qiq", "std/collections"),
+    ("async.qiq", "std/async"),
 ]
 DECL = re.compile(r"^\s*(?:(?:extern|final|abstract)\s+)*(function|class|interface)\s+([A-Za-z_]\w*)")
 

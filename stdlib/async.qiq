@@ -1,0 +1,259 @@
+// Tasks: functions that run concurrently, as lightweight threads (fibers) on
+// the program's one thread. A task runs until it waits (for another task, a
+// channel, sleep, or, later, I/O); then others run. Only one runs at a time,
+// so tasks need no locks.
+//
+//   import spawn, Task from "std/async";
+//
+//   Task<int> a = spawn(fn() => slowSquare(3));
+//   Task<int> b = spawn(fn() => slowSquare(4));
+//   print(a->await() + b->await());   // both ran at once
+//
+// spawn(f) starts a function that returns a value, as a Task<T>; launch(f)
+// starts one that returns nothing, as a Job. await (or join) waits for it to
+// end and rethrows any exception it threw. A Channel<T> passes values from
+// one task to another. The program ends when its main code and every task
+// have ended; a task that threw, when nothing awaited it, is then reported
+// as an uncaught exception.
+
+import Exception, RuntimeException from "exceptions";
+import Iterator, Iterable from "iterators";
+import Deque from "collections";
+
+extern function __fiber_spawn(function(): void body): void;
+extern function __fiber_current(): int;
+extern function __fiber_park(): void;
+extern function __fiber_wake(int fiber): void;
+extern function __fiber_yield(): void;
+extern function __fiber_failed(Exception error): void;
+extern function __fiber_observed(Exception error): void;
+
+// Thrown by sending on a closed channel, and by receiving from one that's
+// closed and empty.
+class ChannelClosedException extends RuntimeException {}
+
+// What tasks and jobs share: whether they've ended, waiting for them to, and
+// the exception they ended with, if any.
+abstract class __Completion {
+    protected bool finished = false;
+    protected Exception error = null;
+    // Whether an await or join has seen the outcome.
+    protected bool observed = false;
+    private int[] waiters = [];
+
+    // Whether it has ended (returned or thrown).
+    function isDone(): bool {
+        return this->finished;
+    }
+
+    // Waits for it to end; rethrows its exception, if it threw one.
+    protected function wait(): void {
+        while (!this->finished) {
+            array_push(this->waiters, __fiber_current());
+            __fiber_park();
+        }
+        if (this->error != null) {
+            // Seen now, so the end of the program needn't report it.
+            if (!this->observed) {
+                __fiber_observed(this->error);
+            }
+            this->observed = true;
+            throw this->error;
+        }
+        this->observed = true;
+    }
+
+    function __fail(Exception error): void {
+        this->error = error;
+        // Reported at the end of the program unless an await sees it.
+        __fiber_failed(error);
+        this->end();
+    }
+
+    protected function end(): void {
+        this->finished = true;
+        int[] waiting = this->waiters;
+        this->waiters = [];
+        foreach (waiting as fiber) {
+            __fiber_wake(fiber);
+        }
+    }
+}
+
+// A function running as a task, which returns a T: spawn's result.
+final class Task<T> extends __Completion {
+    private T result;
+
+    // Waits for the task to end and returns its result. If the task threw,
+    // this throws the same exception.
+    function await(): T {
+        this->wait();
+        return this->result;
+    }
+
+    function __complete(T result): void {
+        this->result = result;
+        this->end();
+    }
+}
+
+// A function running as a task that returns nothing: launch's result.
+final class Job extends __Completion {
+    // Waits for the job to end. If it threw, this throws the same exception.
+    function join(): void {
+        this->wait();
+    }
+
+    function __complete(): void {
+        this->end();
+    }
+}
+
+// Starts `body` as a task, running concurrently with the code that started
+// it, and returns the Task, whose await() gives its result.
+function spawn<T>(function(): T body): Task<T> {
+    Task<T> task = new Task<T>();
+    __fiber_spawn(function(): void {
+        try {
+            task->__complete(body());
+        } catch (Exception error) {
+            task->__fail(error);
+        }
+    });
+    return task;
+}
+
+// Starts `body`, which returns nothing, as a task, and returns the Job,
+// whose join() waits for it.
+function launch(function(): void body): Job {
+    Job job = new Job();
+    __fiber_spawn(function(): void {
+        try {
+            body();
+            job->__complete();
+        } catch (Exception error) {
+            job->__fail(error);
+        }
+    });
+    return job;
+}
+
+// Lets the other tasks that are ready run before this one goes on, in a
+// task that computes for a long time without waiting.
+function yield_now(): void {
+    __fiber_yield();
+}
+
+// What a channel's iterator needs of it (declared before Channel, which
+// makes the iterator).
+interface __Receiver<T> {
+    function __hasNext(): bool;
+    function receive(): T;
+}
+
+// A channel's values, received one at a time by foreach.
+final class __ChannelValues<T> implements Iterator<T> {
+    private __Receiver<T> channel;
+
+    function __construct(__Receiver<T> channel) {
+        this->channel = channel;
+    }
+
+    function hasNext(): bool {
+        return this->channel->__hasNext();
+    }
+
+    function next(): T {
+        return this->channel->receive();
+    }
+}
+
+// Passes values from tasks that send them to tasks that receive them, in
+// order. A channel with a capacity holds up to that many values, so sending
+// waits only when it's full; with none (0), each send waits until a task
+// receives the value. close() says no more values are coming: receiving
+// then gives the values still in it, and foreach ends after the last.
+final class Channel<T> implements Iterable<T>, __Receiver<T> {
+    private Deque<T> values;
+    private int capacity;
+    private bool closed = false;
+    private int[] receivers = [];
+    private int[] senders = [];
+
+    function __construct(int capacity = 0) {
+        this->values = new Deque<T>();
+        this->capacity = capacity;
+    }
+
+    // Sends `value`, waiting while the channel is full (or, with no
+    // capacity, until a task receives it). Throws ChannelClosedException if
+    // the channel is closed.
+    function send(T value): void {
+        if (this->closed) {
+            throw new ChannelClosedException("send: the channel is closed");
+        }
+        this->values->pushBack(value);
+        this->receivers = self::wakeAll(this->receivers);
+        while (this->values->size() > this->capacity && !this->closed) {
+            array_push(this->senders, __fiber_current());
+            __fiber_park();
+        }
+    }
+
+    // The next value, waiting for one to be sent. Throws
+    // ChannelClosedException when the channel is closed and empty.
+    function receive(): T {
+        while (this->values->isEmpty()) {
+            if (this->closed) {
+                throw new ChannelClosedException("receive: the channel is closed and empty");
+            }
+            array_push(this->receivers, __fiber_current());
+            __fiber_park();
+        }
+        T value = this->values->popFront();
+        this->senders = self::wakeAll(this->senders);
+        return value;
+    }
+
+    // Says no more values will be sent. Tasks waiting to receive see the
+    // values still in it, then the end.
+    function close(): void {
+        this->closed = true;
+        this->receivers = self::wakeAll(this->receivers);
+        this->senders = self::wakeAll(this->senders);
+    }
+
+    function isClosed(): bool {
+        return this->closed;
+    }
+
+    // How many values are waiting to be received.
+    function size(): int {
+        return this->values->size();
+    }
+
+    // Receives values until the channel is closed and empty: foreach.
+    function iterator(): Iterator<T> {
+        return new __ChannelValues<T>(this);
+    }
+
+    // Whether a value can be received, waiting until one can or the channel
+    // is closed and empty.
+    function __hasNext(): bool {
+        while (this->values->isEmpty()) {
+            if (this->closed) {
+                return false;
+            }
+            array_push(this->receivers, __fiber_current());
+            __fiber_park();
+        }
+        return true;
+    }
+
+    private static function wakeAll(int[] waiting): int[] {
+        foreach (waiting as fiber) {
+            __fiber_wake(fiber);
+        }
+        return [];
+    }
+}

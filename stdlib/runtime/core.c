@@ -59,6 +59,15 @@ void qiq_guard_leave(jmp_buf *previous) {
     qiq_guard = previous;
 }
 
+// For fiber.c: each fiber has its own chain of guarded calls.
+jmp_buf *qiq_guard_get(void) {
+    return qiq_guard;
+}
+
+void qiq_guard_set(jmp_buf *guard) {
+    qiq_guard = guard;
+}
+
 // A database error's details, from qiq_set_database_error until the
 // DatabaseException being raised takes them.
 static bool qiq_database_error_set = false;

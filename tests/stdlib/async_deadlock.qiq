@@ -1,0 +1,8 @@
+// test: exit 1
+// Every task waiting on something only another could do: a deadlock is an
+// exception in the waiting task, rather than the program hanging.
+import spawn, Task, Channel from "std/async";
+
+Channel<int> never = new Channel<int>();
+Task<int> waiting = spawn(fn() => never->receive());
+print(waiting->await());
