@@ -1,0 +1,56 @@
+// std/collections: ArrayList, Set, Deque, PriorityQueue, and the Collection
+// interface they share.
+import ArrayList, Set, Deque, PriorityQueue, Collection, EmptyCollectionException from "std/collections";
+
+ArrayList<string> names = new ArrayList(["Ada", "Lin"]);
+names->add("Grace");
+print(names->size(), names->get(2), names->first(), names->last());
+print(names->map(fn(name) => len(name))->toArray());
+print(names->filter(fn(n) => len(n) > 3)->toArray(), names->contains("Lin"), names->indexOf("Grace"));
+names->insert(1, "Barbara");
+print(names->toArray(), names->removeAt(0), names->remove("Lin"), names->toArray());
+names->sort(fn(a, b) => strcmp(a, b));
+print(names->toArray(), names->reversed()->toArray());
+foreach (names as i => n) { print(i, n); }
+
+Set<int> s = new Set([3, 1, 3, 2]);
+print(s->toArray(), s->size(), s->contains(2), s->add(2), s->add(9));
+Set<int> t = new Set([2, 9, 10]);
+print(s->union(t)->toArray(), s->intersect(t)->toArray(), s->diff(t)->toArray());
+print(s->map(fn(n) => n % 2 == 0)->toArray());
+
+Deque<int> d = new Deque<int>();
+int i = 0;
+while (i < 20) { d->pushBack(i); i++; }
+d->pushFront(-1);
+print(d->popFront(), d->popBack(), d->size(), d->peekFront(), d->peekBack(), d->get(3));
+
+PriorityQueue<int> pq = new PriorityQueue(fn(a, b) => a - b, [5, 1, 4]);
+pq->push(2);
+print(pq->toArray(), pq->pop(), pq->pop(), pq->peek(), pq->size());
+
+function total(Collection<int> values): int {
+    return values->reduce(fn(sum, n) => sum + n, 0);
+}
+print(total(new ArrayList([1, 2])), total(s), total(d), total(pq));
+print(s->any(fn(n) => n > 5), s->all(fn(n) => n > 0), d->count(fn(n) => n % 2 == 0));
+try {
+    (new Deque<string>())->popFront();
+} catch (EmptyCollectionException e) {
+    print(e->getMessage());
+}
+try {
+    names->get(10);
+} catch (OutOfRangeException e) {
+    print(e->getMessage());
+}
+
+// Element types that can't be compared with ==, or hold objects.
+class Job { function __construct(public string name, public int priority) {} }
+ArrayList<function(int): int> ops = new ArrayList<function(int): int>();
+function(int): int twice = fn(int n) => n * 2;
+ops->add(twice);
+print(ops->get(0)(21), ops->contains(twice));
+Job a = new Job("a", 2);
+ArrayList<(Job, int)> pairs = new ArrayList([(a, 1)]);
+print(pairs->get(0)[0]->name, pairs->indexOf(pairs->get(0)));

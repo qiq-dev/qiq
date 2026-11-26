@@ -1,0 +1,599 @@
+// Collections: lists, sets, double-ended queues, and priority queues, as
+// classes with methods. They sit alongside the built-in arrays and maps,
+// which they don't replace; each converts to and from an array. Import what
+// you use:
+//
+//   import ArrayList, Set from "std/collections";
+//
+//   ArrayList<string> names = new ArrayList(["Ada", "Lin"]);
+//   names->add("Grace");
+//   print(names->map(fn(name) => len(name))->toArray());   // [3, 3, 5]
+//
+// Every class implements Collection<T>, so a function can take any of them,
+// and foreach loops over any of them. Methods that change a collection (add,
+// remove, pushBack, pop, ...) change it in place; map, filter, and the other
+// methods that make a collection return a new one and leave the original as
+// it was. Values are compared as in_array compares them: numbers, strings,
+// arrays, maps, and tuples by value, objects and functions by identity.
+
+import RuntimeException, OutOfRangeException from "exceptions";
+import Iterator, Iterable from "iterators";
+import array_map, array_filter from "arrays";
+
+// Thrown by taking a value from an empty collection: ArrayList's first and
+// last, Deque's pops and peeks, and PriorityQueue's pop and peek.
+class EmptyCollectionException extends RuntimeException {}
+
+// What every collection has: its size, whether it holds a value, its values
+// as an array (a copy, in the collection's order), and ways to look at them
+// all. foreach loops over a collection's values in the same order.
+interface Collection<T> extends Iterable<T> {
+    // How many values it holds.
+    function size(): int;
+    // Whether it holds none.
+    function isEmpty(): bool;
+    // Whether it holds a value equal to `value`.
+    function contains(T value): bool;
+    // Its values, in order, as a new array.
+    function toArray(): T[];
+    // `combine` called with `initial` and the first value, then with its
+    // result and the next value, and so on: the last result.
+    function reduce<U>(function(U, T): U combine, U initial): U;
+    // Whether `test` returns true for at least one value.
+    function any(function(T): bool test): bool;
+    // Whether `test` returns true for every value.
+    function all(function(T): bool test): bool;
+    // How many values `test` returns true for.
+    function count(function(T): bool test): int;
+}
+
+// The parts of Collection that work the same for any collection, written
+// with size, toArray, and iterator. Extend it to make your own collection.
+abstract class AbstractCollection<T> implements Collection<T> {
+    abstract function size(): int;
+    abstract function toArray(): T[];
+    abstract function iterator(): Iterator<T>;
+
+    function isEmpty(): bool {
+        return this->size() == 0;
+    }
+
+    function contains(T value): bool {
+        return in_array(value, this->toArray());
+    }
+
+    function reduce<U>(function(U, T): U combine, U initial): U {
+        U result = initial;
+        foreach (this as value) {
+            result = combine(result, value);
+        }
+        return result;
+    }
+
+    function any(function(T): bool test): bool {
+        foreach (this as value) {
+            if (test(value)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    function all(function(T): bool test): bool {
+        foreach (this as value) {
+            if (!test(value)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    function count(function(T): bool test): int {
+        int matched = 0;
+        foreach (this as value) {
+            if (test(value)) {
+                matched++;
+            }
+        }
+        return matched;
+    }
+}
+
+// Iterates over a copy of an array's values (collections' iterators).
+final class __Values<T> implements Iterator<T> {
+    private T[] values;
+    private int at = 0;
+
+    function __construct(T[] values) {
+        this->values = values;
+    }
+
+    function hasNext(): bool {
+        return this->at < len(this->values);
+    }
+
+    function next(): T {
+        this->at++;
+        return this->values[this->at - 1];
+    }
+}
+
+// A list: values in order, read and changed by index, that grows as values
+// are added. It's an array with methods, so lists can be passed as a
+// Collection and transformed in chains: list->filter(...)->map(...).
+final class ArrayList<T> extends AbstractCollection<T> {
+    private T[] items;
+
+    // A list of `values`, in order (a copy: changing the array later doesn't
+    // change the list).
+    function __construct(T[] values = []) {
+        this->items = array_slice(values, 0, len(values));
+    }
+
+    function size(): int {
+        return len(this->items);
+    }
+
+    function toArray(): T[] {
+        return array_slice(this->items, 0, len(this->items));
+    }
+
+    function iterator(): Iterator<T> {
+        return new __Values(this->items);
+    }
+
+    function contains(T value): bool {
+        return in_array(value, this->items);
+    }
+
+    // The value at `index`, counting from 0. An index outside the list
+    // throws OutOfRangeException.
+    function get(int index): T {
+        this->check(index);
+        return this->items[index];
+    }
+
+    // Replaces the value at `index`.
+    function set(int index, T value): void {
+        this->check(index);
+        this->items[index] = value;
+    }
+
+    // The first value; EmptyCollectionException for an empty list.
+    function first(): T {
+        if (len(this->items) == 0) {
+            throw new EmptyCollectionException("first: the list is empty");
+        }
+        return this->items[0];
+    }
+
+    // The last value; EmptyCollectionException for an empty list.
+    function last(): T {
+        if (len(this->items) == 0) {
+            throw new EmptyCollectionException("last: the list is empty");
+        }
+        return this->items[len(this->items) - 1];
+    }
+
+    // Adds `value` at the end.
+    function add(T value): void {
+        array_push(this->items, value);
+    }
+
+    // Adds each of `values` at the end, in order.
+    function addAll(T[] values): void {
+        foreach (values as value) {
+            array_push(this->items, value);
+        }
+    }
+
+    // Inserts `value` at `index` (0 to size()), moving the values from there
+    // up one place.
+    function insert(int index, T value): void {
+        if (index < 0 || index > len(this->items)) {
+            throw new OutOfRangeException(f"insert: index {index} is outside the list (0 to {len(this->items)})");
+        }
+        array_splice(this->items, index, 0, [value]);
+    }
+
+    // Removes the value at `index` and returns it, moving the values after
+    // it down one place.
+    function removeAt(int index): T {
+        this->check(index);
+        T value = this->items[index];
+        array_splice(this->items, index, 1, []);
+        return value;
+    }
+
+    // Removes the first value equal to `value`: whether there was one.
+    function remove(T value): bool {
+        int index = array_search(value, this->items);
+        if (index < 0) {
+            return false;
+        }
+        array_splice(this->items, index, 1, []);
+        return true;
+    }
+
+    // The index of the first value equal to `value`, or -1.
+    function indexOf(T value): int {
+        return array_search(value, this->items);
+    }
+
+    // The index of the first value `test` returns true for, or -1.
+    function findIndex(function(T): bool test): int {
+        foreach (this->items as index => value) {
+            if (test(value)) {
+                return index;
+            }
+        }
+        return -1;
+    }
+
+    // Removes every value.
+    function clear(): void {
+        this->items = [];
+    }
+
+    // Puts the values in the order `compare` gives (negative when its first
+    // argument goes first), keeping equal values in their order.
+    function sort(function(T, T): int compare): void {
+        this->items = usort(this->items, compare);
+    }
+
+    // A new list of the values in the order `compare` gives.
+    function sorted(function(T, T): int compare): ArrayList<T> {
+        return new ArrayList<T>(usort(this->items, compare));
+    }
+
+    // A new list of the values in the opposite order.
+    function reversed(): ArrayList<T> {
+        return new ArrayList<T>(array_reverse(this->items));
+    }
+
+    // A new list of at most `length` values from `start`.
+    function slice(int start, int length): ArrayList<T> {
+        return new ArrayList<T>(array_slice(this->items, start, length));
+    }
+
+    // A new list of what `change` returns for each value, in order.
+    function map<U>(function(T): U change): ArrayList<U> {
+        return new ArrayList<U>(array_map(this->items, change));
+    }
+
+    // A new list of the values `test` returns true for, in order.
+    function filter(function(T): bool test): ArrayList<T> {
+        return new ArrayList<T>(array_filter(this->items, test));
+    }
+
+    // Calls `action` with each value, in order.
+    function forEach(function(T): void action): void {
+        foreach (this->items as value) {
+            action(value);
+        }
+    }
+
+    private function check(int index): void {
+        if (index < 0 || index >= len(this->items)) {
+            throw new OutOfRangeException(f"index {index} is outside the list (0 to {len(this->items) - 1})");
+        }
+    }
+}
+
+// A set: values without repeats, with a fast check for whether it holds one.
+// It keeps the order values were first added in. Its values are of a type a
+// map's keys can have (int, double, bool, string, or char).
+final class Set<T: key> extends AbstractCollection<T> {
+    private map[T, bool] items = {};
+
+    // A set of `values`, without repeats.
+    function __construct(T[] values = []) {
+        foreach (values as value) {
+            this->items[value] = true;
+        }
+    }
+
+    function size(): int {
+        return len(this->items);
+    }
+
+    function toArray(): T[] {
+        return map_keys(this->items);
+    }
+
+    function iterator(): Iterator<T> {
+        return new __Values(map_keys(this->items));
+    }
+
+    function contains(T value): bool {
+        return map_key_exists(value, this->items);
+    }
+
+    // Adds `value`: whether it was new.
+    function add(T value): bool {
+        if (map_key_exists(value, this->items)) {
+            return false;
+        }
+        this->items[value] = true;
+        return true;
+    }
+
+    // Adds each of `values`.
+    function addAll(T[] values): void {
+        foreach (values as value) {
+            this->items[value] = true;
+        }
+    }
+
+    // Removes `value`: whether the set held it.
+    function remove(T value): bool {
+        if (!map_key_exists(value, this->items)) {
+            return false;
+        }
+        unset(this->items[value]);
+        return true;
+    }
+
+    // Removes every value.
+    function clear(): void {
+        this->items = {};
+    }
+
+    // A new set of the values in this set or `other` (or both).
+    function union(Set<T> other): Set<T> {
+        Set<T> result = new Set<T>(map_keys(this->items));
+        result->addAll(other->toArray());
+        return result;
+    }
+
+    // A new set of the values in both this set and `other`.
+    function intersect(Set<T> other): Set<T> {
+        return this->filter(fn(T value) => other->contains(value));
+    }
+
+    // A new set of the values in this set but not in `other`.
+    function diff(Set<T> other): Set<T> {
+        return this->filter(fn(T value) => !other->contains(value));
+    }
+
+    // Whether every value of this set is in `other`.
+    function isSubsetOf(Set<T> other): bool {
+        return this->all(fn(T value) => other->contains(value));
+    }
+
+    // A new set of the values `test` returns true for.
+    function filter(function(T): bool test): Set<T> {
+        return new Set<T>(array_filter(map_keys(this->items), test));
+    }
+
+    // A new set of what `change` returns for each value (repeats kept once).
+    function map<U: key>(function(T): U change): Set<U> {
+        return new Set<U>(array_map(map_keys(this->items), change));
+    }
+}
+
+// A double-ended queue: values added and removed at either end in constant
+// time, so it serves as a queue (pushBack and popFront) or a stack
+// (pushBack and popBack). Removing from the front of an array moves every
+// other value; a Deque doesn't.
+final class Deque<T> extends AbstractCollection<T> {
+    // A ring: `count` values from `head`, wrapping around the end.
+    private T[] slots;
+    // One value of T's zero value, to clear a slot with (so a removed value
+    // isn't kept alive).
+    private T[] blank;
+    private int head = 0;
+    private int count = 0;
+
+    // A deque of `values`, first to last.
+    function __construct(T[] values = []) {
+        this->slots = new T[8];
+        this->blank = new T[1];
+        foreach (values as value) {
+            this->pushBack(value);
+        }
+    }
+
+    function size(): int {
+        return this->count;
+    }
+
+    function toArray(): T[] {
+        T[] values = [];
+        int index = 0;
+        while (index < this->count) {
+            array_push(values, this->slots[(this->head + index) % len(this->slots)]);
+            index++;
+        }
+        return values;
+    }
+
+    function iterator(): Iterator<T> {
+        return new __Values(this->toArray());
+    }
+
+    // The value `index` places from the front.
+    function get(int index): T {
+        if (index < 0 || index >= this->count) {
+            throw new OutOfRangeException(f"index {index} is outside the deque (0 to {this->count - 1})");
+        }
+        return this->slots[(this->head + index) % len(this->slots)];
+    }
+
+    // Adds `value` at the back.
+    function pushBack(T value): void {
+        this->makeRoom();
+        this->slots[(this->head + this->count) % len(this->slots)] = value;
+        this->count++;
+    }
+
+    // Adds `value` at the front.
+    function pushFront(T value): void {
+        this->makeRoom();
+        this->head = (this->head + len(this->slots) - 1) % len(this->slots);
+        this->slots[this->head] = value;
+        this->count++;
+    }
+
+    // Removes the front value and returns it.
+    function popFront(): T {
+        this->checkNotEmpty("popFront");
+        T value = this->slots[this->head];
+        this->slots[this->head] = this->blank[0];
+        this->head = (this->head + 1) % len(this->slots);
+        this->count--;
+        return value;
+    }
+
+    // Removes the back value and returns it.
+    function popBack(): T {
+        this->checkNotEmpty("popBack");
+        int at = (this->head + this->count - 1) % len(this->slots);
+        T value = this->slots[at];
+        this->slots[at] = this->blank[0];
+        this->count--;
+        return value;
+    }
+
+    // The front value, left in place.
+    function peekFront(): T {
+        this->checkNotEmpty("peekFront");
+        return this->slots[this->head];
+    }
+
+    // The back value, left in place.
+    function peekBack(): T {
+        this->checkNotEmpty("peekBack");
+        return this->slots[(this->head + this->count - 1) % len(this->slots)];
+    }
+
+    // Removes every value.
+    function clear(): void {
+        this->slots = new T[8];
+        this->head = 0;
+        this->count = 0;
+    }
+
+    private function checkNotEmpty(string doing): void {
+        if (this->count == 0) {
+            throw new EmptyCollectionException(f"{doing}: the deque is empty");
+        }
+    }
+
+    // When the ring is full: a ring twice the size, front first.
+    private function makeRoom(): void {
+        if (this->count < len(this->slots)) {
+            return;
+        }
+        T[] grown = new T[len(this->slots) * 2];
+        int index = 0;
+        while (index < this->count) {
+            grown[index] = this->slots[(this->head + index) % len(this->slots)];
+            index++;
+        }
+        this->slots = grown;
+        this->head = 0;
+    }
+}
+
+// A priority queue: pop gives the value that comes first by `compare`
+// (negative when its first argument comes first), so with
+// fn(a, b) => a - b, the smallest. Pushing and popping take time
+// proportional to the log of the size.
+final class PriorityQueue<T> extends AbstractCollection<T> {
+    // A binary heap: each value comes no later than the two below it.
+    private T[] heap = [];
+    private function(T, T): int compare;
+
+    // An empty queue ordered by `compare`, then `values` pushed.
+    function __construct(function(T, T): int compare, T[] values = []) {
+        this->compare = compare;
+        foreach (values as value) {
+            this->push(value);
+        }
+    }
+
+    function size(): int {
+        return len(this->heap);
+    }
+
+    // The values in the order pop would give them.
+    function toArray(): T[] {
+        return usort(this->heap, this->compare);
+    }
+
+    function iterator(): Iterator<T> {
+        return new __Values(this->toArray());
+    }
+
+    function contains(T value): bool {
+        return in_array(value, this->heap);
+    }
+
+    // Adds `value`.
+    function push(T value): void {
+        array_push(this->heap, value);
+        int at = len(this->heap) - 1;
+        while (at > 0) {
+            int above = (at - 1) / 2;
+            if (this->compare(this->heap[at], this->heap[above]) >= 0) {
+                break;
+            }
+            this->swap(at, above);
+            at = above;
+        }
+    }
+
+    // Removes the first value by the order and returns it.
+    function pop(): T {
+        if (len(this->heap) == 0) {
+            throw new EmptyCollectionException("pop: the priority queue is empty");
+        }
+        T first = this->heap[0];
+        T last = array_pop(this->heap);
+        if (len(this->heap) > 0) {
+            this->heap[0] = last;
+            this->siftDown(0);
+        }
+        return first;
+    }
+
+    // The first value by the order, left in place.
+    function peek(): T {
+        if (len(this->heap) == 0) {
+            throw new EmptyCollectionException("peek: the priority queue is empty");
+        }
+        return this->heap[0];
+    }
+
+    // Removes every value.
+    function clear(): void {
+        this->heap = [];
+    }
+
+    private function siftDown(int at): void {
+        int size = len(this->heap);
+        while (true) {
+            int first = at;
+            int left = 2 * at + 1;
+            int right = left + 1;
+            if (left < size && this->compare(this->heap[left], this->heap[first]) < 0) {
+                first = left;
+            }
+            if (right < size && this->compare(this->heap[right], this->heap[first]) < 0) {
+                first = right;
+            }
+            if (first == at) {
+                return;
+            }
+            this->swap(at, first);
+            at = first;
+        }
+    }
+
+    private function swap(int a, int b): void {
+        T held = this->heap[a];
+        this->heap[a] = this->heap[b];
+        this->heap[b] = held;
+    }
+}

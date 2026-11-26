@@ -47,7 +47,7 @@ act returned null
 ```
 
 <h2>Optional parameters</h2>
-<p>A parameter with a default value is optional. Optional parameters come after the required ones. A default must be a literal of the parameter's type, or <code>null</code> for a string, char, array, map, or object parameter.</p>
+<p>A parameter with a default value is optional. Optional parameters come after the required ones. A default must be a literal of the parameter's type, <code>null</code> for a string, char, array, map, or object parameter, or an empty <code>[]</code> or <code>{}</code> for an array or map parameter. Each call that leaves out such an argument gets a new empty array or map, so a function that changes it doesn't affect later calls (unlike Python's mutable defaults).</p>
 
 ```qiq
 function greet(string name, string greeting = "Hello", int times = 1): void {

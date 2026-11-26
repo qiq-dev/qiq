@@ -1,0 +1,18 @@
+3 Grace Ada Grace
+[3, 3, 5]
+["Grace"] true 2
+["Ada", "Barbara", "Lin", "Grace"] Ada true ["Barbara", "Grace"]
+["Barbara", "Grace"] ["Grace", "Barbara"]
+0 Barbara
+1 Grace
+[3, 1, 2] 3 true false true
+[3, 1, 2, 9, 10] [2, 9] [3, 1]
+[false, true]
+-1 19 19 0 18 3
+[1, 2, 4, 5] 1 2 4 2
+3 15 171 9
+true true 10
+popFront: the deque is empty
+index 10 is outside the list (0 to 1)
+42 true
+a 0

@@ -1893,6 +1893,15 @@ impl Parser {
                 }
             }
         }
+        // `T[] items = []`, `map[string, int] counts = {}`: a new empty array
+        // or map for each call that leaves the argument out.
+        match (&default, value_type) {
+            (Expr::ArrayLiteral(elements), ValueType::Array(_)) if elements.is_empty() => return Ok(default),
+            (Expr::MapLiteral(entries), ValueType::Map(_)) if entries.is_empty() => return Ok(default),
+            (Expr::ArrayLiteral(_), _) => return Err(error_at(self, format!("default for '{name}' must be an empty array [] or a literal, such as int[] values = []"))),
+            (Expr::MapLiteral(_), _) => return Err(error_at(self, format!("default for '{name}' must be an empty map {{}} or a literal"))),
+            _ => {}
+        }
         let literal_type = match default {
             Expr::Number(_) => ValueType::Int,
             Expr::Decimal(_) => ValueType::Double,
@@ -16254,6 +16263,7 @@ const STDLIB_MODULES: &[(&str, Option<&str>, &str)] = &[
     ("math.qiq", Some("std/math"), include_str!("../stdlib/math.qiq")),
     ("testing.qiq", Some("std/testing"), include_str!("../stdlib/testing.qiq")),
     ("csv.qiq", Some("std/csv"), include_str!("../stdlib/csv.qiq")),
+    ("collections.qiq", Some("std/collections"), include_str!("../stdlib/collections.qiq")),
 ];
 
 /// Standard library modules that have moved, as (old path, new path), so
@@ -18800,6 +18810,20 @@ mod tests {
         ];
         for (code, message) in cases {
             let error = compile_source(&format!("{declared}{code}")).err().unwrap_or_else(|| panic!("{code}: compiled"));
+            assert!(error.contains(message), "{code}: expected '{message}', got '{error}'");
+        }
+    }
+
+    #[test]
+    fn empty_array_and_map_defaults() {
+        // Each call gets a new empty array or map.
+        assert!(compile_source("function add(int n, int[] seen = [], map[string, int] counts = {}): int { array_push(seen, n); return len(seen) + len(counts); } print(add(1), add(2)); class Box<T> { function __construct(T[] items = []) {} } Box<int> b = new Box<int>();").is_ok());
+        for (code, message) in [
+            ("function f(int[] values = [1]): void {}", "default for 'values' must be an empty array [] or a literal"),
+            ("function f(map[string, int] m = {\"a\" => 1}): void {}", "default for 'm' must be an empty map {} or a literal"),
+            ("function f(int x = []): void {}", "default for 'x' must be an empty array [] or a literal"),
+        ] {
+            let error = compile_source(code).err().unwrap_or_else(|| panic!("{code}: compiled"));
             assert!(error.contains(message), "{code}: expected '{message}', got '{error}'");
         }
     }

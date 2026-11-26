@@ -32,6 +32,7 @@ OVERVIEW = (
     "<tr><td><code>std/net/http</code></td><td>The <a href=\"ref.http.html\">HTTP client</a> and URL encoding</td></tr>"
     "<tr><td><code>std/net/http/server</code></td><td>The <a href=\"ref.http-server.html\">HTTP server</a></td></tr>"
     "<tr><td><code>std/crypto</code></td><td><a href=\"ref.crypto.html\">Hashing and encoding</a>: MD5, SHA-1, SHA-2, HMAC, hex, base64, and password hashing</td></tr>"
+    "<tr><td><code>std/collections</code></td><td><a href=\"class.collection.html\">Collections</a>: the <a href=\"class.arraylist.html\">ArrayList</a>, <a href=\"class.set.html\">Set</a>, <a href=\"class.deque.html\">Deque</a>, and <a href=\"class.priorityqueue.html\">PriorityQueue</a> classes, alongside the built-in arrays and maps</td></tr>"
     "<tr><td><code>std/csv</code></td><td><a href=\"ref.csv.html\">CSV</a>: reading and writing CSV as rows, by column name, as objects, or a row at a time</td></tr>"
     "<tr><td><code>std/testing</code></td><td>The <a href=\"class.test.html\"><code>Test</code></a> class that <a href=\"testing.html\">tests</a> take, for <code>qiq test</code></td></tr>"
     "<tr><td><code>std/math</code></td><td><a href=\"ref.math.html\">Math</a>: rounding, roots, logarithms, trigonometry, <code>number_format</code>, and secure random numbers</td></tr>"
@@ -4469,6 +4470,279 @@ foreach (digits as digit) {
 <p>A parameter of type <code>Iterable&lt;int&gt;</code> takes any collection of ints that implements it, as <code>function total(Iterable&lt;int&gt; values)</code> does.</p>
 """
 
+
+def _synopsis(declaration, members):
+    """A class synopsis from plain declarations: keywords, method names,
+    built-in types, and class names are marked up as on the other pages."""
+    import html as _html
+    import re as _re
+
+    def mark(text):
+        out = []
+        for token in _re.findall(r"[A-Za-z_][A-Za-z0-9_]*|[^A-Za-z_]+", text):
+            if token in ("final", "class", "interface", "abstract", "function", "extends", "implements", "static"):
+                out.append(f'<span class="kw">{token}</span>')
+            elif token in ("int", "double", "bool", "string", "char", "byte", "void", "key"):
+                out.append(f'<span class="type">{token}</span>')
+            elif token[0].isupper():
+                out.append(f'<span class="cls">{token}</span>')
+            else:
+                out.append(_html.escape(token))
+        return "".join(out)
+
+    def member(text):
+        name = _re.search(r"function\s+([A-Za-z_]\w*)", text).group(1)
+        marked = mark(text)
+        return marked.replace(_html.escape(name), f'<span class="fn">{name}</span>', 1)
+
+    lines = [mark(declaration) + " {"]
+    lines += ["&nbsp;&nbsp;&nbsp;&nbsp;" + member(m) for m in members]
+    lines.append("}")
+    return '<div class="synopsis"><code>' + "<br>\n".join(lines) + "</code></div>"
+
+
+def _method_table(rows):
+    body = "".join(f"<tr><td><code>{name}</code></td><td>{text}</td></tr>\n" for name, text in rows)
+    return f"<table>\n<thead><tr><th>Method</th><th>Description</th></tr></thead>\n<tbody>\n{body}</tbody>\n</table>"
+
+
+_COLLECTION_MEMBERS = [
+    "function size(): int",
+    "function isEmpty(): bool",
+    "function contains(T value): bool",
+    "function toArray(): T[]",
+    "function reduce<U>(function(U, T): U combine, U initial): U",
+    "function any(function(T): bool test): bool",
+    "function all(function(T): bool test): bool",
+    "function count(function(T): bool test): int",
+]
+
+COLLECTION_INTERFACE = r"""<h1>The Collection interface</h1>
+<p>The <code>std/collections</code> module has four collection classes, which sit alongside the built-in <a href="arrays.html">arrays</a> and <a href="maps.html">maps</a> rather than replacing them:</p>
+<table>
+<thead><tr><th>Class</th><th>For</th></tr></thead>
+<tbody>
+<tr><td><a href="class.arraylist.html">ArrayList&lt;T&gt;</a></td><td>A list: an array with methods, so it can be passed as a <code>Collection</code> and transformed in chains</td></tr>
+<tr><td><a href="class.set.html">Set&lt;T: key&gt;</a></td><td>Values without repeats, with a fast <code>contains</code>, and union, intersection, and difference</td></tr>
+<tr><td><a href="class.deque.html">Deque&lt;T&gt;</a></td><td>Adding and removing at either end in constant time: a queue or a stack</td></tr>
+<tr><td><a href="class.priorityqueue.html">PriorityQueue&lt;T&gt;</a></td><td>Taking out the first value by an order of your choosing, such as the smallest</td></tr>
+</tbody>
+</table>
+<p>Each implements <code>Collection&lt;T&gt;</code>, so a function can take any of them, and each is <code>Iterable&lt;T&gt;</code>, so <code>foreach</code> loops over its values. Import the names you use:</p>
+<pre class="code">import ArrayList, Set, Collection from "std/collections";</pre>
+<p>Methods that change a collection (<code>add</code>, <code>remove</code>, <code>pushBack</code>, <code>pop</code>, ...) change it in place, as for arrays and maps. Methods that make a collection, such as <code>map</code> and <code>filter</code>, return a new one and leave the original as it was, and <code>toArray()</code> returns a copy. Values are compared as <a href="function.in-array.html">in_array</a> compares them: numbers, strings, arrays, maps, and tuples by value, objects and functions by identity.</p>
+<h2>Interface synopsis</h2>
+""" + _synopsis("interface Collection<T> extends Iterable<T>", _COLLECTION_MEMBERS) + "\n" + _method_table([
+    ("size()", "How many values it holds."),
+    ("isEmpty()", "Whether it holds none."),
+    ("contains(value)", "Whether it holds a value equal to <code>value</code>."),
+    ("toArray()", "Its values as a new array, in the collection's order (the order <code>foreach</code> gives)."),
+    ("reduce(combine, initial)", "<code>combine</code> called with <code>initial</code> and the first value, then with its result and the next value, and so on: the last result, or <code>initial</code> when it's empty."),
+    ("any(test)", "Whether <code>test</code> returns true for at least one value."),
+    ("all(test)", "Whether <code>test</code> returns true for every value (true when it's empty)."),
+    ("count(test)", "How many values <code>test</code> returns true for."),
+]) + r"""
+<h2>Example</h2>
+```qiq
+function total(Collection<int> values): int {
+    return values->reduce(fn(sum, n) => sum + n, 0);
+}
+
+ArrayList<int> list = new ArrayList([1, 2, 3]);
+Set<int> unique = new Set([5, 5, 6]);
+print(total(list), total(unique), unique->any(fn(n) => n > 5));
+foreach (unique as value) {
+    print(value);
+}
+```
+```output
+6 11 true
+5
+6
+```
+<h2>Your own collections</h2>
+<p><code>AbstractCollection&lt;T&gt;</code> implements every method of <code>Collection&lt;T&gt;</code> from three: extend it and write <code>size()</code>, <code>toArray()</code>, and <code>iterator()</code>. Override <code>contains</code> when your collection can answer faster than looking through its values.</p>
+""" + _synopsis("abstract class AbstractCollection<T> implements Collection<T>", [
+    "abstract function size(): int",
+    "abstract function toArray(): T[]",
+    "abstract function iterator(): Iterator<T>",
+]) + r"""
+<h2>Empty collections</h2>
+<p>Taking a value from an empty collection (<code>ArrayList</code>'s <code>first</code> and <code>last</code>, <code>Deque</code>'s pops and peeks, <code>PriorityQueue</code>'s <code>pop</code> and <code>peek</code>) throws <code>EmptyCollectionException</code>, a <code>RuntimeException</code> from <code>std/collections</code>. An index outside a list or deque throws <code>OutOfRangeException</code>.</p>
+"""
+
+ARRAYLIST_CLASS = r"""<h1>The ArrayList class</h1>
+<p>A list: values in order, read and changed by index, that grows as values are added. It's an array with methods, so a list can be passed as a <a href="class.collection.html">Collection</a> and transformed in chains, as in <code>list-&gt;filter(...)-&gt;map(...)</code>. Import it from <code>std/collections</code>. <code>new ArrayList(values)</code> makes one from an array (a copy), and <code>toArray()</code> gives the values back as an array.</p>
+<h2>Class synopsis</h2>
+""" + _synopsis("final class ArrayList<T> extends AbstractCollection<T>", [
+    "function __construct(T[] values = [])",
+    "function get(int index): T",
+    "function set(int index, T value): void",
+    "function first(): T",
+    "function last(): T",
+    "function add(T value): void",
+    "function addAll(T[] values): void",
+    "function insert(int index, T value): void",
+    "function removeAt(int index): T",
+    "function remove(T value): bool",
+    "function indexOf(T value): int",
+    "function findIndex(function(T): bool test): int",
+    "function clear(): void",
+    "function sort(function(T, T): int compare): void",
+    "function sorted(function(T, T): int compare): ArrayList<T>",
+    "function reversed(): ArrayList<T>",
+    "function slice(int start, int length): ArrayList<T>",
+    "function map<U>(function(T): U change): ArrayList<U>",
+    "function filter(function(T): bool test): ArrayList<T>",
+    "function forEach(function(T): void action): void",
+]) + "\n" + _method_table([
+    ("__construct(values)", "A list of <code>values</code>, in order. The array is copied, so changing it later doesn't change the list. <code>new ArrayList&lt;int&gt;()</code> is an empty list."),
+    ("get(index), set(index, value)", "The value at <code>index</code>, counting from 0, or replacing it. An index outside the list throws <code>OutOfRangeException</code>."),
+    ("first(), last()", "The first or last value. An empty list throws <code>EmptyCollectionException</code>."),
+    ("add(value), addAll(values)", "Adds a value, or each of an array's values, at the end."),
+    ("insert(index, value)", "Inserts <code>value</code> at <code>index</code> (0 to <code>size()</code>), moving the values from there up one place."),
+    ("removeAt(index)", "Removes the value at <code>index</code> and returns it."),
+    ("remove(value)", "Removes the first value equal to <code>value</code>: whether there was one."),
+    ("indexOf(value), findIndex(test)", "The index of the first value equal to <code>value</code>, or that <code>test</code> returns true for, or -1."),
+    ("clear()", "Removes every value."),
+    ("sort(compare), sorted(compare)", "Puts the values in the order <code>compare</code> gives (negative when its first argument goes first), keeping equal values in their order; <code>sorted</code> returns a new list instead."),
+    ("reversed(), slice(start, length)", "A new list of the values in the opposite order, or of at most <code>length</code> values from <code>start</code>."),
+    ("map(change), filter(test)", "A new list of what <code>change</code> returns for each value, or of the values <code>test</code> returns true for."),
+    ("forEach(action)", "Calls <code>action</code> with each value, in order."),
+]) + r"""
+<p>It also has the <a href="class.collection.html">Collection</a> methods: <code>size</code>, <code>isEmpty</code>, <code>contains</code>, <code>toArray</code>, <code>reduce</code>, <code>any</code>, <code>all</code>, and <code>count</code>.</p>
+<h2>Example</h2>
+```qiq
+ArrayList<string> names = new ArrayList(["Lin", "Ada"]);
+names->add("Grace");
+names->sort(fn(a, b) => strcmp(a, b));
+print(names->toArray(), names->get(0), names->indexOf("Lin"));
+ArrayList<int> lengths = names->filter(fn(name) => name != "Ada")->map(fn(name) => len(name));
+print(lengths->toArray(), lengths->reduce(fn(sum, n) => sum + n, 0));
+```
+```output
+["Ada", "Grace", "Lin"] Ada 2
+[5, 3] 8
+```
+"""
+
+SET_CLASS = r"""<h1>The Set class</h1>
+<p>Values without repeats, with a fast check for whether it holds one. It keeps the order values were first added in, as <a href="maps.html">maps</a> do. Import it from <code>std/collections</code>. Its values are of a type a map's keys can have: <code>int</code>, <code>double</code>, <code>bool</code>, <code>string</code>, or <code>char</code> (see <a href="generics.html#key-bound">map keys</a>).</p>
+<h2>Class synopsis</h2>
+""" + _synopsis("final class Set<T: key> extends AbstractCollection<T>", [
+    "function __construct(T[] values = [])",
+    "function add(T value): bool",
+    "function addAll(T[] values): void",
+    "function remove(T value): bool",
+    "function clear(): void",
+    "function union(Set<T> other): Set<T>",
+    "function intersect(Set<T> other): Set<T>",
+    "function diff(Set<T> other): Set<T>",
+    "function isSubsetOf(Set<T> other): bool",
+    "function filter(function(T): bool test): Set<T>",
+    "function map<U: key>(function(T): U change): Set<U>",
+]) + "\n" + _method_table([
+    ("__construct(values)", "A set of <code>values</code>, each kept once."),
+    ("add(value)", "Adds <code>value</code>: whether it was new."),
+    ("addAll(values)", "Adds each of <code>values</code>."),
+    ("remove(value)", "Removes <code>value</code>: whether the set held it."),
+    ("contains(value)", "Whether the set holds <code>value</code>, in constant time."),
+    ("clear()", "Removes every value."),
+    ("union(other), intersect(other), diff(other)", "A new set of the values in either set, in both, or in this one but not <code>other</code>."),
+    ("isSubsetOf(other)", "Whether every value of this set is in <code>other</code>."),
+    ("filter(test), map(change)", "A new set of the values <code>test</code> returns true for, or of what <code>change</code> returns for each value (repeats kept once)."),
+]) + r"""
+<p>It also has the <a href="class.collection.html">Collection</a> methods: <code>size</code>, <code>isEmpty</code>, <code>toArray</code>, <code>reduce</code>, <code>any</code>, <code>all</code>, and <code>count</code>.</p>
+<h2>Example</h2>
+```qiq
+Set<string> seen = new Set(["tea", "cake", "tea"]);
+print(seen->size(), seen->add("jam"), seen->add("tea"), seen->contains("cake"));
+Set<string> wanted = new Set(["tea", "bread"]);
+print(seen->intersect(wanted)->toArray(), wanted->diff(seen)->toArray());
+```
+```output
+2 true false true
+["tea"] ["bread"]
+```
+"""
+
+DEQUE_CLASS = r"""<h1>The Deque class</h1>
+<p>A double-ended queue: values added and removed at either end in constant time. Use it as a queue (<code>pushBack</code> and <code>popFront</code>) or a stack (<code>pushBack</code> and <code>popBack</code>). Removing from the front of an array with <a href="function.array-shift.html">array_shift</a> moves every other value; a <code>Deque</code> doesn't. Import it from <code>std/collections</code>.</p>
+<h2>Class synopsis</h2>
+""" + _synopsis("final class Deque<T> extends AbstractCollection<T>", [
+    "function __construct(T[] values = [])",
+    "function pushBack(T value): void",
+    "function pushFront(T value): void",
+    "function popFront(): T",
+    "function popBack(): T",
+    "function peekFront(): T",
+    "function peekBack(): T",
+    "function get(int index): T",
+    "function clear(): void",
+]) + "\n" + _method_table([
+    ("__construct(values)", "A deque of <code>values</code>, first to last."),
+    ("pushBack(value), pushFront(value)", "Adds <code>value</code> at the back or the front."),
+    ("popFront(), popBack()", "Removes the front or back value and returns it. An empty deque throws <code>EmptyCollectionException</code>."),
+    ("peekFront(), peekBack()", "The front or back value, left in place. An empty deque throws <code>EmptyCollectionException</code>."),
+    ("get(index)", "The value <code>index</code> places from the front. An index outside the deque throws <code>OutOfRangeException</code>."),
+    ("clear()", "Removes every value."),
+]) + r"""
+<p>It also has the <a href="class.collection.html">Collection</a> methods, with the values front to back: <code>size</code>, <code>isEmpty</code>, <code>contains</code>, <code>toArray</code>, <code>reduce</code>, <code>any</code>, <code>all</code>, and <code>count</code>.</p>
+<h2>Example</h2>
+```qiq
+Deque<string> queue = new Deque<string>();
+queue->pushBack("first");
+queue->pushBack("second");
+queue->pushFront("urgent");
+while (!queue->isEmpty()) {
+    print(queue->popFront());
+}
+```
+```output
+urgent
+first
+second
+```
+"""
+
+PRIORITYQUEUE_CLASS = r"""<h1>The PriorityQueue class</h1>
+<p>Values taken out in an order of your choosing: <code>pop</code> gives the value that comes first by the comparison the queue was made with (negative when its first argument comes first), so with <code>fn(a, b) =&gt; a - b</code>, the smallest. Pushing and popping take time proportional to the logarithm of the size, which suits scheduling, shortest paths, and keeping the top few of many values. Import it from <code>std/collections</code>.</p>
+<h2>Class synopsis</h2>
+""" + _synopsis("final class PriorityQueue<T> extends AbstractCollection<T>", [
+    "function __construct(function(T, T): int compare, T[] values = [])",
+    "function push(T value): void",
+    "function pop(): T",
+    "function peek(): T",
+    "function clear(): void",
+]) + "\n" + _method_table([
+    ("__construct(compare, values)", "An empty queue ordered by <code>compare</code>, then <code>values</code> pushed."),
+    ("push(value)", "Adds <code>value</code>."),
+    ("pop()", "Removes the first value by the order and returns it. An empty queue throws <code>EmptyCollectionException</code>."),
+    ("peek()", "The first value by the order, left in place. An empty queue throws <code>EmptyCollectionException</code>."),
+    ("clear()", "Removes every value."),
+]) + r"""
+<p>It also has the <a href="class.collection.html">Collection</a> methods: <code>size</code>, <code>isEmpty</code>, <code>contains</code>, <code>reduce</code>, <code>any</code>, <code>all</code>, and <code>count</code>. <code>toArray()</code> and <code>foreach</code> give the values in the order <code>pop</code> would.</p>
+<h2>Example</h2>
+```qiq
+class Task {
+    function __construct(public string name, public int priority) {}
+}
+
+PriorityQueue<Task> tasks = new PriorityQueue(fn(Task a, Task b) => a->priority - b->priority);
+tasks->push(new Task("write docs", 3));
+tasks->push(new Task("fix bug", 1));
+tasks->push(new Task("review", 2));
+while (!tasks->isEmpty()) {
+    print(tasks->pop()->name);
+}
+```
+```output
+fix bug
+review
+write docs
+```
+"""
+
 CLASS_PAGES = [
     ("class.file.html", "The File class", "Reading and writing files a line or a chunk at a time, including standard input and output.", FILE_CLASS),
     ("class.response.html", "The Response class", "The result of an HTTP request: status, headers, and body.", RESPONSE_CLASS),
@@ -4487,6 +4761,11 @@ CLASS_PAGES = [
     ("class.regexmatch.html", "The RegexMatch class", "A match of a regular expression: its text, position, and groups.", REGEXMATCH_CLASS),
     ("class.processresult.html", "The ProcessResult class", "The exit status and output of a command run by exec or shell.", PROCESSRESULT_CLASS),
     ("class.test.html", "The Test class", "What a test receives from qiq test: assertions, skipping, and logging.", TEST_CLASS),
+    ("class.collection.html", "The Collection interface", "What every collection in std/collections has, and AbstractCollection for making your own.", COLLECTION_INTERFACE),
+    ("class.arraylist.html", "The ArrayList class", "A list with methods: indexing, adding and removing, sorting, and map and filter chains.", ARRAYLIST_CLASS),
+    ("class.set.html", "The Set class", "Values without repeats, with a fast contains, and union, intersection, and difference.", SET_CLASS),
+    ("class.deque.html", "The Deque class", "Adding and removing at either end in constant time: a queue or a stack.", DEQUE_CLASS),
+    ("class.priorityqueue.html", "The PriorityQueue class", "Taking out the first value by an order of your choosing, such as the smallest.", PRIORITYQUEUE_CLASS),
     ("class.iterator.html", "The Iterator and Iterable interfaces", "What foreach needs to loop over objects, and the standard library classes that implement them.", ITERATOR_INTERFACES),
     ("exception-classes.html", "Exception classes", "The exception classes thrown by the language and the standard library.", EXCEPTION_CLASSES),
 ]
