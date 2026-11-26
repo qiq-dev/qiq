@@ -15,6 +15,8 @@
 //   __fiber_park()        waits until another fiber wakes this one
 //   __fiber_wake(fiber)   makes a parked fiber ready to run again
 //   __fiber_yield()       lets the other ready fibers run first
+//   qiq_poll(fds, n, ms)  poll() for the runtime's I/O (sockets, pipes):
+//                         other fibers run until a descriptor is ready
 //   __fiber_failed(e)     notes a task's exception, reported at the end
 //   __fiber_observed(e)   unless an await sees it first
 // The compiled program calls qiq_fibers_finish at the end of its main code,
@@ -29,6 +31,8 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <poll.h>
+#include <sys/epoll.h>
 #include <sys/mman.h>
 #include <time.h>
 #include <unistd.h>
@@ -55,6 +59,9 @@ struct QiqFiber {
     void *pending;       // qiq_pending_exception while it's switched out
     jmp_buf *guard;      // the innermost guarded call while it's switched out
     QiqFiberState state;
+    // Counts its waits: a timer or I/O registration wakes it only if it's
+    // still in the wait that made it (not a later one).
+    uint64_t wait;
     struct QiqFiber *next;  // in the ready queue, or the free list
 };
 
@@ -130,6 +137,7 @@ typedef struct {
     uint64_t deadline;  // CLOCK_MONOTONIC nanoseconds
     uint64_t order;     // ties wake in the order they slept
     QiqFiber *fiber;
+    uint64_t wait;      // the fiber's wait it ends
 } QiqTimer;
 
 static QiqTimer *qiq_timers = NULL;
@@ -147,7 +155,7 @@ static int qiq_timer_before(const QiqTimer *a, const QiqTimer *b) {
     return a->deadline < b->deadline || (a->deadline == b->deadline && a->order < b->order);
 }
 
-static void qiq_timer_push(uint64_t deadline, QiqFiber *fiber) {
+static void qiq_timer_push(uint64_t deadline, QiqFiber *fiber, uint64_t wait) {
     if (qiq_timer_count == qiq_timer_capacity) {
         qiq_timer_capacity = qiq_timer_capacity ? qiq_timer_capacity * 2 : 16;
         QiqTimer *grown = realloc(qiq_timers, qiq_timer_capacity * sizeof *qiq_timers);
@@ -155,7 +163,7 @@ static void qiq_timer_push(uint64_t deadline, QiqFiber *fiber) {
         qiq_timers = grown;
     }
     size_t at = qiq_timer_count++;
-    qiq_timers[at] = (QiqTimer){deadline, qiq_timer_order++, fiber};
+    qiq_timers[at] = (QiqTimer){deadline, qiq_timer_order++, fiber, wait};
     while (at > 0) {
         size_t above = (at - 1) / 2;
         if (!qiq_timer_before(&qiq_timers[at], &qiq_timers[above])) break;
@@ -166,8 +174,8 @@ static void qiq_timer_push(uint64_t deadline, QiqFiber *fiber) {
     }
 }
 
-static QiqFiber *qiq_timer_pop(void) {
-    QiqFiber *fiber = qiq_timers[0].fiber;
+static QiqTimer qiq_timer_pop(void) {
+    QiqTimer popped = qiq_timers[0];
     qiq_timers[0] = qiq_timers[--qiq_timer_count];
     size_t at = 0;
     for (;;) {
@@ -180,11 +188,45 @@ static QiqFiber *qiq_timer_pop(void) {
         qiq_timers[first] = held;
         at = first;
     }
-    return fiber;
+    return popped;
 }
 
 // ---------------------------------------------------------------------------
 // The scheduler
+
+static void qiq_make_ready(QiqFiber *fiber);
+
+// Wakes `fiber` if it's still parked in wait `wait`.
+static void qiq_end_wait(QiqFiber *fiber, uint64_t wait) {
+    if (fiber->state == QIQ_FIBER_PARKED && fiber->wait == wait) qiq_make_ready(fiber);
+}
+
+// ---------------------------------------------------------------------------
+// Waiting for I/O: an epoll instance, made when first needed, with each
+// descriptor a parked fiber waits on registered to wake it.
+
+typedef struct {
+    QiqFiber *fiber;
+    uint64_t wait;
+} QiqIoWaiter;
+
+static int qiq_epoll = -1;
+// Registrations: descriptors fibers are waiting on.
+static int64_t qiq_io_waiting = 0;
+
+// Waits up to `timeout_ms` (-1: no limit) for registered descriptors, and
+// wakes the fibers waiting on those that are ready.
+static void qiq_poll_io(int timeout_ms) {
+    struct epoll_event events[64];
+    int count;
+    do {
+        count = epoll_wait(qiq_epoll, events, 64, timeout_ms);
+    } while (count < 0 && errno == EINTR);
+    for (int index = 0; index < count; index++) {
+        QiqIoWaiter *waiter = events[index].data.ptr;
+        qiq_end_wait(waiter->fiber, waiter->wait);
+    }
+}
 
 static void qiq_make_ready(QiqFiber *fiber) {
     fiber->state = QIQ_FIBER_READY;
@@ -230,8 +272,8 @@ static void qiq_switch_to(QiqFiber *to) {
 }
 
 // The fiber to run next: the first ready one, or, when none is, the first
-// whose timer is due (sleeping until then). NULL when every fiber is waiting
-// on something only another fiber could do: a deadlock.
+// woken by I/O or a timer (waiting until one is). NULL when every fiber is
+// waiting on something only another fiber could do: a deadlock.
 static QiqFiber *qiq_next_fiber(void) {
     for (;;) {
         if (qiq_ready_head != NULL) {
@@ -240,17 +282,30 @@ static QiqFiber *qiq_next_fiber(void) {
             if (qiq_ready_head == NULL) qiq_ready_tail = NULL;
             return fiber;
         }
-        if (qiq_timer_count == 0) return NULL;
+        if (qiq_timer_count == 0 && qiq_io_waiting == 0) return NULL;
         uint64_t now = qiq_now();
-        if (qiq_timers[0].deadline > now) {
-            uint64_t wait = qiq_timers[0].deadline - now;
-            struct timespec duration = {.tv_sec = (time_t)(wait / 1000000000u), .tv_nsec = (long)(wait % 1000000000u)};
+        uint64_t until = qiq_timer_count > 0 && qiq_timers[0].deadline > now ? qiq_timers[0].deadline - now : 0;
+        if (qiq_io_waiting > 0) {
+            // Milliseconds, rounded up so a timer isn't woken early.
+            int timeout_ms = qiq_timer_count == 0 ? -1 : (int)((until + 999999u) / 1000000u);
+            qiq_poll_io(timeout_ms);
+        } else if (until > 0) {
+            struct timespec duration = {.tv_sec = (time_t)(until / 1000000000u), .tv_nsec = (long)(until % 1000000000u)};
             while (nanosleep(&duration, &duration) != 0 && errno == EINTR) {
             }
-            now = qiq_now();
         }
-        while (qiq_timer_count > 0 && qiq_timers[0].deadline <= now) qiq_make_ready(qiq_timer_pop());
+        now = qiq_now();
+        while (qiq_timer_count > 0 && qiq_timers[0].deadline <= now) {
+            QiqTimer timer = qiq_timer_pop();
+            qiq_end_wait(timer.fiber, timer.wait);
+        }
     }
+}
+
+// Starts a new wait for the current fiber: what wakes it must name this.
+static uint64_t qiq_begin_wait(void) {
+    qiq_current->state = QIQ_FIBER_PARKED;
+    return ++qiq_current->wait;
 }
 
 #define QIQ_DEADLOCK "deadlock: every task is waiting (for a task, a channel, or the end of the program), so none can go on"
@@ -363,7 +418,7 @@ int64_t qiq_stdlib___fiber_current(void) {
 }
 
 void qiq_stdlib___fiber_park(void) {
-    qiq_current->state = QIQ_FIBER_PARKED;
+    qiq_begin_wait();
     qiq_wait();
 }
 
@@ -413,7 +468,7 @@ void qiq_fibers_finish(void) {
     if (qiq_current != &qiq_main_fiber) return;
     if (qiq_alive > 0) {
         qiq_main_waits_for_all = 1;
-        qiq_current->state = QIQ_FIBER_PARKED;
+        qiq_begin_wait();
         qiq_wait();
         qiq_main_waits_for_all = 0;
         if (qiq_pending_exception != NULL) return;
@@ -435,7 +490,72 @@ int qiq_fibers_active(void) {
 // std/time's sleep and usleep, while there are other fibers: parks the
 // current fiber until `nanoseconds` from now, running the others meanwhile.
 void qiq_fiber_sleep(uint64_t nanoseconds) {
-    qiq_timer_push(qiq_now() + nanoseconds, qiq_current);
-    qiq_current->state = QIQ_FIBER_PARKED;
-    qiq_wait();
+    uint64_t deadline = qiq_now() + nanoseconds;
+    // A channel or task may wake it early (it was once waiting on one); it
+    // sleeps again until the time.
+    while (qiq_now() < deadline) {
+        uint64_t wait = qiq_begin_wait();
+        qiq_timer_push(deadline, qiq_current, wait);
+        qiq_wait();
+        if (qiq_pending_exception != NULL) return;
+    }
+}
+
+static uint32_t qiq_epoll_events(short events) {
+    uint32_t mapped = 0;
+    if (events & POLLIN) mapped |= EPOLLIN | EPOLLRDHUP;
+    if (events & POLLOUT) mapped |= EPOLLOUT;
+    return mapped;
+}
+
+// poll(), for the runtime's sockets and pipes: with other fibers, the
+// current one waits for a descriptor to be ready (or the timeout) while the
+// others run. Returns as poll() does, with each `revents` set.
+int qiq_poll(struct pollfd *fds, nfds_t count, int timeout_ms) {
+    if (!qiq_fibers_active()) return poll(fds, count, timeout_ms);
+    uint64_t deadline = timeout_ms < 0 ? 0 : qiq_now() + (uint64_t)timeout_ms * 1000000u;
+    QiqIoWaiter *waiters = malloc(count * sizeof *waiters);
+    if (waiters == NULL) qiq_fatal("out of memory");
+    for (;;) {
+        int ready = poll(fds, count, 0);
+        if (ready != 0 || (timeout_ms >= 0 && qiq_now() >= deadline)) {
+            free(waiters);
+            return ready;
+        }
+        if (qiq_epoll < 0) {
+            qiq_epoll = epoll_create1(EPOLL_CLOEXEC);
+            if (qiq_epoll < 0) qiq_fatal("could not create an epoll instance");
+        }
+        uint64_t wait = qiq_begin_wait();
+        nfds_t registered = 0;
+        for (nfds_t index = 0; index < count; index++) {
+            waiters[index] = (QiqIoWaiter){qiq_current, wait};
+            struct epoll_event event = {.events = qiq_epoll_events(fds[index].events), .data.ptr = &waiters[index]};
+            if (epoll_ctl(qiq_epoll, EPOLL_CTL_ADD, fds[index].fd, &event) == 0) registered++;
+            else fds[index].fd = -fds[index].fd - 1;  // not registered: skipped when removing
+        }
+        if (registered == 0) {
+            // Nothing epoll can watch (as for a regular file): poll as before.
+            for (nfds_t index = 0; index < count; index++) if (fds[index].fd < 0) fds[index].fd = -fds[index].fd - 1;
+            qiq_current->state = QIQ_FIBER_RUNNING;
+            free(waiters);
+            return poll(fds, count, timeout_ms);
+        }
+        qiq_io_waiting += (int64_t)registered;
+        if (timeout_ms >= 0) qiq_timer_push(deadline, qiq_current, wait);
+        qiq_wait();
+        for (nfds_t index = 0; index < count; index++) {
+            if (fds[index].fd < 0) {
+                fds[index].fd = -fds[index].fd - 1;
+                continue;
+            }
+            epoll_ctl(qiq_epoll, EPOLL_CTL_DEL, fds[index].fd, NULL);
+        }
+        qiq_io_waiting -= (int64_t)registered;
+        if (qiq_pending_exception != NULL) {
+            free(waiters);
+            errno = EIO;
+            return -1;
+        }
+    }
 }

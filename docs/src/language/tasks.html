@@ -84,5 +84,27 @@ working on send email
 <p>When every task is waiting for something only another task could do, such as receiving from a channel nothing will send on, none can go on. Rather than hang, the program throws a <code>RuntimeException</code> in a waiting task: <code>deadlock: every task is waiting (for a task, a channel, or the end of the program), so none can go on</code>.</p>
 
 <h2>What waits, and what doesn't</h2>
-<p>Tasks let others run while they wait in <code>await</code>, <code>join</code>, a channel's <code>send</code> and <code>receive</code>, and <code>sleep</code> and <code>usleep</code> from <code>std/time</code>. Network and file operations, such as <code>http_get</code>, database queries, and reading files, don't yet: while one runs, every task waits for it. Making them let other tasks run is the next step for <code>std/async</code>.</p>
+<p>A task lets others run whenever it waits for something outside the program:</p>
+<ul>
+<li>network I/O: the <a href="ref.http.html">HTTP client</a>, <a href="class.socket.html">sockets</a> (including TLS), and <a href="class.database.html">PostgreSQL and MySQL</a> queries;</li>
+<li>running commands with <a href="function.exec.html">exec</a> and <a href="function.shell.html">shell</a>, while the command runs;</li>
+<li><code>sleep</code> and <code>usleep</code> from <code>std/time</code>;</li>
+<li>and, within the program, <code>await</code>, <code>join</code>, and a channel's <code>send</code> and <code>receive</code>.</li>
+</ul>
+<p>So three HTTP requests that each take a second, run as tasks, take about a second together:</p>
+
+```qiq
+import spawn, Task from "std/async";
+import http_get from "std/net/http";
+
+Task<int>[] requests = [];
+foreach (["https://example.com/", "https://example.org/", "https://example.net/"] as url) {
+    array_push(requests, spawn(fn() => http_get(url)->status));
+}
+foreach (requests as request) {
+    print(request->await());
+}
+```
+
+<p>Timeouts work as before: a request that times out throws in its own task while the others go on. A few things still make every task wait while they run: looking up a host name (DNS), reading and writing files, SQLite queries, and code that computes without waiting (which can call <a href="function.yield-now.html">yield_now</a> to let others run).</p>
 <p>Tasks are concurrent, not parallel: they share one processor core. For work that needs several cores, run several processes, as the <a href="ref.http-server.html">HTTP server</a> does.</p>

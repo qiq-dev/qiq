@@ -1,0 +1,24 @@
+// HTTP requests as tasks run at once. Needs internet access:
+//   ./target/release/qiq run tests/stdlib/async_http.qiq
+// test: needs QIQ_TEST_NETWORK
+import spawn, launch, Task from "std/async";
+import http_get from "std/net/http";
+import usleep from "std/time";
+
+int ticks = 0;
+bool waiting = true;
+launch(function(): void {
+    while (waiting) {
+        usleep(1000);
+        ticks++;
+    }
+});
+Task<int>[] requests = [];
+foreach (["https://example.com/", "https://example.org/", "https://example.net/"] as url) {
+    array_push(requests, spawn(fn() => http_get(url, timeout: 20)->status));
+}
+foreach (requests as request) {
+    print(request->await());
+}
+waiting = false;
+print("another task ran while they waited:", ticks > 0);

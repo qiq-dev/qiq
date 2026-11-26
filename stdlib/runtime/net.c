@@ -39,6 +39,9 @@
 #include "psa/crypto.h"
 #include "qiq_runtime.h"
 
+// From fiber.c: poll() that lets other tasks (std/async) run while waiting.
+int qiq_poll(struct pollfd *fds, nfds_t count, int timeout_ms);
+
 #define QIQ_SOCKET_BUFFER 16384
 
 typedef struct {
@@ -164,7 +167,7 @@ static void qiq_tls_setup(void) {
 static void qiq_wait(QiqSocket *socket, short events, const char *action) {
     struct pollfd poller = {socket->fd, events, 0};
     for (;;) {
-        int ready = poll(&poller, 1, socket->timeout_ms);
+        int ready = qiq_poll(&poller, 1, socket->timeout_ms);
         if (ready > 0) return;
         if (ready == 0) {
             qiq_throwf(QIQ_NETWORK_EXCEPTION, "timed out %s %s after %d second%s", action, socket->peer,
@@ -301,7 +304,7 @@ static int qiq_connect_tcp(QiqSocket *connection, const char *host, int64_t port
             struct pollfd poller = {fd, POLLOUT, 0};
             int ready;
             do {
-                ready = poll(&poller, 1, connection->timeout_ms);
+                ready = qiq_poll(&poller, 1, connection->timeout_ms);
             } while (ready < 0 && errno == EINTR);
             if (ready > 0) {
                 socklen_t length = sizeof error;
@@ -351,7 +354,7 @@ static bool qiq_tls_handshake(QiqSocket *socket, const char *host, const mbedtls
             struct pollfd poller = {socket->fd, code == MBEDTLS_ERR_SSL_WANT_READ ? POLLIN : POLLOUT, 0};
             int ready;
             do {
-                ready = poll(&poller, 1, socket->timeout_ms);
+                ready = qiq_poll(&poller, 1, socket->timeout_ms);
             } while (ready < 0 && errno == EINTR);
             if (ready > 0) continue;
             snprintf(message, size, "timed out during the TLS handshake with %s after %d second%s", socket->peer,
@@ -737,7 +740,7 @@ int64_t qiq_net_connect_unix(const char *path, int64_t timeout) {
             struct pollfd poller = {fd, POLLOUT, 0};
             int ready;
             do {
-                ready = poll(&poller, 1, timeout > 2000000 ? 2000000000 : (int)(timeout * 1000));
+                ready = qiq_poll(&poller, 1, timeout > 2000000 ? 2000000000 : (int)(timeout * 1000));
             } while (ready < 0 && errno == EINTR);
             error = ETIMEDOUT;
             if (ready > 0) {

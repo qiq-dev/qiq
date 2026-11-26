@@ -26,6 +26,12 @@
 
 #include "qiq_runtime.h"
 
+// From fiber.c: poll() that lets other tasks (std/async) run while waiting,
+// and sleeping that does.
+int qiq_poll(struct pollfd *fds, nfds_t count, int timeout_ms);
+int qiq_fibers_active(void);
+void qiq_fiber_sleep(uint64_t nanoseconds);
+
 #ifndef SYS_close_range
 #define SYS_close_range 436
 #endif
@@ -259,6 +265,9 @@ QIQ_GUARDED(int64_t, qiq_stdlib___process_run, 0,
     int64_t deadline = timeout > 0 ? qiq_milliseconds() + timeout * 1000 : -1;
     bool timed_out = false;
     char chunk[65536];
+    // Collected here, not in qiq_process_outputs: other tasks may run commands
+    // while this one waits.
+    QiqBuffer outputs[2] = {{0}, {0}};
     while (out[0] >= 0 || err[0] >= 0) {
         struct pollfd fds[3];
         int watched = 0;
@@ -272,7 +281,7 @@ QIQ_GUARDED(int64_t, qiq_stdlib___process_run, 0,
             if (left <= 0) { timed_out = true; break; }
             wait_ms = left > 1000000 ? 1000000 : (int)left;
         }
-        int ready = poll(fds, (nfds_t)watched, wait_ms);
+        int ready = qiq_poll(fds, (nfds_t)watched, wait_ms);
         if (ready < 0) {
             if (errno == EINTR) continue;
             break;
@@ -289,7 +298,7 @@ QIQ_GUARDED(int64_t, qiq_stdlib___process_run, 0,
             }
             ssize_t count = read(*fd, chunk, sizeof chunk);
             if (count > 0) {
-                qiq_buffer_append(&qiq_process_outputs[fd == &out[0] ? 0 : 1], chunk, (size_t)count);
+                qiq_buffer_append(&outputs[fd == &out[0] ? 0 : 1], chunk, (size_t)count);
             } else if (count == 0 || (errno != EAGAIN && errno != EINTR)) {
                 qiq_close(fd);
             }
@@ -300,20 +309,30 @@ QIQ_GUARDED(int64_t, qiq_stdlib___process_run, 0,
     qiq_close(&err[0]);
     sigaction(SIGPIPE, &previous_pipe, NULL);
 
-    // Wait for it to exit, within the deadline.
+    // Wait for it to exit, within the deadline. With other tasks, it checks
+    // every few milliseconds, letting them run in between.
     int status = 0;
     while (!timed_out) {
-        pid_t done = waitpid(pid, &status, deadline >= 0 ? WNOHANG : 0);
+        bool tasks = qiq_fibers_active();
+        pid_t done = waitpid(pid, &status, deadline >= 0 || tasks ? WNOHANG : 0);
         if (done == pid) break;
         if (done < 0 && errno != EINTR) break;
         if (done == 0) {
-            if (qiq_milliseconds() >= deadline) {
+            if (deadline >= 0 && qiq_milliseconds() >= deadline) {
                 timed_out = true;
                 break;
             }
-            struct timespec pause = {0, 5 * 1000000};
-            nanosleep(&pause, NULL);
+            if (tasks) {
+                qiq_fiber_sleep(2 * 1000000);
+            } else {
+                struct timespec pause = {0, 5 * 1000000};
+                nanosleep(&pause, NULL);
+            }
         }
+    }
+    for (int stream = 0; stream < 2; stream++) {
+        qiq_buffer_free(&qiq_process_outputs[stream]);
+        qiq_process_outputs[stream] = outputs[stream];
     }
     if (timed_out) {
         kill(pid, SIGKILL);

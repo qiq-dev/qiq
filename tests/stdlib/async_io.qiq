@@ -1,0 +1,27 @@
+// Tasks waiting on I/O let others run: three commands that each take 0.3
+// seconds, run as tasks, take about 0.3 seconds in all, and a task that
+// ticks meanwhile keeps running.
+import spawn, launch, Task from "std/async";
+import exec from "std/os";
+import hrtime, usleep from "std/time";
+
+int start = hrtime();
+int ticks = 0;
+bool waiting = true;
+launch(function(): void {
+    while (waiting) {
+        usleep(20000);
+        ticks++;
+    }
+});
+Task<string>[] commands = [];
+foreach (["a", "b", "c"] as name) {
+    array_push(commands, spawn(fn() => exec(["sh", "-c", "sleep 0.3; echo " + name])->stdout));
+}
+string output = "";
+foreach (commands as command) {
+    output = output + trim(command->await());
+}
+waiting = false;
+int took = (hrtime() - start) / 1000000;
+print(output, took < 800, ticks > 3);
