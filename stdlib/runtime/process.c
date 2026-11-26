@@ -376,3 +376,142 @@ QIQ_GUARDED(char *, qiq_stdlib___process_output, NULL, (int64_t stream), (stream
     qiq_buffer_free(buffer);
     return text;
 }
+
+// ---------------------------------------------------------------------------
+// Worker processes, for std/async's parallel: a forked copy of the program
+// runs a function on another processor core and sends its result back
+// through a pipe, as text (JSON, from the qiq side).
+
+void qiq_fiber_become_root(void);
+
+typedef struct {
+    pid_t pid;
+    int fd;   // the pipe's read end; -1 for a free slot
+} QiqWorkerProcess;
+
+static QiqWorkerProcess *qiq_workers = NULL;
+static size_t qiq_worker_count = 0;
+// In a worker process: where its result goes.
+static int qiq_worker_result = -1;
+
+// Forks a worker process: 0 in the worker, and in this process a handle for
+// __process_result.
+QIQ_GUARDED(int64_t, qiq_stdlib___process_fork, 0, (void), ()) {
+    // Output not yet written would otherwise be written by both.
+    fflush(NULL);
+    int pipe_ends[2];
+    if (pipe2(pipe_ends, O_CLOEXEC) != 0) qiq_throwf(QIQ_PROCESS_EXCEPTION, "could not start a worker process: %s", strerror(errno));
+    pid_t pid = fork();
+    if (pid < 0) {
+        int error = errno;
+        close(pipe_ends[0]);
+        close(pipe_ends[1]);
+        qiq_throwf(QIQ_PROCESS_EXCEPTION, "could not start a worker process: %s", strerror(error));
+    }
+    if (pid == 0) {
+        close(pipe_ends[0]);
+        qiq_worker_result = pipe_ends[1];
+        // Its workers are its own, not the parent's.
+        for (size_t index = 0; index < qiq_worker_count; index++) {
+            if (qiq_workers[index].fd >= 0) close(qiq_workers[index].fd);
+        }
+        qiq_worker_count = 0;
+        qiq_fiber_become_root();
+        return 0;
+    }
+    close(pipe_ends[1]);
+    fcntl(pipe_ends[0], F_SETFL, fcntl(pipe_ends[0], F_GETFL) | O_NONBLOCK);
+    size_t slot = 0;
+    while (slot < qiq_worker_count && qiq_workers[slot].fd >= 0) slot++;
+    if (slot == qiq_worker_count) {
+        QiqWorkerProcess *grown = realloc(qiq_workers, (qiq_worker_count + 1) * sizeof *grown);
+        if (grown == NULL) qiq_fatal("out of memory");
+        qiq_workers = grown;
+        qiq_worker_count++;
+    }
+    qiq_workers[slot] = (QiqWorkerProcess){pid, pipe_ends[0]};
+    return (int64_t)slot + 1;
+}
+
+// In a worker process: sends `payload` to the parent and ends the process
+// (without the parent's exit handlers, which aren't the worker's).
+void qiq_stdlib___process_finish(const char *payload) {
+    size_t length = payload == NULL ? 0 : strlen(payload);
+    size_t sent = 0;
+    while (sent < length) {
+        ssize_t wrote = write(qiq_worker_result, payload + sent, length - sent);
+        if (wrote < 0) {
+            if (errno == EINTR) continue;
+            break;
+        }
+        sent += (size_t)wrote;
+    }
+    close(qiq_worker_result);
+    fflush(NULL);
+    _exit(0);
+}
+
+// Stops worker `slot`'s process and frees the slot.
+static void qiq_end_worker(size_t slot, bool kill_it, int *status) {
+    QiqWorkerProcess *worker = &qiq_workers[slot];
+    if (worker->fd >= 0) close(worker->fd);
+    worker->fd = -1;
+    if (kill_it) kill(worker->pid, SIGKILL);
+    // It has closed its end (or been killed), so it exits soon: with other
+    // tasks, check every few milliseconds, letting them run.
+    for (;;) {
+        pid_t done = waitpid(worker->pid, status, qiq_fibers_active() ? WNOHANG : 0);
+        if (done == worker->pid || (done < 0 && errno != EINTR)) break;
+        if (done == 0) qiq_fiber_sleep(1000000);
+    }
+}
+
+// The worker's result, once its process ends: what it sent (see
+// std/async), or, if it ended without sending anything (it crashed or was
+// killed), "e" and why. Other tasks run while it waits; cancelled, it stops
+// the worker.
+QIQ_GUARDED(char *, qiq_stdlib___process_result, NULL, (int64_t handle), (handle)) {
+    if (handle < 1 || (size_t)handle > qiq_worker_count || qiq_workers[handle - 1].fd < 0) {
+        qiq_throw(QIQ_PROCESS_EXCEPTION, "not a running worker process");
+    }
+    size_t slot = (size_t)handle - 1;
+    QiqBuffer received = {0};
+    char chunk[65536];
+    for (;;) {
+        ssize_t got = read(qiq_workers[slot].fd, chunk, sizeof chunk);
+        if (got > 0) {
+            qiq_buffer_append(&received, chunk, (size_t)got);
+            continue;
+        }
+        if (got == 0) break;
+        if (errno == EINTR) continue;
+        if (errno != EAGAIN && errno != EWOULDBLOCK) break;
+        struct pollfd poller = {qiq_workers[slot].fd, POLLIN, 0};
+        if (qiq_poll(&poller, 1, -1) < 0 && qiq_pending_exception != NULL) {
+            int ignored;
+            qiq_end_worker(slot, true, &ignored);
+            qiq_buffer_free(&received);
+            qiq_throw(QIQ_CANCELLED_EXCEPTION, "the task was cancelled");
+        }
+    }
+    int status = 0;
+    qiq_end_worker(slot, false, &status);
+    if (received.length == 0) {
+        qiq_buffer_free(&received);
+        char reason[200];
+        if (WIFSIGNALED(status)) {
+            snprintf(reason, sizeof reason, "eWorkerException: the worker process was killed by signal %d (%s)", WTERMSIG(status), strsignal(WTERMSIG(status)));
+        } else {
+            snprintf(reason, sizeof reason, "eWorkerException: the worker process exited with status %d without a result", WEXITSTATUS(status));
+        }
+        return qiq_string_from(reason, strlen(reason));
+    }
+    char *result = qiq_string_from(received.data, received.length);
+    qiq_buffer_free(&received);
+    return result;
+}
+
+int64_t qiq_stdlib___process_cpu_count(void) {
+    long count = sysconf(_SC_NPROCESSORS_ONLN);
+    return count > 0 ? count : 1;
+}

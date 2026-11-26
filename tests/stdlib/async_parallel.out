@@ -1,0 +1,12 @@
+[999989, 999912, 999718, 999353] true
+[1, 4, 9, 16, 25, 36, 49]
+[1, 2]
+("tuple", [1, 2], {"k" => 1.5})
+42 here it's still 41
+RuntimeException: worker failed
+WorkerException: the worker process exited with status 3 without a result
+stopped: timed out after 0.1 seconds
+42 21
+before the worker
+printed in the worker
+after it

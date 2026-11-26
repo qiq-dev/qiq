@@ -22,6 +22,8 @@ import Exception, RuntimeException, InvalidArgumentException from "exceptions";
 import Iterator, Iterable from "iterators";
 import Deque from "collections";
 import usleep from "date";
+import substr, str_starts_with from "string";
+import array_map from "arrays";
 
 extern function __fiber_spawn(function(): void body): void;
 extern function __fiber_current(): int;
@@ -31,6 +33,10 @@ extern function __fiber_yield(): void;
 extern function __fiber_failed(Exception error): void;
 extern function __fiber_observed(Exception error): void;
 extern function __fiber_cancel(int fiber): void;
+extern function __process_fork(): int;
+extern function __process_finish(string payload): void;
+extern function __process_result(int worker): string;
+extern function __process_cpu_count(): int;
 
 // Thrown by sending on a closed channel, and by receiving from one that's
 // closed and empty.
@@ -42,6 +48,10 @@ class CancelledException extends RuntimeException {}
 
 // Thrown by with_timeout when the function takes longer than the limit.
 class TimeoutException extends RuntimeException {}
+
+// Thrown by await on a parallel task whose function threw (the message
+// starts with the exception's class), or whose process crashed.
+class WorkerException extends RuntimeException {}
 
 // What tasks and jobs share: whether they've ended, waiting for them to, and
 // the exception they ended with, if any.
@@ -374,4 +384,63 @@ function receive_any<T>(Channel<T>[] channels): (int, T) {
         }
         __fiber_park();
     }
+}
+
+// Runs `body` in a worker process, on another processor core, and returns
+// the Task, whose await() gives its result. The worker starts as a copy of
+// the program at this moment: `body` sees the values it captures as they
+// are now, and what it changes stays in the worker. Its result is sent back
+// as JSON, so it can be any type json_encode writes (numbers, strings,
+// arrays, maps, tuples, objects with public properties); an exception it
+// throws becomes a WorkerException here. Cancelling the task stops the
+// worker. Tasks run concurrently on one core; parallel ones each have one.
+function parallel<T>(function(): T body): Task<T> {
+    int worker = __process_fork();
+    if (worker == 0) {
+        // The worker process: run, send the result, and end.
+        string payload = "";
+        try {
+            payload = "v" + json_encode(body());
+        } catch (Exception error) {
+            payload = "e" + error::class + ": " + error->getMessage();
+        }
+        __process_finish(payload);
+    }
+    return spawn(function(): T {
+        string payload = __process_result(worker);
+        if (str_starts_with(payload, "e")) {
+            throw new WorkerException(substr(payload, 1));
+        }
+        T result = json_decode(substr(payload, 1));
+        return result;
+    });
+}
+
+// `change` applied to each of `items`, in worker processes (by default one
+// per processor core), each taking a share of the items in order: the
+// results, in the items' order. See parallel for what the workers see and
+// send back.
+function parallel_map<T, U>(T[] items, function(T): U change, int processes = 0): U[] {
+    int count = processes > 0 ? processes : __process_cpu_count();
+    if (count > len(items)) {
+        count = len(items);
+    }
+    if (count == 0) {
+        return [];
+    }
+    int share = (len(items) + count - 1) / count;
+    Task<U[]>[] parts = [];
+    int start = 0;
+    while (start < len(items)) {
+        T[] chunk = array_slice(items, start, share);
+        array_push(parts, parallel(fn() => array_map(chunk, change)));
+        start = start + share;
+    }
+    U[] results = [];
+    foreach (parts as part) {
+        foreach (part->await() as value) {
+            array_push(results, value);
+        }
+    }
+    return results;
 }

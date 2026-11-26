@@ -155,4 +155,42 @@ foreach (requests as request) {
 ```
 
 <p>Timeouts work as before: a request that times out throws in its own task while the others go on. Database work from several tasks takes turns: one query runs at a time, each with its own values and results, and a task waiting its turn lets the others run. A few things still make every task wait while they run: reading and writing a file a line or a chunk at a time with <a href="class.file.html">File</a>, the other file functions (such as <code>scandir</code> and <code>copy</code>), and code that computes without waiting (which can call <a href="function.yield-now.html">yield_now</a> to let others run).</p>
-<p>Tasks are concurrent, not parallel: they share one processor core. For work that needs several cores, run several processes, as the <a href="ref.http-server.html">HTTP server</a> does. The server can also serve several requests per worker as tasks, with <a href="ref.http-server.html#concurrency">http_serve's concurrency</a>.</p>
+<h2 id="parallel">Using several processor cores</h2>
+<p>Tasks are concurrent, not parallel: they share one processor core, which suits waiting but not computing. For work that needs several cores, <a href="function.parallel.html">parallel(f)</a> runs <code>f</code> in a worker process, on another core, and returns a <code>Task</code> whose <code>await</code> gives the result; <a href="function.parallel-map.html">parallel_map</a> shares an array's items among one worker per core:</p>
+
+```qiq
+import parallel, parallel_map, Task from "std/async";
+
+function countPrimes(int from, int to): int {
+    int count = 0;
+    foreach (range(from, to) as n) {
+        bool prime = n > 1;
+        int d = 2;
+        while (prime && d * d <= n) {
+            prime = n % d != 0;
+            d++;
+        }
+        if (prime) {
+            count++;
+        }
+    }
+    return count;
+}
+
+Task<int> low = parallel(fn() => countPrimes(1, 50000));
+Task<int> high = parallel(fn() => countPrimes(50001, 100000));
+print(low->await() + high->await());
+print(parallel_map([10, 100, 1000], fn(int n) => countPrimes(1, n)));
+```
+```output
+9592
+[4, 25, 168]
+```
+
+<ul>
+<li>A worker starts as a copy of the program at the moment <code>parallel</code> is called: the function sees the values it captures as they are then, and what it changes stays in the worker.</li>
+<li>Its result is copied back as JSON, so it can be any type <a href="function.json-encode.html">json_encode</a> writes (numbers, strings, arrays, maps, tuples, enums, and objects, whose public properties are copied); a function value is a compile error. An exception it throws becomes a <code>WorkerException</code>, whose message starts with the original's class.</li>
+<li>It's a task like any other: <code>await</code> lets other tasks run, and cancelling it (or a <code>with_timeout</code> around it) stops the worker's process.</li>
+<li>A worker shouldn't use the parent's open database connections or sockets, which it shares the underlying connection of; open its own.</li>
+</ul>
+<p>The <a href="ref.http-server.html">HTTP server</a> uses several cores on its own, with a worker process each, and can serve several requests per worker as tasks with <a href="ref.http-server.html#concurrency">http_serve's concurrency</a>.</p>

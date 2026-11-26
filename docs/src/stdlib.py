@@ -3472,7 +3472,7 @@ ASYNC = {
     "title": "Tasks",
     "intro": (
         "Starting functions as <a href=\"tasks.html\">tasks</a> that run concurrently, from <code>std/async</code>: "
-        "<code>spawn</code> for a function that returns a value, <code>launch</code> for one that returns nothing. "
+        "<code>spawn</code> for a function that returns a value, <code>launch</code> for one that returns nothing, and <code>parallel</code> for one to run on another processor core. "
         "The <a href=\"class.task.html\">Task and Job</a> classes wait for them, and <a href=\"class.channel.html\">Channel</a> passes values between them."
     ),
     "functions": [
@@ -3519,6 +3519,28 @@ ASYNC = {
             "examples": [{"title": "The first to answer", "code": 'Channel<int> a = new Channel<int>(1);\nChannel<int> b = new Channel<int>(1);\nb->send(2);\n(int which, int value) = receive_any([a, b]);\nprint(which, value);',
                           "output": "1 2"}],
             "see_also": ["Channel"],
+        },
+        {
+            "name": "parallel", "purpose": "Run a function in another process, on another core",
+            "params": [param("body", "function(): T", "The function to run; its result is copied back.")],
+            "returns": "Task<T>",
+            "description": "Runs <code>body</code> in a worker process, on another processor core, and returns the <a href=\"class.task.html\">Task</a>, whose <code>await()</code> gives its result. The worker starts as a copy of the program at this moment, so <code>body</code> sees the values it captures as they are now, and what it changes stays in the worker. The result is copied back as JSON: any type <a href=\"function.json-encode.html\">json_encode</a> writes (objects bring their public properties). See <a href=\"tasks.html#parallel\">Using several processor cores</a>.",
+            "return_description": "The task.",
+            "errors": ["<code>WorkerException</code> (from <code>std/async</code>), thrown by <code>await</code>, if <code>body</code> throws (its message starts with the original exception's class) or the worker's process ends without a result. <code>ProcessException</code> if the process can't be started. A result type JSON can't carry, such as a function, is a compile error."],
+            "examples": [{"title": "Two halves at once", "code": 'function sumTo(int n): int {\n    int total = 0;\n    foreach (range(1, n) as i) {\n        total += i;\n    }\n    return total;\n}\n\nTask<int> a = parallel(fn() => sumTo(1000));\nTask<int> b = parallel(fn() => sumTo(2000));\nprint(a->await(), b->await());',
+                          "output": "500500 2001000"}],
+            "see_also": ["parallel_map", "spawn"],
+        },
+        {
+            "name": "parallel_map", "purpose": "Map an array in several processes",
+            "params": [param("items", "T[]", "The items."), param("change", "function(T): U", "Called with each item, in a worker process."), param("processes", "int", "How many worker processes; <code>0</code> means one per processor core.", "0")],
+            "returns": "U[]",
+            "description": "Shares <code>items</code> among worker processes, each taking a run of them in order, and returns what <code>change</code> returns for each, in the items' order, like <a href=\"function.array-map.html\">array_map</a> on several cores. The results are copied back as <a href=\"function.parallel.html\">parallel</a>'s are.",
+            "return_description": "The results.",
+            "errors": ["As for <a href=\"function.parallel.html\">parallel</a>."],
+            "examples": [{"title": "Squares", "code": 'print(parallel_map([1, 2, 3, 4, 5], fn(int n) => n * n, 2));',
+                          "output": "[1, 4, 9, 16, 25]"}],
+            "see_also": ["parallel", "array_map"],
         },
         {
             "name": "yield_now", "purpose": "Let the other tasks run",

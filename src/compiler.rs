@@ -11621,6 +11621,7 @@ impl Emitter {
         if value.value_type == ValueType::Void {
             return Err("json_encode needs a value".to_string());
         }
+        self.check_json_source(value.value_type, &mut Vec::new())?;
         let pretty = match pretty_expression {
             Some(expression) => {
                 let pretty = self.emit_expression(expression, variables, body)?;
@@ -11785,6 +11786,7 @@ impl Emitter {
     fn check_json_target(&self, value_type: ValueType, visited: &mut Vec<u32>) -> Result<(), String> {
         match value_type {
             ValueType::Void | ValueType::Null => Err("json_decode can't decode into null".to_string()),
+            ValueType::Function(_) => Err(format!("json_decode can't create a {}: JSON has no functions", self.type_name(value_type))),
             ValueType::Array(_) => self.check_json_target(self.element_of(value_type).expect("array type"), visited),
             ValueType::Map(type_id) => self.check_json_target(self.map_types[type_id as usize].value_type, visited),
             ValueType::Class(class_id) => {
@@ -11821,6 +11823,29 @@ impl Emitter {
                 for (property, _) in self.class_fields(class_id) {
                     if property.visibility == Visibility::Public {
                         self.check_json_target(property.value_type, visited)?;
+                    }
+                }
+                Ok(())
+            }
+            _ => Ok(()),
+        }
+    }
+
+    /// That json_encode can write `value_type`: not a function value, nor
+    /// anything holding one in an array, map, tuple, or public property.
+    fn check_json_source(&self, value_type: ValueType, visited: &mut Vec<u32>) -> Result<(), String> {
+        match value_type {
+            ValueType::Function(_) => Err(format!("json_encode can't write a {}: JSON has no functions", self.type_name(value_type))),
+            ValueType::Array(_) => self.check_json_source(self.element_of(value_type).expect("array type"), visited),
+            ValueType::Map(type_id) => self.check_json_source(self.map_types[type_id as usize].value_type, visited),
+            ValueType::Class(class_id) => {
+                if visited.contains(&class_id) {
+                    return Ok(());
+                }
+                visited.push(class_id);
+                for (property, _) in self.class_fields(class_id) {
+                    if property.visibility == Visibility::Public {
+                        self.check_json_source(property.value_type, visited)?;
                     }
                 }
                 Ok(())
@@ -18842,6 +18867,22 @@ mod tests {
             let error = compile_source(&format!("{declared}{code}")).err().unwrap_or_else(|| panic!("{code}: compiled"));
             assert!(error.contains(message), "{code}: expected '{message}', got '{error}'");
         }
+    }
+
+    #[test]
+    fn json_rejects_function_values() {
+        let cases = [
+            ("function(int): int f = fn(int x) => x; print(json_encode(f));", "json_encode can't write a function(int): int: JSON has no functions"),
+            ("class H { public function(): int f; } print(json_encode([new H()]));", "json_encode can't write a function(): int"),
+            ("function(): int f = json_decode(\"{}\");", "json_decode can't create a function(): int: JSON has no functions"),
+            ("class H { public function(): int f; } H h = json_decode(\"{}\");", "json_decode can't create a function(): int"),
+        ];
+        for (code, message) in cases {
+            let error = compile_source(code).err().unwrap_or_else(|| panic!("{code}: compiled"));
+            assert!(error.contains(message), "{code}: expected '{message}', got '{error}'");
+        }
+        // A private one isn't written or read, so it's fine.
+        assert!(compile_source("class B { public int n = 1; private function(): int f = null; } print(json_encode(new B()));").is_ok());
     }
 
     #[test]

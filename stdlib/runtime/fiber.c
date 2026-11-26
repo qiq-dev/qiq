@@ -83,6 +83,10 @@ struct QiqFiber {
 
 static QiqFiber qiq_main_fiber = {.state = QIQ_FIBER_RUNNING};
 static QiqFiber *qiq_current = &qiq_main_fiber;
+// The fiber that waits for the others at the end and hears of deadlocks:
+// the main fiber, or in a worker process (std/async's parallel) the one that
+// forked it.
+static QiqFiber *qiq_root = &qiq_main_fiber;
 // Fibers ready to run, first in first out.
 static QiqFiber *qiq_ready_head = NULL;
 static QiqFiber *qiq_ready_tail = NULL;
@@ -594,12 +598,12 @@ void qiq_fiber_main(QiqFiber *fiber) {
     qiq_alive--;
     if (qiq_alive == 0 && qiq_main_waits_for_all) {
         qiq_main_waits_for_all = 0;
-        qiq_make_ready(&qiq_main_fiber);
+        qiq_make_ready(qiq_root);
     }
     QiqFiber *next = qiq_next_fiber();
     if (next == NULL) {
         // Everything left is waiting: the main fiber hears about it.
-        next = &qiq_main_fiber;
+        next = qiq_root;
         void *saved = qiq_pending_exception;
         qiq_raise_deadlock();
         next->pending = qiq_pending_exception;
@@ -733,7 +737,7 @@ void qiq_stdlib___fiber_observed(void *error) {
 // exception, which the program reports as uncaught. Without tasks, it
 // returns at once.
 void qiq_fibers_finish(void) {
-    if (qiq_current != &qiq_main_fiber) return;
+    if (qiq_current != qiq_root) return;
     if (qiq_alive > 0) {
         qiq_main_waits_for_all = 1;
         qiq_begin_wait();
@@ -847,4 +851,18 @@ int qiq_poll(struct pollfd *fds, nfds_t count, int timeout_ms) {
 // musl's resolver's wait (see __qiq_poll_hook).
 static int qiq_resolver_poll(struct pollfd *fds, nfds_t count, int timeout_ms) {
     return qiq_poll_with(fds, count, timeout_ms, false);
+}
+
+// In a worker process just forked (std/async's parallel): the fiber that
+// forked it is the only one it runs. The others it was copied with stay as
+// they were, never to run here, and their timers and waits are dropped.
+void qiq_fiber_become_root(void) {
+    qiq_root = qiq_current;
+    qiq_ready_head = qiq_ready_tail = NULL;
+    qiq_timer_count = 0;
+    qiq_alive = 0;
+    qiq_main_waits_for_all = 0;
+    qiq_unobserved_count = 0;
+    // (The helper threads and epoll instance were reset by the fork handler.)
+    qiq_io_waiting = 0;
 }

@@ -1,0 +1,73 @@
+// parallel and parallel_map: functions run in worker processes, on other
+// processor cores, with their results copied back.
+import parallel, parallel_map, spawn, with_timeout, Task, WorkerException, TimeoutException from "std/async";
+import exit from "std/os";
+import usleep from "std/time";
+
+function busy(int n): int {
+    int total = 0;
+    int i = 0;
+    while (i < n) {
+        total = (total + i * i) % 1000003;
+        i++;
+    }
+    return total;
+}
+
+Task<int>[] tasks = [];
+foreach (range(1, 4) as k) {
+    array_push(tasks, parallel(fn() => busy(1000000 * k)));
+}
+int[] answers = [];
+foreach (tasks as task) {
+    array_push(answers, task->await());
+}
+print(answers, answers[2] == busy(3000000));
+
+print(parallel_map([1, 2, 3, 4, 5, 6, 7], fn(int x) => x * x, 3));
+print(parallel_map(["a", "bb"], fn(string s) => len(s)));
+print(parallel(fn() => ("tuple", [1, 2], {"k" => 1.5}))->await());
+
+// The worker starts as a copy: what it changes stays there.
+int captured = 41;
+Task<int> copy = parallel(function(): int {
+    captured++;
+    return captured;
+});
+print(copy->await(), "here it's still", captured);
+
+// Its exceptions, and its process ending without a result.
+try {
+    parallel(function(): int {
+        throw new RuntimeException("worker failed");
+    })->await();
+} catch (WorkerException e) {
+    print(e->getMessage());
+}
+try {
+    parallel(function(): int {
+        exit(3);
+        return 0;
+    })->await();
+} catch (WorkerException e) {
+    print(e->getMessage());
+}
+
+// Cancelling stops the worker's process.
+try {
+    with_timeout(0.1, fn() => parallel(function(): int {
+        usleep(5000000);
+        return 1;
+    })->await());
+} catch (TimeoutException e) {
+    print("stopped:", e->getMessage());
+}
+
+// Workers from tasks, a worker's own workers, and output from a worker.
+Task<int> outer = spawn(fn() => parallel(fn() => 6)->await() * parallel(fn() => 7)->await());
+print(outer->await(), parallel(fn() => parallel(fn() => 20)->await() + 1)->await());
+print("before the worker");
+print(parallel(function(): string {
+    print("printed in the worker");
+    return "after it";
+})->await());
