@@ -854,6 +854,32 @@ struct Generics {
     /// How copies of generic methods are named in errors (`map<int>` for
     /// `map.g0`).
     shown_names: HashMap<String, String>,
+    /// The generic classes tuple types are made from, by their number of
+    /// values: `(int, string)` is __Tuple2<int, string> (stdlib/tuples.qiq).
+    /// Empty until that file is loaded.
+    tuple_templates: HashMap<usize, u32>,
+}
+
+impl Generics {
+    /// Whether `class_id` is one of the generic classes tuples are made from.
+    fn is_tuple_template(&self, class_id: u32) -> bool {
+        self.tuple_templates.values().any(|template| *template == class_id)
+    }
+}
+
+/// The element types of `value_type` when it's a tuple type, `(int, string)`.
+fn tuple_elements(value_type: ValueType, classes: &[ClassDef], generics: &Generics) -> Option<Vec<ValueType>> {
+    match value_type {
+        ValueType::Class(class_id) => match &classes.get(class_id as usize)?.instance_of {
+            Some((template, elements)) if generics.is_tuple_template(*template) => Some(elements.clone()),
+            _ => None,
+        },
+        ValueType::Applied(id) => {
+            let application = generics.applications.get(id as usize)?;
+            generics.is_tuple_template(application.generic).then(|| application.arguments.clone())
+        }
+        _ => None,
+    }
 }
 
 /// The scalars that have nullable forms (strings, chars, arrays, maps, and
@@ -1018,6 +1044,10 @@ fn type_name(
         ValueType::Nullable(scalar) => format!("?{}", name(scalar.value_type())),
         ValueType::TypeParam(id) => generics.params.get(id as usize).map_or_else(|| "T".to_string(), |param| param.name.clone()),
         ValueType::Applied(id) => match generics.applications.get(id as usize) {
+            Some(application) if generics.is_tuple_template(application.generic) => {
+                let elements: Vec<String> = application.arguments.iter().map(|argument| name(*argument)).collect();
+                format!("({})", elements.join(", "))
+            }
             Some(application) => {
                 let generic = classes.get(application.generic as usize).map_or("class", |class| class.name.as_str());
                 let arguments: Vec<String> = application.arguments.iter().map(|argument| name(*argument)).collect();
@@ -1399,6 +1429,11 @@ enum Expr {
     /// call (a Call, MethodCall, or StaticCall) of a generic function or
     /// method with its type arguments given rather than inferred.
     TypeArguments(Vec<ValueType>, Box<Expr>),
+    /// `(a, b, ...)`: a tuple of 2 to 8 values (see emit_tuple).
+    Tuple(Vec<Expr>),
+    /// The value taken apart by `(int a, string b) = value;`, checked to be
+    /// a tuple of this many values (see parse_destructuring).
+    TupleOf(usize, Box<Expr>),
 }
 
 /// The error for type arguments given to `callee`, which has no type parameters.
@@ -1574,6 +1609,17 @@ struct SwitchCase {
 struct MatchArm {
     values: Vec<Expr>,
     result: Expr,
+}
+
+/// One target of `(int a, b, _) = value;`.
+#[derive(Debug, Clone)]
+enum DestructureTarget {
+    /// `int a`: declared with that type.
+    Declare(ValueType, String),
+    /// `b`: assigned (or declared, with the value's type, if new).
+    Name(String),
+    /// `_`: the value isn't kept.
+    Skip,
 }
 
 #[derive(Debug, Clone)]
@@ -2780,6 +2826,30 @@ impl Parser {
     }
 
     fn parse_statement_kind(&mut self, before: &mut Vec<StatementKind>) -> Result<StatementKind, String> {
+        if matches!(self.current().kind, TokenKind::LeftParen) {
+            // `(int a, string b) = pair;` or `(a, b) = (b, a);`
+            if let Some(targets) = self.try_parse(|parser| parser.parse_destructuring_targets())? {
+                let value = self.parse_expression()?;
+                self.expect(TokenKind::Semicolon, "expected ';' after the value taken apart")?;
+                return Ok(self.destructure(targets, value, before));
+            }
+            // `(int, string) pair = ...;`. After `(int` it can only be a type,
+            // so its errors are reported as they are.
+            let surely_type = matches!(
+                self.tokens.get(self.cursor + 1).map(|token| &token.kind),
+                Some(TokenKind::Int | TokenKind::Double | TokenKind::Bool | TokenKind::String | TokenKind::CharType | TokenKind::ByteType | TokenKind::Question | TokenKind::Map)
+            );
+            if surely_type {
+                let value_type = self.parse_value_type()?;
+                return self.parse_declaration(value_type);
+            }
+            if let Some(value_type) = self.try_parse(|parser| {
+                let value_type = parser.parse_value_type()?;
+                Ok(matches!(parser.current().kind, TokenKind::Identifier(_)).then_some(value_type))
+            })? {
+                return self.parse_declaration(value_type);
+            }
+        }
         if self.at_function_type() || self.at_grouped_type_declaration() {
             // A variable of function type: function(int): int twice = ...;
             let value_type = self.parse_value_type()?;
@@ -3213,6 +3283,84 @@ impl Parser {
     }
 
     /// The `2` in `break 2;`: how many levels to leave (1 when absent).
+    /// Runs `attempt`; if it fails or gives None, puts the tokens back as
+    /// they were (reading types can split a `>>`) and gives None.
+    fn try_parse<T>(&mut self, attempt: impl FnOnce(&mut Self) -> Result<Option<T>, String>) -> Result<Option<T>, String> {
+        let (start, tokens) = (self.cursor, self.tokens.clone());
+        match attempt(self) {
+            Ok(Some(found)) => Ok(Some(found)),
+            _ => {
+                self.cursor = start;
+                self.tokens = tokens;
+                Ok(None)
+            }
+        }
+    }
+
+    /// `(int a, b, _) =`, up to and including the `=`: each target a typed
+    /// name (declared), a name (assigned, or declared with the value's
+    /// type), or `_` (skipped). None if that's not what's there.
+    fn parse_destructuring_targets(&mut self) -> Result<Option<Vec<DestructureTarget>>, String> {
+        let Some(targets) = self.parse_target_list()? else { return Ok(None) };
+        if !matches!(self.current().kind, TokenKind::Equals) {
+            return Ok(None);
+        }
+        self.advance();
+        Ok(Some(targets))
+    }
+
+    /// `(int a, b, _)`: two or more targets, each a typed name, a name, or
+    /// `_`. None if that's not what's there.
+    fn parse_target_list(&mut self) -> Result<Option<Vec<DestructureTarget>>, String> {
+        self.advance(); // (
+        let mut targets = Vec::new();
+        loop {
+            let bare = matches!(self.tokens.get(self.cursor + 1).map(|token| &token.kind), Some(TokenKind::Comma | TokenKind::RightParen));
+            match self.current().kind.clone() {
+                TokenKind::Identifier(name) if bare => {
+                    self.advance();
+                    targets.push(if name == "_" { DestructureTarget::Skip } else { DestructureTarget::Name(name) });
+                }
+                _ => {
+                    let value_type = self.parse_value_type()?;
+                    let TokenKind::Identifier(name) = self.current().kind.clone() else { return Ok(None) };
+                    self.advance();
+                    targets.push(DestructureTarget::Declare(value_type, name));
+                }
+            }
+            if !matches!(self.current().kind, TokenKind::Comma) {
+                break;
+            }
+            self.advance();
+        }
+        if !matches!(self.current().kind, TokenKind::RightParen) || targets.len() < 2 {
+            return Ok(None);
+        }
+        self.advance();
+        Ok(Some(targets))
+    }
+
+    /// The statements `(targets) = value;` stands for: the value, checked
+    /// to be a tuple of that many values, in a hidden variable, then each
+    /// target declared or assigned from its value in order. All but the
+    /// last go into `before`.
+    fn destructure(&mut self, targets: Vec<DestructureTarget>, value: Expr, before: &mut Vec<StatementKind>) -> StatementKind {
+        self.next_hidden += 1;
+        let hidden = format!("#tuple{}", self.next_hidden);
+        let mut kinds = vec![StatementKind::Assign(hidden.clone(), Expr::TupleOf(targets.len(), Box::new(value)))];
+        for (position, target) in targets.into_iter().enumerate() {
+            let element = Expr::Index(Box::new(Expr::Variable(hidden.clone())), Box::new(Expr::Number(position as i64)));
+            match target {
+                DestructureTarget::Declare(value_type, name) => kinds.push(StatementKind::Declare(value_type, name, element)),
+                DestructureTarget::Name(name) => kinds.push(StatementKind::Assign(name, element)),
+                DestructureTarget::Skip => {}
+            }
+        }
+        let last = kinds.pop().expect("the hidden variable at least");
+        before.extend(kinds);
+        last
+    }
+
     fn parse_jump_levels(&mut self, keyword: &str) -> Result<usize, String> {
         let TokenKind::Number(levels) = self.current().kind else {
             return Ok(1);
@@ -3252,22 +3400,48 @@ impl Parser {
         self.expect(TokenKind::LeftParen, "expected '(' after 'foreach'")?;
         let iterable = self.parse_expression()?;
         self.expect(TokenKind::As, "expected 'as' after foreach collection")?;
-        let first = self.expect_identifier("expected foreach variable")?;
+        // The value can be taken apart: `as (string name, int age)`.
+        let (first, mut pattern) = self.parse_foreach_binding("expected foreach variable")?;
         let (key_name, value_name) = if matches!(self.current().kind, TokenKind::FatArrow) {
+            if pattern.is_some() {
+                return Err(self.error("a map's key can't be taken apart; write key => (a, b) to take apart its values"));
+            }
             self.advance();
-            let second = self.expect_identifier("expected foreach value variable")?;
+            let (second, second_pattern) = self.parse_foreach_binding("expected foreach value variable")?;
+            pattern = second_pattern;
             (Some(first), second)
         } else {
             (None, first)
         };
         self.expect(TokenKind::RightParen, "expected ')' after foreach bindings")?;
-        let body = self.parse_statement_block("expected '{' before foreach body")?;
+        let mut body = self.parse_statement_block("expected '{' before foreach body")?;
+        if let Some((targets, hidden, line, column)) = pattern {
+            let mut kinds = Vec::new();
+            let last = self.destructure(targets, Expr::Variable(hidden), &mut kinds);
+            kinds.push(last);
+            let taken_apart: Vec<Statement> = kinds.into_iter().map(|kind| Statement { kind, line, column }).collect();
+            body.splice(0..0, taken_apart);
+        }
         Ok(StatementKind::Foreach {
             iterable,
             key_name,
             value_name,
             body,
         })
+    }
+
+    /// A foreach variable, or `(int a, b, _)` to take each value apart: then
+    /// a hidden variable's name, with the targets and where they are.
+    #[allow(clippy::type_complexity)]
+    fn parse_foreach_binding(&mut self, message: &str) -> Result<(String, Option<(Vec<DestructureTarget>, String, usize, usize)>), String> {
+        if !matches!(self.current().kind, TokenKind::LeftParen) {
+            return Ok((self.expect_identifier(message)?, None));
+        }
+        let (line, column) = (self.current().line, self.current().column);
+        let targets = self.parse_target_list()?.ok_or_else(|| self.error("expected (type name, type name, ...) to take each value apart"))?;
+        self.next_hidden += 1;
+        let hidden = format!("#each{}", self.next_hidden);
+        Ok((hidden.clone(), Some((targets, hidden, line, column))))
     }
 
     fn parse_statement_block(&mut self, message: &str) -> Result<Vec<Statement>, String> {
@@ -3688,8 +3862,19 @@ impl Parser {
             TokenKind::LeftParen => {
                 self.advance();
                 let expression = self.parse_expression()?;
-                self.expect(TokenKind::RightParen, "expected ')' after expression")?;
-                expression
+                if matches!(self.current().kind, TokenKind::Comma) {
+                    // `(a, b)`: a tuple.
+                    let mut elements = vec![expression];
+                    while matches!(self.current().kind, TokenKind::Comma) {
+                        self.advance();
+                        elements.push(self.parse_expression()?);
+                    }
+                    self.expect(TokenKind::RightParen, "expected ')' after the tuple's values")?;
+                    Expr::Tuple(elements)
+                } else {
+                    self.expect(TokenKind::RightParen, "expected ')' after expression")?;
+                    expression
+                }
             }
             TokenKind::LeftBracket => {
                 self.advance();
@@ -4145,6 +4330,26 @@ impl Parser {
         Ok(ValueType::Applied(id as u32))
     }
 
+    /// The tuple type with `elements`: the tuple template for their number,
+    /// applied to them.
+    fn tuple_type(&mut self, elements: Vec<ValueType>) -> Result<ValueType, String> {
+        if elements.contains(&ValueType::Void) {
+            return Err("a tuple's values can't be void".to_string());
+        }
+        let Some(&template) = self.generics.tuple_templates.get(&elements.len()) else {
+            return Err(format!("a tuple has 2 to 8 values, not {}; for more, declare a class", elements.len()));
+        };
+        let application = Application { generic: template, arguments: elements };
+        let id = match self.generics.applications.iter().position(|existing| *existing == application) {
+            Some(id) => id,
+            None => {
+                self.generics.applications.push(application);
+                self.generics.applications.len() - 1
+            }
+        };
+        Ok(ValueType::Applied(id as u32))
+    }
+
     fn parse_value_type(&mut self) -> Result<ValueType, String> {
         if matches!(self.current().kind, TokenKind::Question) {
             // `?int`: the scalar, or null.
@@ -4167,11 +4372,26 @@ impl Parser {
             return Ok(self.parse_array_suffixes(ValueType::Nullable(scalar)));
         }
         if matches!(self.current().kind, TokenKind::LeftParen) {
-            // Grouping, for arrays of functions: (function(int): int)[]
+            // Grouping, for arrays of functions: (function(int): int)[]; or,
+            // with commas, a tuple type: (int, string).
             self.advance();
+            let at = self.error("");
             let inner = self.parse_value_type()?;
-            self.expect(TokenKind::RightParen, "expected ')' after the type")?;
-            return Ok(self.parse_array_suffixes(inner));
+            if !matches!(self.current().kind, TokenKind::Comma) {
+                self.expect(TokenKind::RightParen, "expected ')' after the type")?;
+                return Ok(self.parse_array_suffixes(inner));
+            }
+            let mut elements = vec![inner];
+            while matches!(self.current().kind, TokenKind::Comma) {
+                self.advance();
+                if matches!(self.current().kind, TokenKind::Void) {
+                    return Err(self.error("a tuple's values can't be void"));
+                }
+                elements.push(self.parse_value_type()?);
+            }
+            self.expect(TokenKind::RightParen, "expected ')' after the tuple's types")?;
+            let tuple = self.tuple_type(elements).map_err(|error| format!("{at}{error}"))?;
+            return Ok(self.parse_array_suffixes(tuple));
         }
         if self.at_function_type() {
             // function(int, string): bool
@@ -5494,6 +5714,8 @@ impl Emitter {
                             array.operand
                         ));
                         self.emit_exception_check(&mut body);
+                    } else if self.tuple_elements(array.value_type).is_some() {
+                        return Err(format!("a tuple's values can't be changed; make a new {} instead", self.type_name(array.value_type)));
                     } else {
                         return Err("indexed assignment target is not an array or map".to_string());
                     }
@@ -6536,6 +6758,17 @@ impl Emitter {
         if let Some(scalar) = left.value_type.non_null().or(right.value_type.non_null()) {
             return self.emit_nullable_comparison(left, operator, right, scalar, body);
         }
+        // Tuples: equal values in order, when their types are the same.
+        if self.tuple_elements(left.value_type).is_some() || self.tuple_elements(right.value_type).is_some() {
+            if left.value_type != right.value_type {
+                return Err(format!(
+                    "comparison requires matching types, found {} and {}",
+                    self.type_name(left.value_type),
+                    self.type_name(right.value_type)
+                ));
+            }
+            return self.emit_contents_comparison(left, operator, right, body);
+        }
         if let (ValueType::Class(a), ValueType::Class(b)) = (left.value_type, right.value_type) {
             // `==` and `!=` on objects: the same object (PHP's ===), for two
             // values of the same class or of related ones (a class and its
@@ -6889,6 +7122,9 @@ impl Emitter {
             }
             ValueType::Int | ValueType::Double | ValueType::Bool | ValueType::Byte | ValueType::String | ValueType::Char => true,
             ValueType::Nullable(_) => true,
+            ValueType::Class(_) if self.tuple_elements(value_type).is_some() => {
+                self.tuple_elements(value_type).expect("checked above").iter().all(|element| self.compares_by_contents(*element))
+            }
             ValueType::Class(_) | ValueType::Function(_) | ValueType::Null | ValueType::Void => false,
             ValueType::TypeParam(_) | ValueType::Applied(_) => false,
         }
@@ -7708,6 +7944,65 @@ impl Emitter {
         self.emit_expression(&Expr::NewObject(class_id, rewritten), &scope, body)
     }
 
+    /// The element types of `value_type` when it's a tuple type.
+    fn tuple_elements(&self, value_type: ValueType) -> Option<Vec<ValueType>> {
+        tuple_elements(value_type, &self.classes, &self.generics)
+    }
+
+    /// Value `position` of `tuple`, a tuple known not to be null (borrowed).
+    fn emit_tuple_element(&mut self, tuple: &Value, position: usize, body: &mut String) -> Result<Value, String> {
+        let ValueType::Class(class_id) = tuple.value_type else { unreachable!("a tuple is an object") };
+        let (property_index, property_type, ..) = self.find_property(class_id, &format!("_{position}"))?;
+        let address = self.new_register();
+        body.push_str(&format!("  {address} = getelementptr inbounds i64, ptr {}, i64 {property_index}\n", tuple.operand));
+        let encoded = self.new_register();
+        body.push_str(&format!("  {encoded} = load i64, ptr {address}, align 8\n"));
+        self.decode_payload(property_type, &encoded, body)
+    }
+
+    /// `(a, b, ...)`: an object of the tuple class for the values' types, or
+    /// for the types of `expected` when it's a tuple type of the same size
+    /// (so `(int, ?string)` can be made from `(1, null)`). The values are
+    /// evaluated in order, once.
+    fn emit_tuple(&mut self, elements: &[Expr], expected: Option<ValueType>, variables: &HashMap<String, Value>, body: &mut String) -> Result<Value, String> {
+        let wanted = expected.and_then(|expected| self.tuple_elements(expected)).filter(|types| types.len() == elements.len());
+        let mut scope = variables.clone();
+        let mut arguments = Vec::new();
+        let mut types = Vec::new();
+        for (position, element) in elements.iter().enumerate() {
+            let hint = wanted.as_ref().map(|types| types[position]);
+            let value = self.emit_expecting(element, hint, &scope, body)?;
+            match value.value_type {
+                ValueType::Void => return Err(format!("value {position} of the tuple has no value (it calls a void function)")),
+                ValueType::Null if hint.is_none() => {
+                    return Err(format!("can't tell the type of value {position} of the tuple, which is null; use the tuple where its type is known, as in a declaration"))
+                }
+                _ => {}
+            }
+            if let Some(hint) = hint {
+                if !self.is_assignable(hint, value.value_type) && !(value.value_type == ValueType::Null && is_reference(hint)) {
+                    return Err(format!(
+                        "value {position} of the tuple must be {}, found {}{}",
+                        self.type_name(hint),
+                        self.type_name(value.value_type),
+                        self.null_hint(value.value_type)
+                    ));
+                }
+            }
+            types.push(value.value_type);
+            let hidden = format!("#tuple.value{}", self.next_generic_argument);
+            self.next_generic_argument += 1;
+            scope.insert(hidden.clone(), Value { slot: None, ..value });
+            arguments.push(Expr::Variable(hidden));
+        }
+        let types = wanted.unwrap_or(types);
+        let Some(&template) = self.generics.tuple_templates.get(&types.len()) else {
+            return Err(format!("a tuple has 2 to 8 values, not {}; for more, declare a class", types.len()));
+        };
+        let class_id = self.monomorphize(|m| m.instance(template, types))?;
+        self.emit_expression(&Expr::NewObject(class_id, arguments), &scope, body)
+    }
+
     /// The class of the boxes that hold non-null `?scalar` values.
     fn box_class(&self, scalar: Scalar) -> u32 {
         self.box_classes[Scalar::ALL.iter().position(|candidate| *candidate == scalar).expect("every scalar has a box")]
@@ -8310,8 +8605,17 @@ impl Emitter {
                 }
                 _ => Err(format!("{at}the default for '{name}' must be {}, found a map", self.type_name(expected))),
             },
+            Expr::Tuple(elements) => match self.tuple_elements(expected) {
+                Some(types) if types.len() == elements.len() => {
+                    for (item, element) in elements.iter().zip(types) {
+                        self.check_constant_value(item, element, owner, at, name)?;
+                    }
+                    Ok(())
+                }
+                _ => Err(format!("{at}the default for '{name}' must be {}, found a tuple of {} values", self.type_name(expected), elements.len())),
+            },
             _ => Err(format!(
-                "{at}the default for '{name}' must be a constant: a literal, a class constant, or an array or map of those (set other values in the constructor)"
+                "{at}the default for '{name}' must be a constant: a literal, a class constant, or an array, map, or tuple of those (set other values in the constructor)"
             )),
         }
     }
@@ -9050,6 +9354,8 @@ impl Emitter {
         let value = self.emit_expression(argument, variables, body)?;
         match value.value_type {
             ValueType::Null => self.emit_expression(&Expr::Text("null".to_string()), variables, body),
+            // A tuple: as print writes it, `(1, "a")`.
+            ValueType::Class(_) if self.tuple_elements(value.value_type).is_some() => self.emit_described(&value, body),
             ValueType::Class(class_id) if self.find_method(class_id, "__toString").is_ok() => {
                 let mut scope = variables.clone();
                 scope.insert("#interpolated".to_string(), Value { slot: None, ..value.clone() });
@@ -9168,6 +9474,7 @@ impl Emitter {
             | ("to_byte", ValueType::Byte)
             | ("to_string", ValueType::String) => return Ok(value),
             ("to_string", ValueType::Char) => return Ok(result(ValueType::String, value.operand)),
+            ("to_string", ValueType::Class(_)) if self.tuple_elements(from).is_some() => return self.emit_described(&value, body),
             ("to_string", ValueType::Class(_)) => {
                 return match self.emit_to_string_call(&value, variables, body)? {
                     Some(text) => Ok(text),
@@ -9673,56 +9980,70 @@ impl Emitter {
         let left_value = match left {
             Expr::Index(container_expression, key_expression) => {
                 let container = self.emit_expression(container_expression, variables, body)?;
-                // Used by qiq_map_find (or the bounds check) straight away.
-                let key = self.emit_borrowed(key_expression, None, variables, body)?;
-                if let ValueType::Map(type_id) = container.value_type {
-                    let signature = self.map_types[type_id as usize];
-                    if key.value_type != signature.key_type {
-                        return Err(format!(
-                            "map key requires {}, found {}",
-                            self.type_name(signature.key_type),
-                            self.type_name(key.value_type)
-                        ));
-                    }
-                    let key_bits = self.encode_payload(&key, body)?;
-                    let out = self.new_register();
-                    self.entry_allocas.push_str(&format!("  {out} = alloca i64, align 8\n"));
-                    let found = self.new_register();
+                // `pair[1] ?? fallback`: missing when the tuple is null.
+                if let Some(elements) = self.tuple_elements(container.value_type) {
+                    let position = match **key_expression {
+                        Expr::Number(position) if position >= 0 && (position as usize) < elements.len() => position as usize,
+                        _ => return Err(format!("a tuple's index must be a number from 0 to {} written in the code, such as [0]", elements.len() - 1)),
+                    };
+                    let not_null = self.new_register();
                     body.push_str(&format!(
-                        "  {found} = call zeroext i1 @qiq_map_find(ptr {}, i64 {key_bits}, ptr {out})\n",
+                        "  {not_null} = icmp ne ptr {}, null\n  br i1 {not_null}, label %coalesce.present{id}, label %{missing_label}\ncoalesce.present{id}:\n",
                         container.operand
                     ));
-                    self.emit_exception_check(body);
-                    body.push_str(&format!("  br i1 {found}, label %coalesce.present{id}, label %{missing_label}\ncoalesce.present{id}:\n"));
-                    let bits = self.new_register();
-                    body.push_str(&format!("  {bits} = load i64, ptr {out}, align 8\n"));
-                    self.decode_payload(signature.value_type, &bits, body)?
-                } else if let Some(element_type) = self.element_of(container.value_type) {
-                    if key.value_type != ValueType::Int {
-                        return Err("array index must be an int".to_string());
-                    }
-                    // In range: a non-null array and 0 <= index < length.
-                    let not_null = self.new_register();
-                    let length = self.new_register();
-                    let in_range = self.new_register();
-                    body.push_str(&format!(
-                        "  {not_null} = icmp ne ptr {}, null\n  br i1 {not_null}, label %coalesce.bounds{id}, label %{missing_label}\ncoalesce.bounds{id}:\n  {length} = load i64, ptr {}, align 8\n  {in_range} = icmp ult i64 {}, {length}\n  br i1 {in_range}, label %coalesce.present{id}, label %{missing_label}\ncoalesce.present{id}:\n",
-                        container.operand, container.operand, key.operand
-                    ));
-                    let data = self.new_register();
-                    let address = self.new_register();
-                    let loaded = self.new_register();
-                    body.push_str(&format!(
-                        "  {data}.at = getelementptr inbounds i8, ptr {}, i64 {ARRAY_DATA_OFFSET}\n  {data} = load ptr, ptr {data}.at, align 8\n  {address} = getelementptr inbounds {}, ptr {data}, i64 {}\n  {loaded} = load {}, ptr {address}, align {}\n",
-                        container.operand,
-                        element_type.llvm(),
-                        key.operand,
-                        element_type.llvm(),
-                        element_type.alignment()
-                    ));
-                    Value { value_type: element_type, operand: loaded, slot: None }
+                    self.emit_tuple_element(&container, position, body)?
                 } else {
-                    return Err("indexed value is not an array or map".to_string());
+                    // Used by qiq_map_find (or the bounds check) straight away.
+                    let key = self.emit_borrowed(key_expression, None, variables, body)?;
+                    if let ValueType::Map(type_id) = container.value_type {
+                        let signature = self.map_types[type_id as usize];
+                        if key.value_type != signature.key_type {
+                            return Err(format!(
+                                "map key requires {}, found {}",
+                                self.type_name(signature.key_type),
+                                self.type_name(key.value_type)
+                            ));
+                        }
+                        let key_bits = self.encode_payload(&key, body)?;
+                        let out = self.new_register();
+                        self.entry_allocas.push_str(&format!("  {out} = alloca i64, align 8\n"));
+                        let found = self.new_register();
+                        body.push_str(&format!(
+                            "  {found} = call zeroext i1 @qiq_map_find(ptr {}, i64 {key_bits}, ptr {out})\n",
+                            container.operand
+                        ));
+                        self.emit_exception_check(body);
+                        body.push_str(&format!("  br i1 {found}, label %coalesce.present{id}, label %{missing_label}\ncoalesce.present{id}:\n"));
+                        let bits = self.new_register();
+                        body.push_str(&format!("  {bits} = load i64, ptr {out}, align 8\n"));
+                        self.decode_payload(signature.value_type, &bits, body)?
+                    } else if let Some(element_type) = self.element_of(container.value_type) {
+                        if key.value_type != ValueType::Int {
+                            return Err("array index must be an int".to_string());
+                        }
+                        // In range: a non-null array and 0 <= index < length.
+                        let not_null = self.new_register();
+                        let length = self.new_register();
+                        let in_range = self.new_register();
+                        body.push_str(&format!(
+                            "  {not_null} = icmp ne ptr {}, null\n  br i1 {not_null}, label %coalesce.bounds{id}, label %{missing_label}\ncoalesce.bounds{id}:\n  {length} = load i64, ptr {}, align 8\n  {in_range} = icmp ult i64 {}, {length}\n  br i1 {in_range}, label %coalesce.present{id}, label %{missing_label}\ncoalesce.present{id}:\n",
+                            container.operand, container.operand, key.operand
+                        ));
+                        let data = self.new_register();
+                        let address = self.new_register();
+                        let loaded = self.new_register();
+                        body.push_str(&format!(
+                            "  {data}.at = getelementptr inbounds i8, ptr {}, i64 {ARRAY_DATA_OFFSET}\n  {data} = load ptr, ptr {data}.at, align 8\n  {address} = getelementptr inbounds {}, ptr {data}, i64 {}\n  {loaded} = load {}, ptr {address}, align {}\n",
+                            container.operand,
+                            element_type.llvm(),
+                            key.operand,
+                            element_type.llvm(),
+                            element_type.alignment()
+                        ));
+                        Value { value_type: element_type, operand: loaded, slot: None }
+                    } else {
+                        return Err("indexed value is not an array or map".to_string());
+                    }
                 }
             }
             _ => {
@@ -11416,6 +11737,11 @@ impl Emitter {
     /// class id written as `o<id>;`.
     fn json_descriptor(&self, value_type: ValueType) -> String {
         match value_type {
+            // A tuple: "t<class id>;", its values' types, then ')'.
+            ValueType::Class(class_id) if self.tuple_elements(value_type).is_some() => {
+                let elements = self.tuple_elements(value_type).expect("checked above");
+                format!("t{class_id};{})", elements.iter().map(|element| self.json_descriptor(*element)).collect::<String>())
+            }
             ValueType::Class(class_id) => format!("o{class_id};"),
             ValueType::Nullable(scalar) => format!("N{}", self.type_descriptor(scalar.value_type())),
             ValueType::Array(_) => format!("a{}", self.json_descriptor(self.element_of(value_type).expect("array type"))),
@@ -11522,6 +11848,11 @@ impl Emitter {
             ValueType::Null | ValueType::Void => "n".to_string(),
             // Function values are objects too, printed as "Closure". (Generic
             // classes' own fields, never used, also say "o".)
+            // A tuple: its values' types in parentheses.
+            ValueType::Class(_) if self.tuple_elements(value_type).is_some() => {
+                let elements = self.tuple_elements(value_type).expect("checked above");
+                format!("({})", elements.iter().map(|element| self.type_descriptor(*element)).collect::<String>())
+            }
             ValueType::Class(_) | ValueType::Function(_) | ValueType::TypeParam(_) | ValueType::Applied(_) => "o".to_string(),
             // A nullable scalar: null, or a box holding the scalar.
             ValueType::Nullable(scalar) => format!("N{}", self.type_descriptor(scalar.value_type())),
@@ -11592,6 +11923,9 @@ impl Emitter {
         }
         if let Expr::NewGeneric(generic, None, arguments) = expression {
             return self.emit_new_generic(*generic, None, arguments, expected, variables, body);
+        }
+        if let Expr::Tuple(elements) = expression {
+            return self.emit_tuple(elements, expected, variables, body);
         }
         // Taken at the start of the call's emission, if it turns out generic.
         if matches!(expression, Expr::MethodCall(..) | Expr::StaticCall(..)) {
@@ -12819,6 +13153,20 @@ impl Emitter {
             Expr::Index(array_expression, index_expression) => {
                 let borrow = std::mem::take(&mut self.borrow_read);
                 let array = self.emit_expression(array_expression, variables, body)?;
+                if let Some(elements) = self.tuple_elements(array.value_type) {
+                    let Expr::Number(position) = **index_expression else {
+                        return Err(format!(
+                            "a tuple's index must be a number written in the code, such as [0]: each of a {}'s values has its own type",
+                            self.type_name(array.value_type)
+                        ));
+                    };
+                    if position < 0 || position as usize >= elements.len() {
+                        return Err(format!("index {position} is out of range for a {}, whose indexes are 0 to {}", self.type_name(array.value_type), elements.len() - 1));
+                    }
+                    self.emit_null_check(&array, array_expression, "cannot read a value of a null tuple", body);
+                    let value = self.emit_tuple_element(&array, position as usize, body)?;
+                    return Ok(if borrow { value } else { self.retained(value, body) });
+                }
                 // The key is used by qiq_map_get as soon as it's evaluated.
                 let index = self.emit_borrowed(index_expression, None, variables, body)?;
                 if let Some(element_type) = self.element_of(array.value_type) {
@@ -12870,6 +13218,9 @@ impl Emitter {
                     ValueType::Class(class_id) => class_id,
                     _ => return Err("property access requires a class instance".to_string()),
                 };
+                if self.tuple_elements(object.value_type).is_some() {
+                    return Err("a tuple has no properties; read its values with [0], [1], and so on, or take it apart with (a, b) = ...".to_string());
+                }
                 self.emit_null_check(&object, object_expression, &format!("cannot read property '{property_name}' of null"), body);
                 let (property_index, property_type, visibility, owner_class) =
                     self.find_property(class_id, property_name)?;
@@ -13748,6 +14099,23 @@ impl Emitter {
             Expr::NamedArgument(name, _) => {
                 Err(format!("named argument '{name}' is only valid in a call"))
             }
+            Expr::Tuple(elements) => self.emit_tuple(elements, None, variables, body),
+            Expr::TupleOf(count, value) => {
+                let tuple = self.emit_expression(value, variables, body)?;
+                match self.tuple_elements(tuple.value_type) {
+                    Some(elements) if elements.len() == *count => Ok(tuple),
+                    Some(elements) => Err(format!(
+                        "can't take apart a {} into {count} values: it has {}",
+                        self.type_name(tuple.value_type),
+                        elements.len()
+                    )),
+                    None => {
+                        let type_name = self.type_name(tuple.value_type);
+                        let article = if type_name.starts_with(['a', 'e', 'i', 'o', 'u']) { "an" } else { "a" };
+                        Err(format!("only a tuple can be taken apart with (a, b) = ..., not {article} {type_name}"))
+                    }
+                }
+            }
             Expr::TypeArguments(types, call) => {
                 // A function's are checked here, since some calls by name
                 // (conversions, function values) never reach inference.
@@ -14168,7 +14536,11 @@ impl Monomorphizer<'_> {
         let names: Vec<String> = arguments.iter().map(|argument| self.type_name(*argument)).collect();
         let class_id = self.classes.len() as u32;
         let mut class = template.clone();
-        class.name = format!("{}<{}>", template.name, names.join(", "));
+        class.name = if self.generics.is_tuple_template(generic) {
+            format!("({})", names.join(", "))
+        } else {
+            format!("{}<{}>", template.name, names.join(", "))
+        };
         class.symbol = format!("{}.{class_id}", template.symbol);
         class.type_params = Vec::new();
         class.instance_of = Some((generic, arguments.clone()));
@@ -14466,8 +14838,9 @@ impl Monomorphizer<'_> {
             | Expr::Member(operand, _)
             | Expr::ClassOf(operand)
             | Expr::NamedArgument(_, operand)
+            | Expr::TupleOf(_, operand)
             | Expr::Spread(operand) => self.subst_expr(operand, bindings)?,
-            Expr::ArrayLiteral(elements) => self.subst_exprs(elements, bindings)?,
+            Expr::ArrayLiteral(elements) | Expr::Tuple(elements) => self.subst_exprs(elements, bindings)?,
             Expr::MapLiteral(entries) => {
                 for (key, value) in entries {
                     self.subst_expr(key, bindings)?;
@@ -14886,7 +15259,7 @@ fn expression_names(expression: &Expr, used: &mut std::collections::BTreeSet<Str
         Expr::Binary(_, a, b) | Expr::Compare(_, a, b) | Expr::Logical(_, a, b) | Expr::Coalesce(a, b) | Expr::Index(a, b) => {
             each(&[a, b], used, declared)
         }
-        Expr::Negate(a) | Expr::BitNot(a) | Expr::Not(a) | Expr::Member(a, _) | Expr::NewArray(_, a) | Expr::NamedArgument(_, a) | Expr::Spread(a) => {
+        Expr::Negate(a) | Expr::BitNot(a) | Expr::Not(a) | Expr::Member(a, _) | Expr::NewArray(_, a) | Expr::NamedArgument(_, a) | Expr::Spread(a) | Expr::TupleOf(_, a) => {
             each(&[a], used, declared)
         }
         Expr::MethodCall(object, _, arguments) | Expr::CallValue(object, arguments) => {
@@ -14915,7 +15288,7 @@ fn expression_names(expression: &Expr, used: &mut std::collections::BTreeSet<Str
             used.insert("this".to_string());
             each(&arguments.iter().collect::<Vec<_>>(), used, declared);
         }
-        Expr::NewObject(_, arguments) | Expr::NewGeneric(_, _, arguments) | Expr::ArrayLiteral(arguments) => each(&arguments.iter().collect::<Vec<_>>(), used, declared),
+        Expr::NewObject(_, arguments) | Expr::NewGeneric(_, _, arguments) | Expr::ArrayLiteral(arguments) | Expr::Tuple(arguments) => each(&arguments.iter().collect::<Vec<_>>(), used, declared),
         Expr::OnApplied(_, member) | Expr::TypeArguments(_, member) => expression_names(member, used, declared),
         Expr::Match(subject, arms, default) => {
             expression_names(subject, used, declared);
@@ -15444,6 +15817,14 @@ impl<'a> Loader<'a> {
                 }
             }
             for (class, class_id) in &module.exported_classes {
+                // __Tuple2 and the rest: what tuple types are made from.
+                if let Some(count) = class.strip_prefix("__Tuple").and_then(|count| count.parse::<usize>().ok()) {
+                    self.generics.tuple_templates.insert(count, *class_id);
+                    continue;
+                }
+                if class.starts_with("__") {
+                    continue;
+                }
                 if self.prelude_classes.insert(class.clone(), *class_id).is_some() {
                     return Err(format!("standard library declares '{class}' more than once"));
                 }
@@ -15698,6 +16079,8 @@ const STDLIB_ROOT: &str = "<stdlib>";
 /// `import File from "std/file";`. Set `QIQ_STDLIB` to a directory to load
 /// these files from disk instead (for stdlib development).
 const STDLIB_MODULES: &[(&str, Option<&str>, &str)] = &[
+    // First, so the others can use tuple types.
+    ("tuples.qiq", None, include_str!("../stdlib/tuples.qiq")),
     ("string.qiq", None, include_str!("../stdlib/string.qiq")),
     ("exceptions.qiq", None, include_str!("../stdlib/exceptions.qiq")),
     ("iterators.qiq", None, include_str!("../stdlib/iterators.qiq")),
@@ -18263,6 +18646,37 @@ mod tests {
         ];
         for (code, message) in cases {
             let error = compile_source(&format!("{declared}{code}")).err().unwrap_or_else(|| panic!("{code}: compiled"));
+            assert!(error.contains(message), "{code}: expected '{message}', got '{error}'");
+        }
+    }
+
+    #[test]
+    fn tuples() {
+        let source = "function parse(string s): (int, string) { return (1, s); } (int value, string text) = parse(\"a\"); (value, _) = parse(\"b\"); (int, string)[] list = [(1, \"a\")]; foreach (list as (int n, string s)) { print(n, s); } print(parse(\"c\") == (1, \"c\"), (1, 2.5)[1]);";
+        assert!(compile_source(source).is_ok(), "{:?}", compile_source(source).err());
+        // `(x)` is still grouping, and calls of function values still parse.
+        assert!(compile_source("int x = (1 + 2) * 3; function(int): int f = fn(int n) => n; (f)(1); print(x);").is_ok());
+        let cases = [
+            ("(int, string) a = (1, \"x\"); print(a[2]);", "index 2 is out of range for a (int, string), whose indexes are 0 to 1"),
+            ("(int, string) a = (1, \"x\"); int i = 0; print(a[i]);", "a tuple's index must be a number written in the code, such as [0]"),
+            ("(int, string) a = (1, \"x\"); a[0] = 2;", "a tuple's values can't be changed; make a new (int, string) instead"),
+            ("(int, string) a = (1, \"x\"); print(a->_0);", "a tuple has no properties; read its values with [0], [1], and so on"),
+            ("(int a, string b, int c) = (1, \"x\");", "can't take apart a (int, string) into 3 values: it has 2"),
+            ("(int a, int b) = [1, 2];", "only a tuple can be taken apart with (a, b) = ..., not an int[]"),
+            ("(int a, int b) = (1, \"x\");", "cannot initialize int variable 'b' with string"),
+            ("print((1, null));", "can't tell the type of value 1 of the tuple, which is null"),
+            ("print((1, 2, 3, 4, 5, 6, 7, 8, 9));", "a tuple has 2 to 8 values, not 9; for more, declare a class"),
+            ("(int, int, int, int, int, int, int, int, int) t = null;", "a tuple has 2 to 8 values, not 9"),
+            ("(int, void) t = null;", "a tuple's values can't be void"),
+            ("(int, ?string) t = null;", "a string can already be null, so write string, not ?string"),
+            ("(int, int) a = (1, 2); (int, string) b = (1, \"x\"); print(a == b);", "comparison requires matching types, found (int, int) and (int, string)"),
+            ("class P {} (P, int) a = (new P(), 1); print(a == a);", "(P, int) values can't be compared: objects and functions in them can only be compared with null"),
+            ("(int, string) a = (1, \"x\"); print(a < a);", "(int, string) values support only == and != comparisons"),
+            ("function f<T>(T x): (T, int) { return (x, x); }", "value 1 of the tuple must be int, found T"),
+            ("map[string, int] m = {}; foreach (m as (k, v) => n) {}", "a map's key can't be taken apart"),
+        ];
+        for (code, message) in cases {
+            let error = compile_source(code).err().unwrap_or_else(|| panic!("{code}: compiled"));
             assert!(error.contains(message), "{code}: expected '{message}', got '{error}'");
         }
     }

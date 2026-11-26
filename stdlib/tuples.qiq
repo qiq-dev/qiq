@@ -1,0 +1,33 @@
+// Tuples: `(int, string)` is a __Tuple2<int, string>, made by the compiler
+// for each set of element types like any generic class. The classes are
+// internal (names starting with "__" aren't visible outside the standard
+// library); a tuple's values are read with pair[0], pair[1], ..., or taken
+// apart with `(int count, string name) = pair;`. Tuples have 2 to 8 values.
+
+final class __Tuple2<A, B> {
+    function __construct(public readonly A _0, public readonly B _1) {}
+}
+
+final class __Tuple3<A, B, C> {
+    function __construct(public readonly A _0, public readonly B _1, public readonly C _2) {}
+}
+
+final class __Tuple4<A, B, C, D> {
+    function __construct(public readonly A _0, public readonly B _1, public readonly C _2, public readonly D _3) {}
+}
+
+final class __Tuple5<A, B, C, D, E> {
+    function __construct(public readonly A _0, public readonly B _1, public readonly C _2, public readonly D _3, public readonly E _4) {}
+}
+
+final class __Tuple6<A, B, C, D, E, F> {
+    function __construct(public readonly A _0, public readonly B _1, public readonly C _2, public readonly D _3, public readonly E _4, public readonly F _5) {}
+}
+
+final class __Tuple7<A, B, C, D, E, F, G> {
+    function __construct(public readonly A _0, public readonly B _1, public readonly C _2, public readonly D _3, public readonly E _4, public readonly F _5, public readonly G _6) {}
+}
+
+final class __Tuple8<A, B, C, D, E, F, G, H> {
+    function __construct(public readonly A _0, public readonly B _1, public readonly C _2, public readonly D _3, public readonly E _4, public readonly F _5, public readonly G _6, public readonly H _7) {}
+}

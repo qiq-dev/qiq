@@ -1,0 +1,24 @@
+43 ok (42, "ok")
+7 ok
+8 ok
+1..9
+2 1
+9 1.5 new
+-1 none
+("n", null, (true, 'c')) c
+true false false
+null true false
+(42, "ok") got (42, "ok") [[42,"ok"],[42,"ok"]]
+(5, "five") true
+$: expected an array of 2 values for a (int, string), found fewer
+ada 36
+lin 29
+0 ada
+1 lin
+a 3
+b 7
+true {"a" => (1, 2), "b" => (3, 4)}
+("ok", 42) (2.5, true) ('c', 3)
+3 (3, 2.5)
+4 2
+42 double

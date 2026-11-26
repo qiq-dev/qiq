@@ -46,6 +46,12 @@ static const char *qiq_skip_type(const char *descriptor) {
     case 'a': return qiq_skip_type(descriptor + 1);
     case 'm': return qiq_skip_type(qiq_skip_type(descriptor + 1));
     case 'N': return descriptor + 2;
+    case '(': {
+        // A tuple: its values' types, then ')'.
+        const char *cursor = descriptor + 1;
+        while (*cursor != ')') cursor = qiq_skip_type(cursor);
+        return cursor + 1;
+    }
     default: return descriptor + 1;
     }
 }
@@ -123,6 +129,18 @@ static void qiq_write_value(const char *descriptor, uint64_t bits, int nested) {
         // A nullable scalar's box: the scalar is its one field.
         qiq_write_value(descriptor + 1, ((const uint64_t *)pointer)[1], nested);
         return;
+    case '(': {
+        // A tuple: an object whose fields, after the class id, are its values.
+        const uint64_t *fields = (const uint64_t *)pointer + 1;
+        fputc('(', qiq_out);
+        int index = 0;
+        for (const char *element = descriptor + 1; *element != ')'; element = qiq_skip_type(element), index++) {
+            if (index > 0) fputs(", ", qiq_out);
+            qiq_write_value(element, fields[index], 1);
+        }
+        fputc(')', qiq_out);
+        return;
+    }
     case 's':
         if (nested) qiq_write_quoted(pointer, '"');
         else fputs(pointer, qiq_out);

@@ -1,0 +1,99 @@
+// Tuples: fixed-size groups of values, each with its own type.
+
+// Returning several values.
+function parse(string s): (int, string) {
+    return (to_int(s), "ok");
+}
+
+function minMax(int[] values): (int, int) {
+    int lo = values[0];
+    int hi = values[0];
+    foreach (values as v) {
+        if (v < lo) {
+            lo = v;
+        }
+        if (v > hi) {
+            hi = v;
+        }
+    }
+    return (lo, hi);
+}
+
+(int, string) pair = parse("42");
+print(pair[0] + 1, pair[1], pair);
+
+// Taking them apart: declared, assigned, inferred, or skipped with _.
+(int value, string status) = parse("7");
+print(value, status);
+(value, status) = parse("8");
+print(value, status);
+(int lo, int hi) = minMax([3, 9, 1]);
+print(f"{lo}..{hi}");
+int a = 1;
+int b = 2;
+(a, b) = (b, a);
+print(a, b);
+(int first, _) = parse("9");
+(x, y) = (1.5, "new");
+print(first, x, y);
+
+// Null values, nesting, and the expected type.
+(?int, string) maybe = (null, null);
+print(maybe[0] ?? -1, maybe[1] ?? "none");
+(string, ?int, (bool, char)) nested = ("n", null, (true, 'c'));
+print(nested, nested[2][1]);
+
+// Equality by value, printing, strings, and JSON.
+(int, string) same = (42, "ok");
+print(pair == same, pair != same, pair == (1, "ok"));
+(int, string) missing = null;
+print(missing, missing == null, pair == missing);
+print(to_string(pair), f"got {pair}", json_encode([pair, same]));
+(int, string) decoded = json_decode("[5, \"five\"]");
+print(decoded, decoded == (5, "five"));
+try {
+    (int, string) short = json_decode("[5]");
+} catch (JsonException e) {
+    print(e->getMessage());
+}
+
+// In arrays, maps, and foreach.
+(string, int)[] people = [("ada", 36), ("lin", 29)];
+foreach (people as (string name, int age)) {
+    print(name, age);
+}
+foreach (people as i => (name, _)) {
+    print(i, name);
+}
+map[string, (int, int)] points = {"a" => (1, 2), "b" => (3, 4)};
+foreach (points as key => (int px, int py)) {
+    print(key, px + py);
+}
+print(in_array(("lin", 29), people), points);
+
+// In generic code, properties, and function values.
+function swap<A, B>((A, B) p): (B, A) {
+    return (p[1], p[0]);
+}
+
+function pairWith<T>(T item, int n): (T, int) {
+    return (item, n);
+}
+
+class Stats {
+    public (int, double) minMean = (0, 0.0);
+
+    function __construct(int[] values) {
+        this->minMean = (values[0], 2.5);
+    }
+}
+
+(string, int) swapped = swap(pair);
+print(swapped, swap((true, 2.5)), pairWith('c', 3));
+Stats stats = new Stats([3, 4]);
+print(stats->minMean[0], stats->minMean);
+function(int): (int, int) split = fn(int n) => (n / 10, n % 10);
+(int tens, int ones) = split(42);
+print(tens, ones);
+(function(int): int, string) op = (fn(int n) => n * 2, "double");
+print(op[0](21), op[1]);

@@ -47,6 +47,12 @@ static const char *qiq_skip_descriptor(const char *descriptor) {
         return qiq_skip_descriptor(qiq_skip_descriptor(descriptor + 1));
     case 'o':
         return strchr(descriptor, ';') + 1;
+    case 't': {
+        // A tuple: "t<class id>;", its values' types, then ')'.
+        const char *cursor = strchr(descriptor, ';') + 1;
+        while (*cursor != ')') cursor = qiq_skip_descriptor(cursor);
+        return cursor + 1;
+    }
     case 'N':
         return descriptor + 2;
     default:
@@ -54,8 +60,13 @@ static const char *qiq_skip_descriptor(const char *descriptor) {
     }
 }
 
+// The first value type of a tuple descriptor ("t<class id>;...)").
+static const char *qiq_tuple_elements(const char *descriptor) {
+    return strchr(descriptor, ';') + 1;
+}
+
 static bool qiq_is_reference_descriptor(char kind) {
-    return kind == 's' || kind == 'c' || kind == 'a' || kind == 'm' || kind == 'o' || kind == 'N';
+    return kind == 's' || kind == 'c' || kind == 'a' || kind == 'm' || kind == 'o' || kind == 'N' || kind == 't';
 }
 
 // Whether values of this type can be part of a cycle: it can hold an object.
@@ -107,6 +118,16 @@ static void qiq_descriptor_name(const char *descriptor, char *out, size_t size) 
         qiq_descriptor_name(descriptor + 1, key, sizeof key);
         qiq_descriptor_name(value_descriptor, value, sizeof value);
         snprintf(out, size, "map[%s, %s]", key, value);
+        break;
+    }
+    case 't': {
+        size_t used = (size_t)snprintf(out, size, "(");
+        for (const char *element = qiq_tuple_elements(descriptor); *element != ')' && used < size; element = qiq_skip_descriptor(element)) {
+            char name[128];
+            qiq_descriptor_name(element, name, sizeof name);
+            used += (size_t)snprintf(out + used, size - used, "%s%s", element == qiq_tuple_elements(descriptor) ? "" : ", ", name);
+        }
+        if (used < size) snprintf(out + used, size - used, ")");
         break;
     }
     default:
@@ -400,6 +421,23 @@ static void qiq_encode_value(QiqEncoder *encoder, const char *descriptor, uint64
     case 'c':
         qiq_encode_string(&encoder->out, (const char *)(uintptr_t)payload);
         return;
+    case 't': {
+        // A tuple, as an array of its values (an object's fields, after its
+        // class id).
+        const uint64_t *fields = (const uint64_t *)(uintptr_t)payload + 1;
+        if (!qiq_encode_open(encoder)) return;
+        qiq_buffer_add(&encoder->out, "[", 1);
+        int64_t index = 0;
+        for (const char *element = qiq_tuple_elements(descriptor); *element != ')' && encoder->error == NULL; element = qiq_skip_descriptor(element), index++) {
+            if (index > 0) qiq_buffer_add(&encoder->out, ",", 1);
+            qiq_encode_newline(encoder);
+            qiq_encode_value(encoder, element, fields[index]);
+        }
+        encoder->depth--;
+        qiq_encode_newline(encoder);
+        qiq_buffer_add(&encoder->out, "]", 1);
+        return;
+    }
     case 'a': {
         void *array = (void *)(uintptr_t)payload;
         int64_t length = QIQ_ARRAY_LENGTH(array);
@@ -951,6 +989,65 @@ static bool qiq_find_field(void *context, const char *name, size_t name_length, 
     return true;
 }
 
+// A JSON array of exactly as many values as the tuple has, as a tuple.
+static bool qiq_decode_tuple(QiqDecoder *decoder, const char *descriptor, uint64_t *out) {
+    int64_t class_id = strtol(descriptor + 1, NULL, 10);
+    int64_t count = 0;
+    for (const char *element = qiq_tuple_elements(descriptor); *element != ')'; element = qiq_skip_descriptor(element)) count++;
+    int64_t *tuple = qiq_object_new(count + 1, class_id);
+    for (int64_t index = 0; index < count; index++) tuple[index + 1] = 0;
+    decoder->cursor++;  // '['
+    bool ok = true;
+    int64_t index = 0;
+    const char *element = qiq_tuple_elements(descriptor);
+    qiq_skip_space(decoder);
+    if (*decoder->cursor == ']') {
+        decoder->cursor++;
+    } else {
+        for (;;) {
+            if (index == count) {
+                index++;
+                break;
+            }
+            size_t saved = qiq_path_push_index(decoder, index);
+            uint64_t value;
+            ok = qiq_decode_value(decoder, element, &value);
+            decoder->path_length = saved;
+            if (!ok) break;
+            tuple[index + 1] = (int64_t)value;
+            index++;
+            element = qiq_skip_descriptor(element);
+            qiq_skip_space(decoder);
+            if (*decoder->cursor == ',') {
+                decoder->cursor++;
+                continue;
+            }
+            if (*decoder->cursor == ']') {
+                decoder->cursor++;
+                break;
+            }
+            qiq_syntax_error(decoder, "',' or ']'");
+            ok = false;
+            break;
+        }
+    }
+    if (ok && index != count) {
+        char name[256];
+        char message[400];
+        qiq_descriptor_name(descriptor, name, sizeof name);
+        snprintf(message, sizeof message, "expected an array of %lld values for a %s, found %s", (long long)count, name, index > count ? "more" : "fewer");
+        qiq_path_error(decoder, message);
+        ok = false;
+    }
+    if (!ok) {
+        // Values not set yet are 0, which releasing skips.
+        qiq_release(tuple);
+        return false;
+    }
+    *out = (uint64_t)(uintptr_t)tuple;
+    return true;
+}
+
 static bool qiq_decode_object(QiqDecoder *decoder, const char *descriptor, uint64_t *out) {
     bool is_map = *descriptor == 'm';
     const char *key_descriptor = descriptor + 1;
@@ -1178,7 +1275,7 @@ static bool qiq_decode_value(QiqDecoder *decoder, const char *descriptor, uint64
         qiq_syntax_error(decoder, "a JSON value");
         return false;
     }
-    bool matches = first == '[' ? kind == 'a' : (kind == 'm' || kind == 'o');
+    bool matches = first == '[' ? (kind == 'a' || kind == 't') : (kind == 'm' || kind == 'o');
     if (!matches) {
         qiq_type_error(decoder, descriptor, qiq_json_kind(first));
         return false;
@@ -1187,7 +1284,9 @@ static bool qiq_decode_value(QiqDecoder *decoder, const char *descriptor, uint64
         qiq_path_error(decoder, "maximum nesting depth of 512 exceeded");
         return false;
     }
-    bool ok = first == '[' ? qiq_decode_array(decoder, descriptor, out) : qiq_decode_object(decoder, descriptor, out);
+    bool ok = kind == 't'    ? qiq_decode_tuple(decoder, descriptor, out)
+              : first == '[' ? qiq_decode_array(decoder, descriptor, out)
+                             : qiq_decode_object(decoder, descriptor, out);
     decoder->depth--;
     return ok;
 }

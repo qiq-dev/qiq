@@ -51,6 +51,7 @@ LANGUAGE = [
     ("Language reference", "strings", "Strings and chars"),
     ("Language reference", "arrays", "Arrays"),
     ("Language reference", "maps", "Maps"),
+    ("Language reference", "tuples", "Tuples"),
     ("Language reference", "classes", "Classes and objects"),
     ("Language reference", "static", "Static members"),
     ("Language reference", "interfaces", "Interfaces"),

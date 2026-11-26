@@ -32,4 +32,5 @@ server.qiq
 sql.qiq
 string.qiq
 testing.qiq
+tuples.qiq
 no config.txt, using defaults

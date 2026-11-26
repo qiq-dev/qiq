@@ -313,7 +313,8 @@ QIQ_GUARDED(void *, qiq_map_values, NULL, (void *handle, int64_t element_size, i
 // == and != on arrays and maps, which compare contents, and in_map.
 //
 // Values are described as for json_encode (see json.c): i int, d double,
-// b bool, y byte, s string, c char, a<element>, m<key><value>, N<scalar>. The compiler
+// b bool, y byte, s string, c char, a<element>, m<key><value>, N<scalar>,
+// (<values>) for a tuple. The compiler
 // allows == only on types without objects or functions, so a value can't
 // contain itself and the comparison always ends.
 
@@ -322,6 +323,11 @@ static const char *qiq_skip_value_descriptor(const char *descriptor) {
     case 'a': return qiq_skip_value_descriptor(descriptor + 1);
     case 'm': return qiq_skip_value_descriptor(qiq_skip_value_descriptor(descriptor + 1));
     case 'N': return descriptor + 2;
+    case '(': {
+        const char *cursor = descriptor + 1;
+        while (*cursor != ')') cursor = qiq_skip_value_descriptor(cursor);
+        return cursor + 1;
+    }
     default: return descriptor + 1;
     }
 }
@@ -382,6 +388,19 @@ static bool qiq_payloads_equal(const char *descriptor, uint64_t left, uint64_t r
         return *descriptor == 'a'
             ? qiq_arrays_equal(descriptor + 1, (void *)(uintptr_t)left, (void *)(uintptr_t)right)
             : qiq_maps_equal(descriptor + 1, (QiqMap *)(uintptr_t)left, (QiqMap *)(uintptr_t)right);
+    case '(': {
+        // Tuples: both null, or equal values in order (an object's fields,
+        // after its class id).
+        if (left == right) return true;
+        if (left == 0 || right == 0) return false;
+        const uint64_t *a = (const uint64_t *)(uintptr_t)left + 1;
+        const uint64_t *b = (const uint64_t *)(uintptr_t)right + 1;
+        int index = 0;
+        for (const char *element = descriptor + 1; *element != ')'; element = qiq_skip_value_descriptor(element), index++) {
+            if (!qiq_payloads_equal(element, a[index], b[index])) return false;
+        }
+        return true;
+    }
     case 'N':
         // Nullable scalars: both null, or both set to equal scalars.
         if (left == right) return true;

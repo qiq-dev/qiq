@@ -1,0 +1,104 @@
+<!-- title: Tuples -->
+<h1>Tuples</h1>
+<p>A tuple is a fixed number of values, each with its own type. Its type lists them in parentheses, <code>(int, string)</code>, and a tuple is written the same way, <code>(42, "ok")</code>. The usual use is a function that returns more than one thing, without declaring a class for it.</p>
+
+```qiq
+function minMax(int[] values): (int, int) {
+    int lo = values[0];
+    int hi = values[0];
+    foreach (values as value) {
+        if (value < lo) {
+            lo = value;
+        }
+        if (value > hi) {
+            hi = value;
+        }
+    }
+    return (lo, hi);
+}
+
+(int lo, int hi) = minMax([3, 9, 1]);
+print(f"{lo}..{hi}");
+```
+```output
+1..9
+```
+
+<h2>Reading the values</h2>
+<p>A tuple's values are numbered from 0. <code>pair[0]</code> reads the first, with its own type. The index must be a number written in the code, since each position has a different type; <code>pair[i]</code> with a variable is an error, and so is an index past the end.</p>
+
+```qiq
+(string, int) person = ("Ada", 36);
+print(person[0], person[1] + 1, person);
+```
+```output
+Ada 37 ("Ada", 36)
+```
+
+<p>Tuples can't be changed: <code>person[1] = 37</code> is an error. Make a new tuple instead. Like objects, arrays, and maps, a tuple can be <code>null</code>, and <code>pair[1] ?? fallback</code> gives the fallback when the tuple or the value is null.</p>
+
+<h2>Taking a tuple apart</h2>
+<p><code>(int lo, int hi) = minMax(values);</code> declares a variable for each value. Each part can be:</p>
+<ul>
+<li>a type and a name, <code>int lo</code>, declaring a new variable of that type;</li>
+<li>a name alone, <code>lo</code>, assigning an existing variable (or, as with any assignment to a new name, declaring one with the value's type);</li>
+<li><code>_</code>, for a value you don't need.</li>
+</ul>
+
+```qiq
+function parse(string text): (int, string) {
+    return (to_int(text), "ok");
+}
+
+(int value, string status) = parse("42");
+(value, _) = parse("7");
+print(value, status);
+
+int a = 1;
+int b = 2;
+(a, b) = (b, a);
+print(a, b);
+```
+```output
+7 ok
+2 1
+```
+
+<p>The tuple is read once, before any variable is assigned, so <code>(a, b) = (b, a)</code> swaps them. The number of parts must match the tuple's: <code>can't take apart a (int, string) into 3 values: it has 2</code>. Only tuples can be taken apart this way, not arrays.</p>
+
+<p><code>foreach</code> can take each value apart, as in <code>foreach (people as (string name, int age))</code>, and with keys, <code>foreach (points as key =&gt; (int x, int y))</code>.</p>
+
+```qiq
+(string, int)[] people = [("Ada", 36), ("Lin", 29)];
+foreach (people as (string name, int age)) {
+    print(name, age);
+}
+```
+```output
+Ada 36
+Lin 29
+```
+
+<h2>Comparing, printing, and JSON</h2>
+<ul>
+<li><code>==</code> and <code>!=</code> compare tuples of the same type value by value, like arrays: <code>(1, "a") == (1, "a")</code> is <code>true</code>. As for arrays, tuples holding objects or functions can only be compared with <code>null</code>.</li>
+<li><code>print</code>, <code>to_string</code>, and f-strings write a tuple as it's written in code: <code>(42, "ok")</code>.</li>
+<li><code>json_encode</code> writes a tuple as a JSON array, <code>[42,"ok"]</code>, and <code>json_decode</code> reads one back from an array of exactly that many values.</li>
+<li><code>in_array</code> and <code>array_search</code> find tuples by value, as <code>==</code> compares them.</li>
+</ul>
+
+<h2>Types</h2>
+<p>A tuple has 2 to 8 values; for more, a class with named properties is clearer. <code>(x)</code> with one value is just <code>x</code> in parentheses. A tuple's type comes from its values, or from the type it's used as, so <code>(?int, string) maybe = (null, "none");</code> works where <code>(null, "none")</code> alone couldn't say what the null is. Tuple types can be used anywhere a type can, including arrays, maps, properties, function types, and <a href="generics.html">generic code</a>:</p>
+
+```qiq
+function swap<A, B>((A, B) pair): (B, A) {
+    return (pair[1], pair[0]);
+}
+
+print(swap((1, "one")), swap((true, 2.5)));
+```
+```output
+("one", 1) (2.5, true)
+```
+
+<p>Two tuple types are the same when their values' types are, in order; a <code>(Circle, int)</code> isn't a <code>(Shape, int)</code>, as with generic classes.</p>
