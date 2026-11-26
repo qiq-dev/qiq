@@ -278,6 +278,32 @@ print(largest([new Money(5), new Money(12), new Money(7)])->cents);
 12
 ```
 
+<h3 id="key-bound">Map keys</h3>
+<p>A map's keys can be ints, doubles, bools, strings, or chars, so <code>map[K, V]</code> needs <code>K</code> to be one of those. The bound <code>K: key</code> says so: generic code can use a <code>K</code> as a map key, compare it with <code>==</code> and <code>&lt;</code>, and turn it into a string with <code>to_string</code> or an f-string.</p>
+
+```qiq
+function groupBy<T, K: key>(T[] items, function(T): K keyOf): map[K, T[]] {
+    map[K, T[]] groups = {};
+    foreach (items as item) {
+        K k = keyOf(item);
+        if (!map_key_exists(k, groups)) {
+            groups[k] = [];
+        }
+        array_push(groups[k], item);
+    }
+    return groups;
+}
+
+print(groupBy(["tea", "jam", "cake"], fn(w) => len(w)));
+print(groupBy([1, 2, 3, 4], fn(n) => n % 2 == 0));
+```
+```output
+{3 => ["tea", "jam"], 4 => ["cake"]}
+{false => [1, 3], true => [2, 4]}
+```
+
+<p>Without the bound, <code>map[K, V]</code> is the error <code>a K can't be a map key: K could be a type keys can't have; declare it as K: key</code>, and passing another type for a <code>K: key</code> is the error <code>groupBy's type parameter K must be a map key type (int, double, bool, string, or char), but int[] isn't one</code>. Generic code with a <code>K: key</code> is checked with <code>K</code> as an <code>int</code> and as a <code>string</code>, since it must work for every key type, so a mistake such as <code>len(k)</code> names one of them: <code>function 'f&lt;int&gt;': len expects a string, array, or map, found int</code>, with a note saying why.</p>
+
 <h2>How it works</h2>
 <p>The compiler makes a copy of a generic class or function for each set of type arguments the program uses, with the types filled in, so generic code runs exactly as fast as code written for those types: a <code>Stack&lt;int&gt;</code> stores plain ints. Generic code is also checked once on its own, even if nothing uses it, with each <code>T</code> standing for its bound, or for a type with no methods; a mistake shows up there rather than at some later use.</p>
 
@@ -289,6 +315,6 @@ print(largest([new Money(5), new Money(12), new Money(7)])->cents);
 <li>A generic class's static property can be read with its type arguments (<code>Box&lt;int&gt;::count</code>), but only assigned inside the class, with <code>self::</code>.</li>
 <li>Interface and abstract methods can't have type parameters of their own yet, and generic methods can't be overridden. A constructor's type parameters are its class's.</li>
 <li><code>?T</code> isn't allowed, since <code>T</code> may already be a type that can be null. <code>instanceof</code> can't test for a generic class.</li>
-<li>A generic function can't be used as a function value. A type parameter can't be a map's key type (<code>map[K, V]</code>), which is why <code>map_map</code> and <code>map_filter</code> are built into the compiler rather than generic functions like <code>array_map</code>.</li>
+<li>A generic function can't be used as a function value.</li>
 <li>Type arguments are exact: a <code>Stack&lt;Dog&gt;</code> isn't a <code>Stack&lt;Animal&gt;</code>, even when a <code>Dog</code> is an <code>Animal</code>.</li>
 </ul>

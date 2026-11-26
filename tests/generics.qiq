@@ -348,3 +348,48 @@ class Repeat {
 
 print(len(emptyOf<string>()), firstOrElse<int>([], -1), firstOrElse<string>([], "none"));
 print(Repeat::times<char>('x', 3));
+
+// Map key type parameters: K: key is any type a map's keys can have.
+function groupBy<T, K: key>(T[] items, function(T): K keyOf): map[K, T[]] {
+    map[K, T[]] groups = {};
+    foreach (items as item) {
+        K k = keyOf(item);
+        if (!map_key_exists(k, groups)) {
+            groups[k] = [];
+        }
+        array_push(groups[k], item);
+    }
+    return groups;
+}
+
+function invert<K: key, V: key>(map[K, V] entries): map[V, K] {
+    map[V, K] result = {};
+    foreach (entries as k => v) {
+        result[v] = k;
+    }
+    return result;
+}
+
+function describeKeys<K: key, V>(map[K, V] entries): string {
+    string text = "";
+    foreach (entries as k => v) {
+        text = text + f"[{k}]";
+    }
+    return text;
+}
+
+class Index<K: key, V> {
+    private map[K, V] entries = {};
+    function put(K k, V v): void { this->entries[k] = v; }
+    function get(K k, V fallback): V { return this->entries[k] ?? fallback; }
+    function size(): int { return len(this->entries); }
+}
+
+map[int, string[]] byLength = groupBy(["a", "bb", "cc", "d"], fn(w) => len(w));
+print(byLength);
+print(groupBy([1, 2, 3, 4], fn(n) => n % 2 == 0));
+print(invert({"one" => 1, "two" => 2}));
+print(describeKeys({'x' => 1, 'y' => 2}), describeKeys({1.5 => true}));
+Index<string, int> ages = new Index();
+ages->put("ada", 36);
+print(ages->get("ada", 0), ages->get("lin", -1), ages->size());

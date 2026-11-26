@@ -20,3 +20,8 @@ b 2 counting stack of 1 history of 1
 2
 0 -1 none
 ['x', 'x', 'x']
+{1 => ["a", "d"], 2 => ["bb", "cc"]}
+{false => [1, 3], true => [2, 4]}
+{1 => "one", 2 => "two"}
+[x][y] [1.5]
+36 -1 1

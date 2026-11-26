@@ -1487,7 +1487,9 @@ MAPS = {
     "intro": (
         "Functions for <a href=\"maps.html\">maps</a>. They're built into the compiler, because they work with any key "
         "and value types. Maps keep insertion order, so <code>map_keys</code> and <code>map_values</code> return entries "
-        "in the order they were added. To read a key with a default, use <code>map[key] ?? default</code>."
+        "in the order they were added. To read a key with a default, use <code>map[key] ?? default</code>. "
+        "<code>map_map</code> and <code>map_filter</code> are <a href=\"generics.html\">generic functions</a> written in qiq "
+        "instead, so a call can name its arguments or give its type arguments."
     ),
     "functions": [
         {

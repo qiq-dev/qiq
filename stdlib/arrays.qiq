@@ -1,14 +1,14 @@
-// Array functions that take a callback. They're ordinary generic functions:
-// T and U come from the arguments, or from the type the result is used as,
-// so an anonymous function's parameters can leave out their types:
+// Array and map functions that take a callback. They're ordinary generic
+// functions: T and U (and K and V for maps) come from the arguments, or from
+// the type the result is used as, so an anonymous function's parameters can
+// leave out their types:
 //
 //   string[] labels = array_map([1, 2, 3], fn(n) => f"#{n}");
 //
-// The callback runs inside a foreach over the array, so one that changes
-// the array behaves as it would in a loop written by hand. Every function
+// The callback runs inside a foreach over the array or map, so one that
+// changes it behaves as it would in a loop written by hand. Every function
 // here is available in every file without an import, and cannot be
-// redeclared. (array_find, usort, map_filter, and map_map are built into
-// the compiler.)
+// redeclared. (array_find and usort are built into the compiler.)
 
 // A new array of what `callback` returns for each element, in order.
 function array_map<T, U>(T[] array, function(T): U callback): U[] {
@@ -71,4 +71,26 @@ function array_all<T>(T[] array, function(T): bool callback): bool {
         }
     }
     return true;
+}
+
+// A new map of the entries for which `callback`, given each key and value,
+// returns true, in the map's order.
+function map_filter<K: key, V>(map[K, V] entries, function(K, V): bool callback): map[K, V] {
+    map[K, V] result = {};
+    foreach (entries as key => value) {
+        if (callback(key, value)) {
+            result[key] = value;
+        }
+    }
+    return result;
+}
+
+// A new map with the same keys, in the same order, and what `callback`
+// returns for each value.
+function map_map<K: key, V, W>(map[K, V] entries, function(V): W callback): map[K, W] {
+    map[K, W] result = {};
+    foreach (entries as key => value) {
+        result[key] = callback(value);
+    }
+    return result;
 }

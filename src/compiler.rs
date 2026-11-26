@@ -818,6 +818,9 @@ struct TypeParamDef {
     bound: Option<ValueType>,
     /// `T: object`: any object type, so a T can be null.
     objects_only: bool,
+    /// `K: key`: a type a map's keys can have (int, double, bool, string,
+    /// or char), so `map[K, V]` can be written.
+    keys_only: bool,
 }
 
 /// A generic class applied to type arguments, as written: `Box<int>`, or
@@ -4038,16 +4041,23 @@ impl Parser {
             }
             // In scope already, for a bound that mentions it: `T: Comparable<T>`.
             let id = self.generics.params.len() as u32;
-            self.generics.params.push(TypeParamDef { name: name.clone(), bound: None, objects_only: false });
+            self.generics.params.push(TypeParamDef { name: name.clone(), bound: None, objects_only: false, keys_only: false });
             self.type_scope.push((name, id));
             params.push(id);
             // `T: object`: any class, interface, or enum.
             let object_bound = matches!(self.current().kind, TokenKind::Colon)
                 && matches!(self.tokens.get(self.cursor + 1).map(|token| &token.kind), Some(TokenKind::Identifier(word)) if word == "object" && !self.class_names.contains_key("object"));
+            // `K: key`: a type a map's keys can have.
+            let key_bound = matches!(self.current().kind, TokenKind::Colon)
+                && matches!(self.tokens.get(self.cursor + 1).map(|token| &token.kind), Some(TokenKind::Identifier(word)) if word == "key" && !self.class_names.contains_key("key"));
             if object_bound {
                 self.advance();
                 self.advance();
                 self.generics.params[id as usize].objects_only = true;
+            } else if key_bound {
+                self.advance();
+                self.advance();
+                self.generics.params[id as usize].keys_only = true;
             } else if matches!(self.current().kind, TokenKind::Colon) {
                 self.advance();
                 let bound_at = self.error("");
@@ -4189,8 +4199,15 @@ impl Parser {
         if matches!(self.current().kind, TokenKind::Map) {
             self.advance();
             self.expect(TokenKind::LeftBracket, "expected '[' after 'map'")?;
+            let at = self.error("");
             let key_type = self.parse_value_type()?;
-            if !key_type.is_scalar_key() {
+            if let ValueType::TypeParam(param) = key_type {
+                let definition = &self.generics.params[param as usize];
+                if !definition.keys_only {
+                    let name = &definition.name;
+                    return Err(format!("{at}a {name} can't be a map key: {name} could be a type keys can't have; declare it as {name}: key"));
+                }
+            } else if !key_type.is_scalar_key() {
                 return Err(self.error("map keys must use a scalar type"));
             }
             self.expect(TokenKind::Comma, "expected ',' between map key and value types")?;
@@ -4527,6 +4544,10 @@ struct Emitter {
     generics: Generics,
     /// Copies of generic functions made while emitting, waiting to be emitted.
     pending_generic_functions: Vec<Function>,
+    /// Copies made to check generic code with `K: key` parameters as int and
+    /// as string ("function SYMBOL", "method CLASS NAME", or "class CLASS"),
+    /// and the note their errors get (see key_check_note).
+    key_check_notes: HashMap<String, String>,
     /// Copies of generic methods, with their classes, waiting to be emitted.
     pending_generic_methods: Vec<(u32, Function)>,
     /// Classes that copies of generic classes made while emitting could
@@ -4626,7 +4647,7 @@ struct Emitter {
 /// Built-in conversion functions (see Emitter::emit_conversion).
 /// Functions built into the compiler rather than declared in the standard
 /// library, because each accepts several types.
-const CONVERSION_FUNCTIONS: [&str; 38] = [
+const CONVERSION_FUNCTIONS: [&str; 36] = [
     // An f-string's expression (see lex_fstring).
     "__interpolate",
     "to_int",
@@ -4649,8 +4670,6 @@ const CONVERSION_FUNCTIONS: [&str; 38] = [
     "map_intersect",
     "map_flip",
     "array_find",
-    "map_filter",
-    "map_map",
     "sort",
     "rsort",
     "usort",
@@ -4694,6 +4713,7 @@ impl Emitter {
         Self {
             generics,
             pending_generic_functions: Vec::new(),
+            key_check_notes: HashMap::new(),
             pending_generic_methods: Vec::new(),
             emitted_classes: Vec::new(),
             late_parents: Vec::new(),
@@ -4856,7 +4876,11 @@ impl Emitter {
                 let module = self.classes[class_id as usize].module;
                 self.next_register = 0;
                 self.current_module = module as usize;
-                let ir = self.emit_function(&method, Some(class_id)).map_err(|error| self.in_module(module, error))?;
+                let ir = self
+                    .emit_function(&method, Some(class_id))
+                    .map_err(|error| self.with_key_check_note(&format!("method {class_id} {}", method.name), error))
+                    .map_err(|error| self.with_key_check_note(&format!("class {class_id}"), error))
+                    .map_err(|error| self.in_module(module, error))?;
                 functions_ir.push_str(&ir);
                 functions_ir.push('\n');
             }
@@ -4864,13 +4888,15 @@ impl Emitter {
                 self.emitted_classes.push(class_id);
                 // Copies of generic classes made while emitting are only in self.classes.
                 let class = self.classes[class_id as usize].clone();
-                functions_ir.push_str(&self.emit_class_methods(&class, class_id)?);
+                let methods = self.emit_class_methods(&class, class_id).map_err(|error| self.with_key_check_note(&format!("class {class_id}"), error))?;
+                functions_ir.push_str(&methods);
             }
             for function in generic_functions {
                 self.next_register = 0;
                 self.current_module = function.module as usize;
                 let ir = self
                     .emit_function(&function, None)
+                    .map_err(|error| self.with_key_check_note(&format!("function {}", function.symbol), error))
                     .map_err(|error| self.in_module(function.module, error))?;
                 functions_ir.push_str(&ir);
                 functions_ir.push('\n');
@@ -7098,7 +7124,10 @@ impl Emitter {
         for template in functions {
             let types = stand_in_all(self, &template.type_params).map_err(|error| self.in_module(template.module, error))?;
             self.current_module = template.module as usize;
-            self.generic_function_instance(&template, types).map_err(|error| self.in_module(template.module, error))?;
+            for types in self.key_variants(&template.type_params, types) {
+                let symbol = self.generic_function_instance(&template, types).map_err(|error| self.in_module(template.module, self.key_check_note(&template.type_params, error)))?;
+                self.note_key_check(format!("function {symbol}"), &template.type_params);
+            }
         }
         let mut classes: Vec<(u32, ClassDef)> = self.generics.class_templates.iter().filter(|(_, class)| user(class.module)).map(|(id, class)| (*id, class.clone())).collect();
         classes.sort_by_key(|(id, _)| *id);
@@ -7110,9 +7139,12 @@ impl Emitter {
             .collect();
         for (class_id, template) in classes {
             let types = stand_in_all(self, &template.type_params).map_err(|error| self.in_module(template.module, error))?;
-            let copy = self.monomorphize(|m| m.instance(class_id, types)).map_err(|error| self.in_module(template.module, error))?;
-            if !template.is_interface {
-                checked_classes.push(copy);
+            for types in self.key_variants(&template.type_params, types) {
+                let copy = self.monomorphize(|m| m.instance(class_id, types)).map_err(|error| self.in_module(template.module, self.key_check_note(&template.type_params, error)))?;
+                self.note_key_check(format!("class {copy}"), &template.type_params);
+                if !template.is_interface {
+                    checked_classes.push(copy);
+                }
             }
         }
         // Generic methods, in ordinary classes and in those copies.
@@ -7122,10 +7154,59 @@ impl Emitter {
             for method in methods {
                 let types = stand_in_all(self, &method.type_params).map_err(|error| self.in_module(module, error))?;
                 self.current_module = module as usize;
-                self.generic_method_instance(class_id, &method, types).map_err(|error| self.in_module(module, error))?;
+                for types in self.key_variants(&method.type_params, types) {
+                    let copy = self.generic_method_instance(class_id, &method, types).map_err(|error| self.in_module(module, self.key_check_note(&method.type_params, error)))?;
+                    self.note_key_check(format!("method {class_id} {copy}"), &method.type_params);
+                }
             }
         }
         Ok(())
+    }
+
+    /// Records `copy` as made to check code with `params` (see key_check_notes).
+    fn note_key_check(&mut self, copy: String, params: &[u32]) {
+        let note = self.key_check_note(params, String::new());
+        if !note.is_empty() {
+            self.key_check_notes.insert(copy, note);
+        }
+    }
+
+    /// `error` with the note for `copy`, if it was made to check `K: key` code.
+    fn with_key_check_note(&self, copy: &str, error: String) -> String {
+        match self.key_check_notes.get(copy) {
+            Some(note) => format!("{error}{note}"),
+            None => error,
+        }
+    }
+
+    /// `error`, from checking generic code with `params`, saying why it names
+    /// int or string when a parameter is `K: key` (see key_variants).
+    fn key_check_note(&self, params: &[u32], error: String) -> String {
+        let keys: Vec<&str> = params.iter().map(|param| &self.generics.params[*param as usize]).filter(|definition| definition.keys_only).map(|definition| definition.name.as_str()).collect();
+        if keys.is_empty() {
+            return error;
+        }
+        format!("{error} (code with {}: key is checked with {} as int and as string, since it must work for every key type)", keys.join(", "), keys.join(" and "))
+    }
+
+    /// The type arguments generic code is checked with: `stand_ins`, except
+    /// that a `K: key` parameter is checked as an int and again as a string,
+    /// since a class can't be a map key. Code that works for both is very
+    /// likely to work for the other key types too.
+    fn key_variants(&self, params: &[u32], stand_ins: Vec<ValueType>) -> Vec<Vec<ValueType>> {
+        if !params.iter().any(|param| self.generics.params[*param as usize].keys_only) {
+            return vec![stand_ins];
+        }
+        [ValueType::Int, ValueType::String]
+            .into_iter()
+            .map(|key| {
+                params
+                    .iter()
+                    .zip(&stand_ins)
+                    .map(|(param, stand_in)| if self.generics.params[*param as usize].keys_only { key } else { *stand_in })
+                    .collect()
+            })
+            .collect()
     }
 
     /// The class made from generic class or interface `generic` that
@@ -9039,8 +9120,8 @@ impl Emitter {
         if matches!(name, "map_merge" | "map_diff_keys" | "map_intersect_keys" | "map_diff" | "map_intersect" | "map_flip") {
             return self.emit_map_combination(name, arguments, variables, body);
         }
-        if matches!(name, "array_find" | "map_filter" | "map_map") {
-            return self.emit_with_callback(name, arguments, variables, body);
+        if name == "array_find" {
+            return self.emit_array_find(arguments, variables, body);
         }
         if matches!(name, "sort" | "rsort" | "usort" | "in_array" | "array_search" | "array_slice" | "array_reverse" | "array_unique" | "array_sum") {
             return self.emit_array_basic(name, arguments, variables, body);
@@ -10803,92 +10884,52 @@ impl Emitter {
         Ok(value)
     }
 
-    /// array_find, map_filter, and map_map: each is compiled as a foreach
-    /// loop that calls the callback (typed from the array's elements, or the
-    /// map's keys and values) and keeps its result in a hidden variable, so
-    /// element access, reference counts, exceptions, and a callback that
-    /// changes the collection behave as in a loop written by hand. The other
-    /// functions that take a callback are generic functions in
-    /// stdlib/arrays.qiq. These stay built in: array_find for its error for
-    /// arrays of values that can't be null, and the map functions because a
-    /// type parameter can't be a map's key type yet.
-    fn emit_with_callback(&mut self, name: &str, arguments: &[Expr], variables: &HashMap<String, Value>, body: &mut String) -> Result<Value, String> {
+    /// array_find: a foreach loop that calls the callback (typed from the
+    /// array's elements) and keeps the first element it accepts in a hidden
+    /// variable, so element access, reference counts, exceptions, and a
+    /// callback that changes the array behave as in a loop written by hand.
+    /// It's built in, rather than a generic function in stdlib/arrays.qiq
+    /// like the other functions that take a callback, for its error for
+    /// arrays of values that can't be null.
+    fn emit_array_find(&mut self, arguments: &[Expr], variables: &HashMap<String, Value>, body: &mut String) -> Result<Value, String> {
         if arguments.iter().any(|argument| matches!(argument, Expr::NamedArgument(..))) {
-            return Err(format!("{name} takes no named arguments"));
+            return Err("array_find takes no named arguments".to_string());
         }
-        let is_map = name.starts_with("map_");
         if arguments.len() != 2 {
-            let usage = if is_map { "a map and a callback" } else { "an array and a callback" };
-            return Err(format!("{name} expects {usage}, found {} argument{}", arguments.len(), if arguments.len() == 1 { "" } else { "s" }));
+            return Err(format!("array_find expects an array and a callback, found {} argument{}", arguments.len(), if arguments.len() == 1 { "" } else { "s" }));
         }
         let collection = self.emit_expression(&arguments[0], variables, body)?;
-        let (key_type, element_type) = if is_map {
-            match collection.value_type {
-                ValueType::Map(id) => (Some(self.map_types[id as usize].key_type), self.map_types[id as usize].value_type),
-                other => return Err(format!("{name} expects a map, found {}", self.type_name(other))),
-            }
-        } else {
-            match self.element_of(collection.value_type) {
-                Some(element) => (None, element),
-                None => return Err(format!("{name} expects an array, found {}", self.type_name(collection.value_type))),
-            }
+        let Some(element_type) = self.element_of(collection.value_type) else {
+            return Err(format!("array_find expects an array, found {}", self.type_name(collection.value_type)));
         };
-        let (parameters, returns): (Vec<ValueType>, Option<ValueType>) = match name {
-            "map_map" => (vec![element_type], None),
-            "map_filter" => (vec![key_type.expect("a map"), element_type], Some(ValueType::Bool)),
-            _ => (vec![element_type], Some(ValueType::Bool)),
-        };
-        let callback = self.emit_callback(name, &arguments[1], &parameters, returns, variables, body)?;
-        let callback_returns = match callback.value_type {
-            ValueType::Function(id) => self.function_types[id as usize].return_type,
-            _ => unreachable!("checked by emit_callback"),
-        };
-        if name == "map_map" && callback_returns == ValueType::Void {
-            return Err("map_map's callback must return a value, which becomes the new map's value".to_string());
-        }
-        if name == "array_find" && !is_reference(element_type) {
+        let callback = self.emit_callback("array_find", &arguments[1], &[element_type], Some(ValueType::Bool), variables, body)?;
+        if !is_reference(element_type) {
             let type_name = self.type_name(element_type);
             let article = if type_name.starts_with(['a', 'e', 'i', 'o', 'u']) { "an" } else { "a" };
             return Err(format!(
                 "array_find returns null when nothing matches, which {article} {type_name} can't be; use array_find_index, which returns the index or -1"
             ));
         }
-        // The result: its type, and its starting value.
-        let (result_type, start) = match name {
-            "map_filter" => (collection.value_type, Expr::MapLiteral(Vec::new())),
-            "map_map" => (ValueType::Map(self.map_type_id(MapType { key_type: key_type.expect("a map"), value_type: callback_returns })), Expr::MapLiteral(Vec::new())),
-            _ => (element_type, Expr::Null),
-        };
-        let start = self.emit_expecting(&start, Some(result_type), variables, body)?;
-        let result = self.bind_variable(Value { value_type: result_type, ..start }, body);
+        let start = self.emit_expecting(&Expr::Null, Some(element_type), variables, body)?;
+        let result = self.bind_variable(Value { value_type: element_type, ..start }, body);
         let mut scope = variables.clone();
         scope.insert("#fn.collection".to_string(), Value { slot: None, ..collection });
         scope.insert("#fn.callback".to_string(), Value { slot: None, ..callback });
-        scope.insert("#fn.result".to_string(), result.clone());
+        scope.insert("#fn.result".to_string(), result);
         // The loop.
         let (line, column) = self.position.unwrap_or((0, 0));
         let statement = |kind: StatementKind| Statement { kind, line, column };
         let variable = |name: &str| Expr::Variable(name.to_string());
-        let call = |arguments: Vec<Expr>| Expr::Call("#fn.callback".to_string(), arguments);
         let item = variable("#fn.item");
-        let body_statements = match name {
-            "map_filter" => vec![statement(StatementKind::If {
-                condition: call(vec![variable("#fn.key"), item.clone()]),
-                then_body: vec![statement(StatementKind::AssignIndex(variable("#fn.result"), variable("#fn.key"), item.clone()))],
-                else_body: Vec::new(),
-            })],
-            "map_map" => vec![statement(StatementKind::AssignIndex(variable("#fn.result"), variable("#fn.key"), call(vec![item.clone()])))],
-            _ => vec![statement(StatementKind::If {
-                condition: call(vec![item.clone()]),
-                then_body: vec![statement(StatementKind::Assign("#fn.result".to_string(), item.clone())), statement(StatementKind::Break(1))],
-                else_body: Vec::new(),
-            })],
-        };
         let loop_statement = statement(StatementKind::Foreach {
             iterable: variable("#fn.collection"),
-            key_name: is_map.then(|| "#fn.key".to_string()),
+            key_name: None,
             value_name: "#fn.item".to_string(),
-            body: body_statements,
+            body: vec![statement(StatementKind::If {
+                condition: Expr::Call("#fn.callback".to_string(), vec![item.clone()]),
+                then_body: vec![statement(StatementKind::Assign("#fn.result".to_string(), item)), statement(StatementKind::Break(1))],
+                else_body: Vec::new(),
+            })],
         });
         let (ir, _) = self.emit_block(&[loop_statement], &scope, ValueType::Void, false)?;
         body.push_str(&ir);
@@ -14163,6 +14204,13 @@ impl Monomorphizer<'_> {
         let bindings = Bindings { given: false, types: params.iter().copied().zip(arguments.iter().copied()).collect(), own_class: None, parent: None };
         for (param, argument) in params.iter().zip(arguments) {
             let definition = self.generics.params[*param as usize].clone();
+            if definition.keys_only && !argument.is_scalar_key() {
+                return Err(format!(
+                    "{owner}'s type parameter {} must be a map key type (int, double, bool, string, or char), but {} isn't one",
+                    definition.name,
+                    self.type_name(*argument)
+                ));
+            }
             if definition.objects_only && !matches!(argument, ValueType::Class(_)) {
                 return Err(format!(
                     "{owner}'s type parameter {} must be an object, but {} isn't one",
@@ -16124,7 +16172,7 @@ mod tests {
         assert!(error("function show(int n): void {} print(array_map([1], show));").contains("function 'array_map': the callback for 'callback' must return a value, which decides what U is"));
         assert!(error("print(array_map(5, fn(n) => n));").contains("function 'array_map' expects T[] for 'array', found int"));
         assert!(error("print(array_find([1, 2], fn(n) => n > 1));").contains("which an int can't be; use array_find_index"));
-        assert!(error("print(map_filter({\"a\" => 1}, fn(v) => true));").contains("map_filter's callback takes 2 parameters (string, int)"));
+        assert!(error("print(map_filter({\"a\" => 1}, fn(v) => true));").contains("this function has 1 parameter, but a function(string, int): bool is expected here"));
         assert!(error("function(string): bool f = fn(s) => true; print(array_filter([1], f));").contains("expects a callback of type function(int): bool for 'callback', found function(string): bool"));
         assert!(error("print(array_reduce([1], fn(a, n) => a, null));").contains("can't tell the parameter types of the anonymous function for 'callback', since U isn't known yet"));
     }
@@ -18215,6 +18263,26 @@ mod tests {
         ];
         for (code, message) in cases {
             let error = compile_source(&format!("{declared}{code}")).err().unwrap_or_else(|| panic!("{code}: compiled"));
+            assert!(error.contains(message), "{code}: expected '{message}', got '{error}'");
+        }
+    }
+
+    #[test]
+    fn map_key_type_parameters() {
+        let source = "function invert<K: key, V: key>(map[K, V] entries): map[V, K] { map[V, K] result = {}; foreach (entries as k => v) { result[v] = k; } return result; } class Index<K: key, V> { private map[K, V] entries = {}; function put(K k, V v): void { this->entries[k] = v; } } function label<K: key>(K k): string { return f\"[{k}]\" + to_string(k); } map[int, string] names = invert({\"a\" => 1}); Index<char, bool> seen = new Index(); seen->put('x', true); print(label(1.5));";
+        assert!(compile_source(source).is_ok(), "{:?}", compile_source(source).err());
+        let note = "(code with K: key is checked with K as int and as string, since it must work for every key type)";
+        let cases = [
+            ("function f<K>(map[K, int] m): int { return len(m); }", "a K can't be a map key: K could be a type keys can't have; declare it as K: key"),
+            ("class B {} function f<K: key>(K k): K { return k; } print(f(new B()));", "f's type parameter K must be a map key type (int, double, bool, string, or char), but B isn't one"),
+            ("function f<K: key>(K k): K { return k; } print(f([1]));", "but int[] isn't one"),
+            ("function f<K: key>(K k): int { return len(k); }", note),
+            ("class Idx<K: key> { function m(K k): int { return k + 1; } }", note),
+            ("class C { function m<K: key>(K k): int { return len(k); } }", note),
+            ("function f<K: key>(K[] ks): map[K, bool] { return {}; } function g<T>(T[] xs): int { return len(f(xs)); }", "f's type parameter K must be a map key type (int, double, bool, string, or char), but T isn't one"),
+        ];
+        for (code, message) in cases {
+            let error = compile_source(code).err().unwrap_or_else(|| panic!("{code}: compiled"));
             assert!(error.contains(message), "{code}: expected '{message}', got '{error}'");
         }
     }
