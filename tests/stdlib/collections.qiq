@@ -1,6 +1,6 @@
 // std/collections: ArrayList, Set, Deque, PriorityQueue, and the Collection
 // interface they share.
-import ArrayList, Set, Deque, PriorityQueue, Collection, EmptyCollectionException from "std/collections";
+import ArrayList, Set, Deque, PriorityQueue, HashMap, Collection, EmptyCollectionException from "std/collections";
 
 ArrayList<string> names = new ArrayList(["Ada", "Lin"]);
 names->add("Grace");
@@ -54,3 +54,17 @@ print(ops->get(0)(21), ops->contains(twice));
 Job a = new Job("a", 2);
 ArrayList<(Job, int)> pairs = new ArrayList([(a, 1)]);
 print(pairs->get(0)[0]->name, pairs->indexOf(pairs->get(0)));
+
+// HashMap: a built-in map wrapped, a collection of (key, value) tuples.
+HashMap<string, int> ages = new HashMap({"ada" => 36, "lin" => 29});
+ages->set("grace", 45);
+print(ages->size(), ages->get("ada"), ages->getOr("bob", -1), ages->has("lin"), ages->keys(), ages->values());
+foreach (ages as (string name, int age)) { print(name, age); }
+print(ages->filter(fn(name, age) => age > 30)->toMap(), ages->mapValues(fn(age) => age >= 40)->toArray());
+print(ages->reduce(fn(sum, entry) => sum + entry[1], 0), ages->any(fn(e) => e[0] == "lin"), ages->contains(("lin", 29)));
+print(ages->remove("lin"), ages->remove("lin"), ages->toMap());
+try { ages->get("zed"); } catch (KeyNotFoundException e) { print(e->getMessage()); }
+function entryCount(Collection<(string, int)> entries): int { return entries->size(); }
+print(entryCount(ages));
+HashMap<int, string> empty = new HashMap<int, string>();
+print(empty->isEmpty(), empty->toMap());

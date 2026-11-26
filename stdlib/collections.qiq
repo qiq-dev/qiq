@@ -1,5 +1,5 @@
-// Collections: lists, sets, double-ended queues, and priority queues, as
-// classes with methods. They sit alongside the built-in arrays and maps,
+// Collections: lists, maps, sets, double-ended queues, and priority queues,
+// as classes with methods. They sit alongside the built-in arrays and maps,
 // which they don't replace; each converts to and from an array. Import what
 // you use:
 //
@@ -16,9 +16,9 @@
 // it was. Values are compared as in_array compares them: numbers, strings,
 // arrays, maps, and tuples by value, objects and functions by identity.
 
-import RuntimeException, OutOfRangeException from "exceptions";
+import RuntimeException, OutOfRangeException, KeyNotFoundException from "exceptions";
 import Iterator, Iterable from "iterators";
-import array_map, array_filter from "arrays";
+import array_map, array_filter, map_map, map_filter from "arrays";
 
 // Thrown by taking a value from an empty collection: ArrayList's first and
 // last, Deque's pops and peeks, and PriorityQueue's pop and peek.
@@ -369,6 +369,124 @@ final class Set<T: key> extends AbstractCollection<T> {
     // A new set of what `change` returns for each value (repeats kept once).
     function map<U: key>(function(T): U change): Set<U> {
         return new Set<U>(array_map(map_keys(this->items), change));
+    }
+}
+
+// A map from keys to values, as a class with methods: a built-in map
+// wrapped, so it can be passed as a Collection and transformed in chains.
+// It keeps the order keys were first set in. As a collection, its values
+// are (key, value) tuples, so foreach can take each entry apart:
+//
+//   foreach (ages as (string name, int age)) { ... }
+final class HashMap<K: key, V> extends AbstractCollection<(K, V)> {
+    private map[K, V] entries = {};
+
+    // A map of `entries` (a copy: changing the map later doesn't change it).
+    function __construct(map[K, V] entries = {}) {
+        foreach (entries as key => value) {
+            this->entries[key] = value;
+        }
+    }
+
+    function size(): int {
+        return len(this->entries);
+    }
+
+    // The entries as (key, value) tuples, in order.
+    function toArray(): (K, V)[] {
+        (K, V)[] pairs = [];
+        foreach (this->entries as key => value) {
+            array_push(pairs, (key, value));
+        }
+        return pairs;
+    }
+
+    function iterator(): Iterator<(K, V)> {
+        return new __Values(this->toArray());
+    }
+
+    // The value for `key`; KeyNotFoundException if it has none.
+    function get(K key): V {
+        if (!map_key_exists(key, this->entries)) {
+            throw new KeyNotFoundException(f"key {key} is not in the map");
+        }
+        return this->entries[key];
+    }
+
+    // The value for `key`, or `fallback` if it has none.
+    function getOr(K key, V fallback): V {
+        if (!map_key_exists(key, this->entries)) {
+            return fallback;
+        }
+        return this->entries[key];
+    }
+
+    // Whether it has a value for `key`.
+    function has(K key): bool {
+        return map_key_exists(key, this->entries);
+    }
+
+    // Sets the value for `key`, replacing any it had.
+    function set(K key, V value): void {
+        this->entries[key] = value;
+    }
+
+    // Sets each of `entries`' keys to its value.
+    function setAll(map[K, V] entries): void {
+        foreach (entries as key => value) {
+            this->entries[key] = value;
+        }
+    }
+
+    // Removes `key` and its value: whether it had one.
+    function remove(K key): bool {
+        if (!map_key_exists(key, this->entries)) {
+            return false;
+        }
+        unset(this->entries[key]);
+        return true;
+    }
+
+    // Removes every entry.
+    function clear(): void {
+        this->entries = {};
+    }
+
+    // The keys, in order.
+    function keys(): K[] {
+        return map_keys(this->entries);
+    }
+
+    // The values, in the keys' order.
+    function values(): V[] {
+        return map_values(this->entries);
+    }
+
+    // The entries as a new built-in map.
+    function toMap(): map[K, V] {
+        map[K, V] copy = {};
+        foreach (this->entries as key => value) {
+            copy[key] = value;
+        }
+        return copy;
+    }
+
+    // A new map of the entries `test`, given each key and value, returns
+    // true for.
+    function filter(function(K, V): bool test): HashMap<K, V> {
+        return new HashMap<K, V>(map_filter(this->entries, test));
+    }
+
+    // A new map with the same keys and what `change` returns for each value.
+    function mapValues<W>(function(V): W change): HashMap<K, W> {
+        return new HashMap<K, W>(map_map(this->entries, change));
+    }
+
+    // Calls `action` with each key and value, in order.
+    function forEach(function(K, V): void action): void {
+        foreach (this->entries as key => value) {
+            action(key, value);
+        }
     }
 }
 

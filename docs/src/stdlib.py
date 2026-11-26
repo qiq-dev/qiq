@@ -32,7 +32,7 @@ OVERVIEW = (
     "<tr><td><code>std/net/http</code></td><td>The <a href=\"ref.http.html\">HTTP client</a> and URL encoding</td></tr>"
     "<tr><td><code>std/net/http/server</code></td><td>The <a href=\"ref.http-server.html\">HTTP server</a></td></tr>"
     "<tr><td><code>std/crypto</code></td><td><a href=\"ref.crypto.html\">Hashing and encoding</a>: MD5, SHA-1, SHA-2, HMAC, hex, base64, and password hashing</td></tr>"
-    "<tr><td><code>std/collections</code></td><td><a href=\"class.collection.html\">Collections</a>: the <a href=\"class.arraylist.html\">ArrayList</a>, <a href=\"class.set.html\">Set</a>, <a href=\"class.deque.html\">Deque</a>, and <a href=\"class.priorityqueue.html\">PriorityQueue</a> classes, alongside the built-in arrays and maps</td></tr>"
+    "<tr><td><code>std/collections</code></td><td><a href=\"class.collection.html\">Collections</a>: the <a href=\"class.arraylist.html\">ArrayList</a>, <a href=\"class.hashmap.html\">HashMap</a>, <a href=\"class.set.html\">Set</a>, <a href=\"class.deque.html\">Deque</a>, and <a href=\"class.priorityqueue.html\">PriorityQueue</a> classes, alongside the built-in arrays and maps</td></tr>"
     "<tr><td><code>std/csv</code></td><td><a href=\"ref.csv.html\">CSV</a>: reading and writing CSV as rows, by column name, as objects, or a row at a time</td></tr>"
     "<tr><td><code>std/testing</code></td><td>The <a href=\"class.test.html\"><code>Test</code></a> class that <a href=\"testing.html\">tests</a> take, for <code>qiq test</code></td></tr>"
     "<tr><td><code>std/math</code></td><td><a href=\"ref.math.html\">Math</a>: rounding, roots, logarithms, trigonometry, <code>number_format</code>, and secure random numbers</td></tr>"
@@ -4518,18 +4518,19 @@ _COLLECTION_MEMBERS = [
 ]
 
 COLLECTION_INTERFACE = r"""<h1>The Collection interface</h1>
-<p>The <code>std/collections</code> module has four collection classes, which sit alongside the built-in <a href="arrays.html">arrays</a> and <a href="maps.html">maps</a> rather than replacing them:</p>
+<p>The <code>std/collections</code> module has five collection classes, which sit alongside the built-in <a href="arrays.html">arrays</a> and <a href="maps.html">maps</a> rather than replacing them:</p>
 <table>
 <thead><tr><th>Class</th><th>For</th></tr></thead>
 <tbody>
 <tr><td><a href="class.arraylist.html">ArrayList&lt;T&gt;</a></td><td>A list: an array with methods, so it can be passed as a <code>Collection</code> and transformed in chains</td></tr>
+<tr><td><a href="class.hashmap.html">HashMap&lt;K: key, V&gt;</a></td><td>A map from keys to values with methods: a built-in map wrapped, as a collection of <code>(key, value)</code> tuples</td></tr>
 <tr><td><a href="class.set.html">Set&lt;T: key&gt;</a></td><td>Values without repeats, with a fast <code>contains</code>, and union, intersection, and difference</td></tr>
 <tr><td><a href="class.deque.html">Deque&lt;T&gt;</a></td><td>Adding and removing at either end in constant time: a queue or a stack</td></tr>
 <tr><td><a href="class.priorityqueue.html">PriorityQueue&lt;T&gt;</a></td><td>Taking out the first value by an order of your choosing, such as the smallest</td></tr>
 </tbody>
 </table>
 <p>Each implements <code>Collection&lt;T&gt;</code>, so a function can take any of them, and each is <code>Iterable&lt;T&gt;</code>, so <code>foreach</code> loops over its values. Import the names you use:</p>
-<pre class="code">import ArrayList, Set, Collection from "std/collections";</pre>
+<pre class="code">import ArrayList, HashMap, Set, Collection from "std/collections";</pre>
 <p>Methods that change a collection (<code>add</code>, <code>remove</code>, <code>pushBack</code>, <code>pop</code>, ...) change it in place, as for arrays and maps. Methods that make a collection, such as <code>map</code> and <code>filter</code>, return a new one and leave the original as it was, and <code>toArray()</code> returns a copy. Values are compared as <a href="function.in-array.html">in_array</a> compares them: numbers, strings, arrays, maps, and tuples by value, objects and functions by identity.</p>
 <h2>Interface synopsis</h2>
 """ + _synopsis("interface Collection<T> extends Iterable<T>", _COLLECTION_MEMBERS) + "\n" + _method_table([
@@ -4568,7 +4569,7 @@ foreach (unique as value) {
     "abstract function iterator(): Iterator<T>",
 ]) + r"""
 <h2>Empty collections</h2>
-<p>Taking a value from an empty collection (<code>ArrayList</code>'s <code>first</code> and <code>last</code>, <code>Deque</code>'s pops and peeks, <code>PriorityQueue</code>'s <code>pop</code> and <code>peek</code>) throws <code>EmptyCollectionException</code>, a <code>RuntimeException</code> from <code>std/collections</code>. An index outside a list or deque throws <code>OutOfRangeException</code>.</p>
+<p>Taking a value from an empty collection (<code>ArrayList</code>'s <code>first</code> and <code>last</code>, <code>Deque</code>'s pops and peeks, <code>PriorityQueue</code>'s <code>pop</code> and <code>peek</code>) throws <code>EmptyCollectionException</code>, a <code>RuntimeException</code> from <code>std/collections</code>. An index outside a list or deque throws <code>OutOfRangeException</code>, and a key a <code>HashMap</code> doesn't have throws <code>KeyNotFoundException</code> from <code>get</code>.</p>
 """
 
 ARRAYLIST_CLASS = r"""<h1>The ArrayList class</h1>
@@ -4663,6 +4664,58 @@ print(seen->intersect(wanted)->toArray(), wanted->diff(seen)->toArray());
 ```output
 2 true false true
 ["tea"] ["bread"]
+```
+"""
+
+HASHMAP_CLASS = r"""<h1>The HashMap class</h1>
+<p>A map from keys to values, as a class with methods. It wraps a built-in <a href="maps.html">map</a>, so a map can be passed as a <a href="class.collection.html">Collection</a> and transformed in chains; for everyday code, the built-in map, with its literals, <code>m[key]</code>, and <code>??</code>, is shorter and a little faster. It keeps the order keys were first set in. Import it from <code>std/collections</code>. Its keys are of a type a map's keys can have: <code>int</code>, <code>double</code>, <code>bool</code>, <code>string</code>, or <code>char</code>.</p>
+<p>As a collection, a <code>HashMap&lt;K, V&gt;</code> is a <code>Collection&lt;(K, V)&gt;</code>: its values are <code>(key, value)</code> <a href="tuples.html">tuples</a>, so <code>foreach (ages as (string name, int age))</code> takes each entry apart, and <code>reduce</code>, <code>any</code>, <code>all</code>, and <code>count</code> look at entries.</p>
+<h2>Class synopsis</h2>
+""" + _synopsis("final class HashMap<K: key, V> extends AbstractCollection<(K, V)>", [
+    "function __construct(map[K, V] entries = {})",
+    "function get(K key): V",
+    "function getOr(K key, V fallback): V",
+    "function has(K key): bool",
+    "function set(K key, V value): void",
+    "function setAll(map[K, V] entries): void",
+    "function remove(K key): bool",
+    "function clear(): void",
+    "function keys(): K[]",
+    "function values(): V[]",
+    "function toMap(): map[K, V]",
+    "function filter(function(K, V): bool test): HashMap<K, V>",
+    "function mapValues<W>(function(V): W change): HashMap<K, W>",
+    "function forEach(function(K, V): void action): void",
+]) + "\n" + _method_table([
+    ("__construct(entries)", "A map of a built-in map's entries (a copy). <code>new HashMap&lt;string, int&gt;()</code> is an empty map."),
+    ("get(key)", "The value for <code>key</code>. A key it doesn't have throws <code>KeyNotFoundException</code>."),
+    ("getOr(key, fallback)", "The value for <code>key</code>, or <code>fallback</code> if it has none."),
+    ("has(key)", "Whether it has a value for <code>key</code>."),
+    ("set(key, value), setAll(entries)", "Sets the value for a key, or for each of a built-in map's keys, replacing any it had."),
+    ("remove(key)", "Removes <code>key</code> and its value: whether it had one."),
+    ("clear()", "Removes every entry."),
+    ("keys(), values()", "The keys, or the values, in order, as an array."),
+    ("toMap()", "The entries as a new built-in map."),
+    ("filter(test)", "A new map of the entries <code>test</code>, given each key and value, returns true for."),
+    ("mapValues(change)", "A new map with the same keys and what <code>change</code> returns for each value."),
+    ("forEach(action)", "Calls <code>action</code> with each key and value, in order."),
+]) + r"""
+<p>It also has the <a href="class.collection.html">Collection</a> methods, over <code>(key, value)</code> tuples: <code>size</code>, <code>isEmpty</code>, <code>contains</code>, <code>toArray</code>, <code>reduce</code>, <code>any</code>, <code>all</code>, and <code>count</code>.</p>
+<h2>Example</h2>
+```qiq
+HashMap<string, int> ages = new HashMap({"Ada" => 36, "Lin" => 29});
+ages->set("Grace", 45);
+print(ages->get("Ada"), ages->getOr("Bob", 0), ages->keys());
+foreach (ages->filter(fn(name, age) => age > 30) as (string name, int age)) {
+    print(name, age);
+}
+print(ages->mapValues(fn(age) => age >= 40)->toMap());
+```
+```output
+36 0 ["Ada", "Lin", "Grace"]
+Ada 36
+Grace 45
+{"Ada" => false, "Lin" => false, "Grace" => true}
 ```
 """
 
@@ -4763,6 +4816,7 @@ CLASS_PAGES = [
     ("class.test.html", "The Test class", "What a test receives from qiq test: assertions, skipping, and logging.", TEST_CLASS),
     ("class.collection.html", "The Collection interface", "What every collection in std/collections has, and AbstractCollection for making your own.", COLLECTION_INTERFACE),
     ("class.arraylist.html", "The ArrayList class", "A list with methods: indexing, adding and removing, sorting, and map and filter chains.", ARRAYLIST_CLASS),
+    ("class.hashmap.html", "The HashMap class", "A map with methods: a built-in map wrapped, as a collection of (key, value) tuples.", HASHMAP_CLASS),
     ("class.set.html", "The Set class", "Values without repeats, with a fast contains, and union, intersection, and difference.", SET_CLASS),
     ("class.deque.html", "The Deque class", "Adding and removing at either end in constant time: a queue or a stack.", DEQUE_CLASS),
     ("class.priorityqueue.html", "The PriorityQueue class", "Taking out the first value by an order of your choosing, such as the smallest.", PRIORITYQUEUE_CLASS),

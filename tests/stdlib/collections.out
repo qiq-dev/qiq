@@ -16,3 +16,13 @@ popFront: the deque is empty
 index 10 is outside the list (0 to 1)
 42 true
 a 0
+3 36 -1 true ["ada", "lin", "grace"] [36, 29, 45]
+ada 36
+lin 29
+grace 45
+{"ada" => 36, "grace" => 45} [("ada", false), ("lin", false), ("grace", true)]
+110 true true
+true false {"ada" => 36, "grace" => 45}
+key zed is not in the map
+2
+true {}
