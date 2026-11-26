@@ -114,6 +114,9 @@ _Noreturn void qiq_fatal(const char *message) {
 _Noreturn void qiq_throw(QiqExceptionKind kind, const char *message) {
     if (qiq_guard == NULL) qiq_fatal(message);
     jmp_buf *guard = qiq_guard;
+    // An exception already pending (a task's wait was cancelled, and the
+    // runtime function then failed for that) is the one that's thrown.
+    if (qiq_pending_exception != NULL) longjmp(*guard, 1);
     // The exception keeps its own reference to the message.
     char *text = qiq_string_from(message, strlen(message));
     qiq_raise((int32_t)kind, text);
@@ -133,6 +136,10 @@ _Noreturn void qiq_throwf(QiqExceptionKind kind, const char *format, ...) {
     vsnprintf(message, (size_t)length + 1, format, arguments);
     va_end(arguments);
     if (qiq_guard == NULL) qiq_fatal(message);
+    if (qiq_pending_exception != NULL) {
+        free(message);
+        longjmp(*qiq_guard, 1);
+    }
     char *text = qiq_string_from(message, strlen(message));
     free(message);
     jmp_buf *guard = qiq_guard;

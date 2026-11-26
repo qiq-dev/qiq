@@ -17,6 +17,11 @@
 //   __fiber_yield()       lets the other ready fibers run first
 //   qiq_poll(fds, n, ms)  poll() for the runtime's I/O (sockets, pipes):
 //                         other fibers run until a descriptor is ready
+//   qiq_offload(work, c)  runs blocking work (file I/O, SQLite) on a helper
+//                         thread while other fibers run
+//   qiq_fiber_lock(lock)  one fiber at a time (the database results)
+//   __fiber_cancel(f)     makes the fiber's next wait (or its current one)
+//                         throw CancelledException
 //   __fiber_failed(e)     notes a task's exception, reported at the end
 //   __fiber_observed(e)   unless an await sees it first
 // The compiled program calls qiq_fibers_finish at the end of its main code,
@@ -27,12 +32,15 @@
 
 #include <errno.h>
 #include <setjmp.h>
+#include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <poll.h>
+#include <pthread.h>
 #include <sys/epoll.h>
+#include <sys/eventfd.h>
 #include <sys/mman.h>
 #include <time.h>
 #include <unistd.h>
@@ -42,6 +50,10 @@ jmp_buf *qiq_guard_get(void);
 void qiq_guard_set(jmp_buf *guard);
 // Defined in every compiled program (see qiq_raise in core.c).
 extern void qiq_raise(int32_t kind, const char *message);
+// In qiq's patched musl (see build.rs): the poll() its DNS resolver waits
+// with, set to qiq_poll once tasks start, so lookups let them run.
+extern int (*__qiq_poll_hook)(struct pollfd *, nfds_t, int);
+int qiq_poll(struct pollfd *fds, nfds_t count, int timeout_ms);
 
 // Each fiber's stack: 1 MiB of address space, committed only as it's used.
 #define QIQ_FIBER_STACK (1024 * 1024)
@@ -62,6 +74,10 @@ struct QiqFiber {
     // Counts its waits: a timer or I/O registration wakes it only if it's
     // still in the wait that made it (not a later one).
     uint64_t wait;
+    // Task::cancel: asked for, and whether its wait has thrown
+    // CancelledException for it yet (once).
+    bool cancel_requested;
+    bool cancel_delivered;
     struct QiqFiber *next;  // in the ready queue, or the free list
 };
 
@@ -208,11 +224,215 @@ static void qiq_end_wait(QiqFiber *fiber, uint64_t wait) {
 typedef struct {
     QiqFiber *fiber;
     uint64_t wait;
+    bool registered;  // whether its descriptor is in the epoll instance
 } QiqIoWaiter;
 
 static int qiq_epoll = -1;
 // Registrations: descriptors fibers are waiting on.
 static int64_t qiq_io_waiting = 0;
+
+static uint64_t qiq_begin_wait(void);
+static void qiq_wait(void);
+static bool qiq_take_cancel(void);
+static void qiq_raise_cancelled(void);
+int qiq_fibers_active(void);
+
+// ---------------------------------------------------------------------------
+// Helper threads, for work that blocks and that epoll can't wait for: file
+// I/O and SQLite. A fiber hands a job to the pool and parks; a helper thread
+// runs it, puts it on the finished list, and signals an eventfd that the
+// scheduler's epoll watches. The work touches only C memory, never qiq
+// objects (whose reference counts aren't atomic), and never throws.
+
+typedef struct QiqJob {
+    void (*work)(void *);
+    void *context;
+    QiqFiber *fiber;
+    uint64_t wait;
+    int done;
+    struct QiqJob *next;
+} QiqJob;
+
+#define QIQ_POOL_THREADS 4
+
+static pthread_mutex_t qiq_pool_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t qiq_pool_work = PTHREAD_COND_INITIALIZER;
+static QiqJob *qiq_pool_queue_head = NULL;
+static QiqJob *qiq_pool_queue_tail = NULL;
+static QiqJob *qiq_pool_finished = NULL;
+// Signalled when a job finishes (in the epoll instance, as qiq_pool_marker).
+static int qiq_pool_signal = -1;
+static int qiq_pool_started = 0;
+static char qiq_pool_marker;
+
+static void *qiq_pool_thread(void *unused) {
+    (void)unused;
+    for (;;) {
+        pthread_mutex_lock(&qiq_pool_mutex);
+        while (qiq_pool_queue_head == NULL) pthread_cond_wait(&qiq_pool_work, &qiq_pool_mutex);
+        QiqJob *job = qiq_pool_queue_head;
+        qiq_pool_queue_head = job->next;
+        if (qiq_pool_queue_head == NULL) qiq_pool_queue_tail = NULL;
+        pthread_mutex_unlock(&qiq_pool_mutex);
+        job->work(job->context);
+        pthread_mutex_lock(&qiq_pool_mutex);
+        job->next = qiq_pool_finished;
+        qiq_pool_finished = job;
+        pthread_mutex_unlock(&qiq_pool_mutex);
+        uint64_t one = 1;
+        while (write(qiq_pool_signal, &one, sizeof one) < 0 && errno == EINTR) {
+        }
+    }
+    return NULL;
+}
+
+// The scheduler, when the eventfd says jobs finished: wakes their fibers.
+static void qiq_pool_collect(void) {
+    uint64_t count;
+    while (read(qiq_pool_signal, &count, sizeof count) < 0 && errno == EINTR) {
+    }
+    pthread_mutex_lock(&qiq_pool_mutex);
+    QiqJob *finished = qiq_pool_finished;
+    qiq_pool_finished = NULL;
+    pthread_mutex_unlock(&qiq_pool_mutex);
+    while (finished != NULL) {
+        QiqJob *job = finished;
+        finished = job->next;
+        job->done = 1;
+        qiq_io_waiting--;
+        qiq_end_wait(job->fiber, job->wait);
+    }
+}
+
+// A forked child (exec, the HTTP server's workers) has none of the parent's
+// threads, and its epoll instance is the parent's: it starts afresh.
+static void qiq_pool_after_fork(void) {
+    pthread_mutex_init(&qiq_pool_mutex, NULL);
+    pthread_cond_init(&qiq_pool_work, NULL);
+    qiq_pool_queue_head = qiq_pool_queue_tail = qiq_pool_finished = NULL;
+    if (qiq_pool_signal >= 0) close(qiq_pool_signal);
+    if (qiq_epoll >= 0) close(qiq_epoll);
+    qiq_pool_signal = qiq_epoll = -1;
+    qiq_pool_started = 0;
+    qiq_io_waiting = 0;
+}
+
+static void qiq_pool_start(void) {
+    if (qiq_epoll < 0) {
+        qiq_epoll = epoll_create1(EPOLL_CLOEXEC);
+        if (qiq_epoll < 0) qiq_fatal("could not create an epoll instance");
+    }
+    qiq_pool_signal = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+    if (qiq_pool_signal < 0) qiq_fatal("could not create an eventfd for helper threads");
+    struct epoll_event event = {.events = EPOLLIN, .data.ptr = &qiq_pool_marker};
+    if (epoll_ctl(qiq_epoll, EPOLL_CTL_ADD, qiq_pool_signal, &event) != 0) qiq_fatal("could not watch the helper threads' eventfd");
+    static int registered = 0;
+    if (!registered) {
+        pthread_atfork(NULL, NULL, qiq_pool_after_fork);
+        registered = 1;
+    }
+    for (int index = 0; index < QIQ_POOL_THREADS; index++) {
+        pthread_t thread;
+        pthread_attr_t attributes;
+        pthread_attr_init(&attributes);
+        pthread_attr_setdetachstate(&attributes, PTHREAD_CREATE_DETACHED);
+        // SQLite and file I/O need little stack.
+        pthread_attr_setstacksize(&attributes, 512 * 1024);
+        if (pthread_create(&thread, &attributes, qiq_pool_thread, NULL) != 0) qiq_fatal("could not start a helper thread");
+        pthread_attr_destroy(&attributes);
+    }
+    qiq_pool_started = 1;
+}
+
+// Runs `work(context)`: with other fibers, on a helper thread while they
+// run (the current fiber waits); otherwise right here.
+void qiq_offload(void (*work)(void *), void *context) {
+    if (!qiq_fibers_active()) {
+        work(context);
+        return;
+    }
+    if (!qiq_pool_started) qiq_pool_start();
+    QiqJob job = {work, context, qiq_current, 0, 0, NULL};
+    qiq_io_waiting++;
+    job.wait = qiq_begin_wait();
+    pthread_mutex_lock(&qiq_pool_mutex);
+    if (qiq_pool_queue_tail != NULL) qiq_pool_queue_tail->next = &job;
+    else qiq_pool_queue_head = &job;
+    qiq_pool_queue_tail = &job;
+    pthread_cond_signal(&qiq_pool_work);
+    pthread_mutex_unlock(&qiq_pool_mutex);
+    // The job lives on this fiber's stack, so the fiber waits for it to end,
+    // whatever else wakes it.
+    for (;;) {
+        qiq_wait();
+        if (job.done) break;
+        job.wait = qiq_begin_wait();
+    }
+    // Cancelled meanwhile: the work is done, and the task hears of it now.
+    if (qiq_take_cancel()) qiq_raise_cancelled();
+}
+
+// ---------------------------------------------------------------------------
+// Fiber locks: one fiber at a time holds one; others wait, letting the rest
+// run. For the runtime's own shared state (database results).
+
+typedef struct QiqLockWaiter {
+    QiqFiber *fiber;
+    uint64_t wait;
+    struct QiqLockWaiter *next;
+} QiqLockWaiter;
+
+typedef struct {
+    QiqFiber *owner;
+    QiqLockWaiter *head;
+    QiqLockWaiter *tail;
+} QiqFiberLock;
+
+// Takes `lock`, waiting while another fiber has it. False (with the pending
+// exception set) if waiting deadlocked.
+bool qiq_fiber_lock(QiqFiberLock *lock) {
+    while (lock->owner != NULL && lock->owner != qiq_current) {
+        QiqLockWaiter waiter = {qiq_current, qiq_begin_wait(), NULL};
+        if (lock->tail != NULL) lock->tail->next = &waiter;
+        else lock->head = &waiter;
+        lock->tail = &waiter;
+        qiq_wait();
+        // Off the queue, wherever it is (woken, or by something else).
+        QiqLockWaiter **link = &lock->head;
+        QiqLockWaiter *previous = NULL;
+        while (*link != NULL && *link != &waiter) {
+            previous = *link;
+            link = &(*link)->next;
+        }
+        if (*link == &waiter) {
+            *link = waiter.next;
+            if (lock->tail == &waiter) lock->tail = previous;
+        }
+        if (qiq_pending_exception != NULL) return false;
+        if (qiq_take_cancel()) {
+            qiq_raise_cancelled();
+            return false;
+        }
+    }
+    lock->owner = qiq_current;
+    return true;
+}
+
+void qiq_fiber_unlock(QiqFiberLock *lock) {
+    lock->owner = NULL;
+    if (lock->head != NULL) qiq_end_wait(lock->head->fiber, lock->head->wait);
+}
+
+// The lock on the database drivers' shared results (see sql.c).
+static QiqFiberLock qiq_database_lock;
+
+bool qiq_database_lock_take(void) {
+    return qiq_fiber_lock(&qiq_database_lock);
+}
+
+void qiq_database_lock_give(void) {
+    qiq_fiber_unlock(&qiq_database_lock);
+}
 
 // Waits up to `timeout_ms` (-1: no limit) for registered descriptors, and
 // wakes the fibers waiting on those that are ready.
@@ -223,6 +443,10 @@ static void qiq_poll_io(int timeout_ms) {
         count = epoll_wait(qiq_epoll, events, 64, timeout_ms);
     } while (count < 0 && errno == EINTR);
     for (int index = 0; index < count; index++) {
+        if (events[index].data.ptr == &qiq_pool_marker) {
+            qiq_pool_collect();
+            continue;
+        }
         QiqIoWaiter *waiter = events[index].data.ptr;
         qiq_end_wait(waiter->fiber, waiter->wait);
     }
@@ -310,6 +534,22 @@ static uint64_t qiq_begin_wait(void) {
 
 #define QIQ_DEADLOCK "deadlock: every task is waiting (for a task, a channel, or the end of the program), so none can go on"
 
+// Whether the current fiber was cancelled and hasn't been told: then it has
+// been, and the wait it was in throws CancelledException.
+static bool qiq_take_cancel(void) {
+    if (!qiq_current->cancel_requested || qiq_current->cancel_delivered) return false;
+    qiq_current->cancel_delivered = true;
+    return true;
+}
+
+// Raises CancelledException (kind 18, from std/async).
+static void qiq_raise_cancelled(void) {
+    static const char text[] = "the task was cancelled";
+    char *message = qiq_string_from(text, sizeof text - 1);
+    qiq_raise(18, message);
+    qiq_release(message);
+}
+
 // Raises the deadlock RuntimeException (it becomes qiq_pending_exception).
 static void qiq_raise_deadlock(void) {
     char *text = qiq_string_from(QIQ_DEADLOCK, strlen(QIQ_DEADLOCK));
@@ -389,12 +629,17 @@ static QiqFiber *qiq_new_fiber(void) {
 // ---------------------------------------------------------------------------
 // The primitives std/async uses
 
+static int qiq_resolver_poll(struct pollfd *fds, nfds_t count, int timeout_ms);
+
 void qiq_stdlib___fiber_spawn(void *body) {
+    __qiq_poll_hook = qiq_resolver_poll;
     QiqFiber *fiber = qiq_new_fiber();
     qiq_retain(body);
     fiber->body = body;
     fiber->pending = NULL;
     fiber->guard = NULL;
+    fiber->cancel_requested = false;
+    fiber->cancel_delivered = false;
     // The stack as qiq_fiber_switch leaves it, to "return" into
     // qiq_fiber_start: the control words, six registers (r12 holding the
     // fiber), and the return address, below a 16-byte aligned top.
@@ -418,8 +663,26 @@ int64_t qiq_stdlib___fiber_current(void) {
 }
 
 void qiq_stdlib___fiber_park(void) {
+    if (qiq_take_cancel()) {
+        qiq_raise_cancelled();
+        return;
+    }
     qiq_begin_wait();
     qiq_wait();
+    if (qiq_pending_exception == NULL && qiq_take_cancel()) qiq_raise_cancelled();
+}
+
+void qiq_stdlib___fiber_cancel(int64_t handle) {
+    QiqFiber *fiber = (QiqFiber *)(uintptr_t)handle;
+    if (fiber->state == QIQ_FIBER_DONE || fiber->cancel_requested) return;
+    fiber->cancel_requested = true;
+    fiber->cancel_delivered = false;
+    // Woken now, whatever it's waiting for: its wait sees the request.
+    if (fiber->state == QIQ_FIBER_PARKED) qiq_make_ready(fiber);
+}
+
+bool qiq_stdlib___fiber_cancelled(void) {
+    return qiq_current->cancel_requested;
 }
 
 void qiq_stdlib___fiber_wake(int64_t handle) {
@@ -494,6 +757,10 @@ void qiq_fiber_sleep(uint64_t nanoseconds) {
     // A channel or task may wake it early (it was once waiting on one); it
     // sleeps again until the time.
     while (qiq_now() < deadline) {
+        if (qiq_take_cancel()) {
+            qiq_raise_cancelled();
+            return;
+        }
         uint64_t wait = qiq_begin_wait();
         qiq_timer_push(deadline, qiq_current, wait);
         qiq_wait();
@@ -511,7 +778,11 @@ static uint32_t qiq_epoll_events(short events) {
 // poll(), for the runtime's sockets and pipes: with other fibers, the
 // current one waits for a descriptor to be ready (or the timeout) while the
 // others run. Returns as poll() does, with each `revents` set.
-int qiq_poll(struct pollfd *fds, nfds_t count, int timeout_ms) {
+// A cancelled fiber's wait raises CancelledException and fails with
+// ECANCELED, unless `cancellable` is false (musl's resolver, which would
+// retry until its own timeout: the lookup finishes, and the next wait sees
+// the cancellation).
+static int qiq_poll_with(struct pollfd *fds, nfds_t count, int timeout_ms, bool cancellable) {
     if (!qiq_fibers_active()) return poll(fds, count, timeout_ms);
     uint64_t deadline = timeout_ms < 0 ? 0 : qiq_now() + (uint64_t)timeout_ms * 1000000u;
     QiqIoWaiter *waiters = malloc(count * sizeof *waiters);
@@ -522,6 +793,14 @@ int qiq_poll(struct pollfd *fds, nfds_t count, int timeout_ms) {
             free(waiters);
             return ready;
         }
+        if (cancellable && qiq_take_cancel()) qiq_raise_cancelled();
+        // Not while an exception is on its way (a cancellation, above or
+        // earlier in the same runtime call).
+        if (qiq_pending_exception != NULL) {
+            free(waiters);
+            errno = ECANCELED;
+            return -1;
+        }
         if (qiq_epoll < 0) {
             qiq_epoll = epoll_create1(EPOLL_CLOEXEC);
             if (qiq_epoll < 0) qiq_fatal("could not create an epoll instance");
@@ -529,14 +808,17 @@ int qiq_poll(struct pollfd *fds, nfds_t count, int timeout_ms) {
         uint64_t wait = qiq_begin_wait();
         nfds_t registered = 0;
         for (nfds_t index = 0; index < count; index++) {
-            waiters[index] = (QiqIoWaiter){qiq_current, wait};
+            // Negative descriptors are ignored, as poll() ignores them.
+            waiters[index] = (QiqIoWaiter){qiq_current, wait, false};
+            if (fds[index].fd < 0) continue;
             struct epoll_event event = {.events = qiq_epoll_events(fds[index].events), .data.ptr = &waiters[index]};
-            if (epoll_ctl(qiq_epoll, EPOLL_CTL_ADD, fds[index].fd, &event) == 0) registered++;
-            else fds[index].fd = -fds[index].fd - 1;  // not registered: skipped when removing
+            if (epoll_ctl(qiq_epoll, EPOLL_CTL_ADD, fds[index].fd, &event) == 0) {
+                waiters[index].registered = true;
+                registered++;
+            }
         }
         if (registered == 0) {
             // Nothing epoll can watch (as for a regular file): poll as before.
-            for (nfds_t index = 0; index < count; index++) if (fds[index].fd < 0) fds[index].fd = -fds[index].fd - 1;
             qiq_current->state = QIQ_FIBER_RUNNING;
             free(waiters);
             return poll(fds, count, timeout_ms);
@@ -545,11 +827,7 @@ int qiq_poll(struct pollfd *fds, nfds_t count, int timeout_ms) {
         if (timeout_ms >= 0) qiq_timer_push(deadline, qiq_current, wait);
         qiq_wait();
         for (nfds_t index = 0; index < count; index++) {
-            if (fds[index].fd < 0) {
-                fds[index].fd = -fds[index].fd - 1;
-                continue;
-            }
-            epoll_ctl(qiq_epoll, EPOLL_CTL_DEL, fds[index].fd, NULL);
+            if (waiters[index].registered) epoll_ctl(qiq_epoll, EPOLL_CTL_DEL, fds[index].fd, NULL);
         }
         qiq_io_waiting -= (int64_t)registered;
         if (qiq_pending_exception != NULL) {
@@ -558,4 +836,13 @@ int qiq_poll(struct pollfd *fds, nfds_t count, int timeout_ms) {
             return -1;
         }
     }
+}
+
+int qiq_poll(struct pollfd *fds, nfds_t count, int timeout_ms) {
+    return qiq_poll_with(fds, count, timeout_ms, true);
+}
+
+// musl's resolver's wait (see __qiq_poll_hook).
+static int qiq_resolver_poll(struct pollfd *fds, nfds_t count, int timeout_ms) {
+    return qiq_poll_with(fds, count, timeout_ms, false);
 }

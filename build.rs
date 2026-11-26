@@ -86,6 +86,13 @@ const SQLITE_OPTIONS: &[&str] = &[
 ];
 /// Replaces musl's x86-64 assembly memcpy, which is slow for short copies.
 const MUSL_MEMCPY: &str = "vendor/musl-x86_64-memcpy.c";
+/// Patches musl's DNS resolver (src/network/res_msend.c) to wait for answers
+/// through a hook the runtime sets when tasks start (std/async, see fiber.c),
+/// so a lookup lets other tasks run instead of blocking them all: its one
+/// poll() call goes through `__qiq_poll_hook` when that's set.
+const MUSL_RESOLVER_POLL: &str = "if (poll(pfd, nqueries+1, t1+retry_interval-t2) <= 0) continue;";
+const MUSL_RESOLVER_HOOKED: &str = "if ((__qiq_poll_hook ? __qiq_poll_hook : poll)(pfd, nqueries+1, t1+retry_interval-t2) <= 0) continue;";
+const MUSL_RESOLVER_HOOK: &str = "\n/* qiq: set by the runtime while tasks run (see build.rs). */\nint (*__qiq_poll_hook)(struct pollfd *, nfds_t, int) = 0;\n";
 const RUNTIME_SOURCES: &[&str] = &[
     "core.c",
     "fiber.c",
@@ -157,9 +164,10 @@ fn output(command: &mut Command) -> String {
 fn build_musl(out: &Path, clang: &str) -> PathBuf {
     let prefix = out.join("musl");
     let memcpy = std::fs::read_to_string(MUSL_MEMCPY).unwrap_or_else(|error| panic!("could not read {MUSL_MEMCPY}: {error}"));
-    // Records which memcpy the installed musl was built with.
+    // Records which memcpy and resolver patch the installed musl was built with.
     let stamp = prefix.join("qiq-memcpy.c");
-    if prefix.join("lib/libc.a").exists() && std::fs::read_to_string(&stamp).ok().as_deref() == Some(memcpy.as_str()) {
+    let stamped = format!("{memcpy}\n/* {MUSL_RESOLVER_HOOKED} */\n");
+    if prefix.join("lib/libc.a").exists() && std::fs::read_to_string(&stamp).ok().as_deref() == Some(stamped.as_str()) {
         return prefix;
     }
     let source = out.join(MUSL);
@@ -175,6 +183,11 @@ fn build_musl(out: &Path, clang: &str) -> PathBuf {
         std::fs::remove_file(string.join(assembly)).unwrap_or_else(|error| panic!("could not remove musl's {assembly}: {error}"));
     }
     std::fs::write(string.join("memcpy.c"), &memcpy).unwrap_or_else(|error| panic!("could not write memcpy.c: {error}"));
+    let resolver = source.join("src/network/res_msend.c");
+    let text = std::fs::read_to_string(&resolver).unwrap_or_else(|error| panic!("could not read musl's res_msend.c: {error}"));
+    assert!(text.contains(MUSL_RESOLVER_POLL), "musl's res_msend.c has changed: its poll() call isn't where build.rs patches it");
+    let text = text.replacen("#include \"lookup.h\"\n", &format!("#include \"lookup.h\"\n{MUSL_RESOLVER_HOOK}"), 1).replacen(MUSL_RESOLVER_POLL, MUSL_RESOLVER_HOOKED, 1);
+    std::fs::write(&resolver, text).unwrap_or_else(|error| panic!("could not write musl's res_msend.c: {error}"));
     run(Command::new("./configure")
         .current_dir(&source)
         .arg(format!("--prefix={}", prefix.display()))
@@ -183,7 +196,7 @@ fn build_musl(out: &Path, clang: &str) -> PathBuf {
     let jobs = env::var("NUM_JOBS").unwrap_or_else(|_| "4".to_string());
     run(Command::new("make").current_dir(&source).arg(format!("-j{jobs}")));
     run(Command::new("make").current_dir(&source).arg("install"));
-    std::fs::write(&stamp, &memcpy).unwrap_or_else(|error| panic!("could not write {}: {error}", stamp.display()));
+    std::fs::write(&stamp, &stamped).unwrap_or_else(|error| panic!("could not write {}: {error}", stamp.display()));
     prefix
 }
 

@@ -1,0 +1,115 @@
+// Cancelling tasks, time limits, and waiting on several channels.
+import spawn, launch, with_timeout, receive_any, Task, Job, Channel, ChannelClosedException, CancelledException, TimeoutException from "std/async";
+import usleep, hrtime from "std/time";
+import exec from "std/os";
+import Database from "std/sql";
+
+function milliseconds(int start): int {
+    return (hrtime() - start) / 1000000;
+}
+
+// A sleeping task, cancelled: its sleep throws CancelledException, and so
+// does await.
+Task<string> sleeper = spawn(function(): string {
+    usleep(5000000);
+    return "woke";
+});
+usleep(10000);
+sleeper->cancel();
+try {
+    sleeper->await();
+} catch (CancelledException e) {
+    print("sleeper:", e->getMessage(), sleeper->isCancelled(), sleeper->isDone());
+}
+
+// Cancelled before it starts: its function doesn't run.
+bool ran = false;
+Job never = launch(function(): void {
+    ran = true;
+});
+never->cancel();
+try {
+    never->join();
+} catch (CancelledException e) {
+    print("before it started:", e->getMessage(), ran);
+}
+
+// A task can catch the cancellation and finish its own way.
+Task<string> tidy = spawn(function(): string {
+    try {
+        usleep(5000000);
+        return "slept";
+    } catch (CancelledException e) {
+        return "tidied up";
+    }
+});
+usleep(1000);
+tidy->cancel();
+print(tidy->await());
+
+// with_timeout: within the limit, over it, and an exception passing through.
+print(with_timeout(1.0, fn() => 42));
+int start = hrtime();
+try {
+    with_timeout(0.1, function(): int {
+        usleep(3000000);
+        return 1;
+    });
+} catch (TimeoutException e) {
+    print("timed out:", e->getMessage(), milliseconds(start) < 1000);
+}
+try {
+    with_timeout(1.0, function(): int {
+        throw new RuntimeException("inner");
+    });
+} catch (RuntimeException e) {
+    print("passed through:", e->getMessage());
+}
+
+// A command is stopped; a query finishes its step, then hears.
+start = hrtime();
+try {
+    with_timeout(0.2, fn() => exec(["sleep", "5"])->exitCode);
+} catch (TimeoutException e) {
+    print("command stopped:", milliseconds(start) < 1500);
+}
+Database db = Database::open("sqlite::memory:");
+try {
+    with_timeout(0.01, fn() => db->queryOne("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 500000) SELECT count(*) AS c FROM n")->getInt("c"));
+} catch (TimeoutException e) {
+    print("query timed out");
+}
+print("the database still works:", db->queryOne("SELECT 1 AS one")->getInt("one"));
+
+// Time limits inside time limits.
+try {
+    with_timeout(0.05, fn() => with_timeout(5.0, function(): int {
+        usleep(2000000);
+        return 1;
+    }));
+} catch (TimeoutException e) {
+    print("the outer limit won:", e->getMessage());
+}
+
+// receive_any: whichever channel has a value first.
+Channel<string> fast = new Channel<string>(1);
+Channel<string> slow = new Channel<string>(1);
+launch(function(): void {
+    usleep(60000);
+    slow->send("slow one");
+    slow->close();
+});
+launch(function(): void {
+    usleep(10000);
+    fast->send("fast one");
+    fast->close();
+});
+(int which, string value) = receive_any([fast, slow]);
+print(which, value);
+(which, value) = receive_any([fast, slow]);
+print(which, value);
+try {
+    receive_any([fast, slow]);
+} catch (ChannelClosedException e) {
+    print(e->getMessage());
+}

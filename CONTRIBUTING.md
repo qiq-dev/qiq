@@ -126,6 +126,8 @@ git diff tests/          # review what changed
 
 Everything else a test builds or writes under `tests/` is ignored by git.
 
+`tests/async_dns/run.sh` checks that DNS lookups let other tasks run, against a slow DNS server. musl only asks the servers in `/etc/resolv.conf`, so the script runs in a private user, mount, and network namespace (it needs `unshare`, `ip`, and `python3`, but not root); it isn't part of `cargo test`.
+
 ## Documentation
 
 The manual at [qiq-lang.com](https://qiq-lang.com/) lives in its own repository. When you change the language or the standard library, update the manual too.

@@ -3492,6 +3492,28 @@ ASYNC = {
             "see_also": ["spawn", "Task"],
         },
         {
+            "name": "with_timeout", "purpose": "Run a function within a time limit",
+            "params": [param("seconds", "double", "The time limit."), param("body", "function(): T", "The function to run.")],
+            "returns": "T",
+            "description": "Runs <code>body</code> as a task and returns its result, cancelling it if it takes longer than <code>seconds</code>. Its exceptions come through as they are. If the code waiting here is cancelled itself, so is <code>body</code>.",
+            "return_description": "What <code>body</code> returns.",
+            "errors": ["<code>TimeoutException</code> (from <code>std/async</code>) if it takes longer than the limit; <code>InvalidArgumentException</code> for a negative limit."],
+            "examples": [{"title": "A limit on a slow call", "code": 'import usleep from "std/time";\n\ntry {\n    with_timeout(0.05, function(): int { usleep(1000000); return 1; });\n} catch (TimeoutException e) {\n    print(e->getMessage());\n}',
+                          "output": "timed out after 0.05 seconds"}],
+            "see_also": ["spawn", "Task"],
+        },
+        {
+            "name": "receive_any", "purpose": "Receive from whichever channel has a value first",
+            "params": [param("channels", "Channel<T>[]", "The channels to wait on.")],
+            "returns": "(int, T)",
+            "description": "Waits until one of <code>channels</code> has a value and receives it, returning the channel's index in the array and the value, as a <a href=\"tuples.html\">tuple</a>. When several have values, the first in the array wins.",
+            "return_description": "The index and the value.",
+            "errors": ["<code>ChannelClosedException</code> once every channel is closed and empty; <code>InvalidArgumentException</code> for an empty array."],
+            "examples": [{"title": "The first to answer", "code": 'Channel<int> a = new Channel<int>(1);\nChannel<int> b = new Channel<int>(1);\nb->send(2);\n(int which, int value) = receive_any([a, b]);\nprint(which, value);',
+                          "output": "1 2"}],
+            "see_also": ["Channel"],
+        },
+        {
             "name": "yield_now", "purpose": "Let the other tasks run",
             "params": [],
             "returns": "void",
@@ -4858,14 +4880,21 @@ TASK_CLASS = r"""<h1>The Task and Job classes</h1>
 """ + _synopsis("final class Task<T>", [
     "function await(): T",
     "function isDone(): bool",
+    "function cancel(): void",
+    "function isCancelled(): bool",
 ]) + "\n" + _synopsis("final class Job", [
     "function join(): void",
     "function isDone(): bool",
+    "function cancel(): void",
+    "function isCancelled(): bool",
 ]) + "\n" + _method_table([
     ("Task::await()", "Waits for the task to end and returns its result. If the task threw an exception, <code>await</code> throws the same one. A task can be awaited any number of times."),
     ("Job::join()", "Waits for the job to end, throwing its exception if it threw one."),
     ("isDone()", "Whether it has ended, by returning or throwing."),
+    ("cancel()", "Stops it: what it's waiting for, or the next thing it waits for, throws <code>CancelledException</code> in it. One that hasn't started doesn't run. Nothing happens if it has ended."),
+    ("isCancelled()", "Whether <code>cancel()</code> was called before it ended."),
 ]) + r"""
+<p><code>CancelledException</code> and <code>TimeoutException</code> (from <a href="function.with-timeout.html">with_timeout</a>) are <code>RuntimeException</code>s from <code>std/async</code>.</p>
 <p>A task that throws when nothing awaits it is reported as an uncaught exception when the program ends. Waiting for a task that can never end (one waiting for the task waiting for it, for example) throws a <code>RuntimeException</code> saying there's a deadlock.</p>
 <h2>Example</h2>
 ```qiq
@@ -4903,7 +4932,7 @@ CHANNEL_CLASS = r"""<h1>The Channel class</h1>
     ("close()", "Says no more values will be sent. Receiving goes on giving the values still in it, then the end."),
     ("isClosed(), size()", "Whether it's closed, and how many values are waiting to be received."),
 ]) + r"""
-<p><code>ChannelClosedException</code> is a <code>RuntimeException</code> from <code>std/async</code>.</p>
+<p><code>ChannelClosedException</code> is a <code>RuntimeException</code> from <code>std/async</code>. To wait on several channels at once, use <a href="function.receive-any.html">receive_any</a>.</p>
 <h2>Example</h2>
 ```qiq
 import launch, Channel from "std/async";

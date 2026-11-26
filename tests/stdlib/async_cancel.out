@@ -1,0 +1,13 @@
+sleeper: the task was cancelled true true
+before it started: the job was cancelled before it started false
+tidied up
+42
+timed out: timed out after 0.1 seconds true
+passed through: inner
+command stopped: true
+query timed out
+the database still works: 1
+the outer limit won: timed out after 0.05 seconds
+0 fast one
+1 slow one
+receive_any: every channel is closed and empty

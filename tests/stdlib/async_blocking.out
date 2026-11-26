@@ -1,0 +1,7 @@
+rows counted: 1000000 another task ran meanwhile: true
+20 lookups at once, each with its own result: true
+failed: no such table: nowhere
+the database still works: 40
+17 3
+written by a task [1, 2, 3]
+missing: cannot read async_blocking_missing.txt: No such file or directory

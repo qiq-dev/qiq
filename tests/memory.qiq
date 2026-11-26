@@ -84,10 +84,25 @@ function work(int round): int {
     return total;
 }
 
+// An anonymous function written at the top level, which throws while its
+// expression holds temporary strings: they're freed as the exception leaves.
+function fail(string text): string {
+    throw new RuntimeException(text);
+}
+
+function attempt(function(int): string failing, int round): int {
+    try {
+        failing(round);
+    } catch (RuntimeException e) {
+        return 1;
+    }
+    return 0;
+}
+
 int total = 0;
 int round = 0;
 while (round < 1000) {
-    total = total + work(round);
+    total = total + work(round) + attempt(fn(int n) => fail("round " + to_string(n)), round);
     round = round + 1;
 }
 print(total);

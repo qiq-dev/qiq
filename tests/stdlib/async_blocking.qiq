@@ -1,0 +1,68 @@
+// Work that blocks (SQLite queries, reading and writing whole files) runs on
+// helper threads while other tasks go on; database work from several tasks
+// takes turns, each with its own values and results; and a failure gives the
+// database back for the next.
+import spawn, launch, Task from "std/async";
+import Database from "std/sql";
+import file_get_contents, file_put_contents, file_get_bytes, file_put_bytes, unlink from "std/file";
+import usleep from "std/time";
+
+int ticks = 0;
+bool waiting = true;
+launch(function(): void {
+    while (waiting) {
+        usleep(2000);
+        ticks++;
+    }
+});
+
+Database db = Database::open("sqlite::memory:");
+Task<int> slow = spawn(fn() => db->queryOne("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 1000000) SELECT count(*) AS c FROM n")->getInt("c"));
+print("rows counted:", slow->await(), "another task ran meanwhile:", ticks > 0);
+
+db->execute("CREATE TABLE t (k INTEGER, v TEXT)");
+int i = 0;
+while (i < 40) {
+    db->execute("INSERT INTO t VALUES (?, ?)", i, "v" + to_string(i));
+    i++;
+}
+Task<string>[] lookups = [];
+i = 0;
+while (i < 20) {
+    int k = i * 2;
+    array_push(lookups, spawn(fn() => db->queryOne("SELECT v FROM t WHERE k = ?", k)->getString("v")));
+    i++;
+}
+bool right = true;
+i = 0;
+foreach (lookups as lookup) {
+    if (lookup->await() != "v" + to_string(i * 2)) {
+        right = false;
+    }
+    i++;
+}
+print("20 lookups at once, each with its own result:", right);
+
+Task<int> failing = spawn(fn() => db->execute("INSERT INTO nowhere VALUES (?)", 1));
+try {
+    failing->await();
+} catch (DatabaseException e) {
+    print("failed:", e->getMessage());
+}
+print("the database still works:", db->queryOne("SELECT count(*) AS c FROM t")->getInt("c"));
+
+Task<int> written = spawn(fn() => file_put_contents("async_blocking.txt", "written by a task"));
+Task<int> bytes = spawn(fn() => file_put_bytes("async_blocking.bin", [1, 2, 3]));
+print(written->await(), bytes->await());
+Task<string> text = spawn(fn() => file_get_contents("async_blocking.txt"));
+Task<byte[]> data = spawn(fn() => file_get_bytes("async_blocking.bin"));
+print(text->await(), data->await());
+Task<string> missing = spawn(fn() => file_get_contents("async_blocking_missing.txt"));
+try {
+    missing->await();
+} catch (FileNotFoundException e) {
+    print("missing:", e->getMessage());
+}
+unlink("async_blocking.txt");
+unlink("async_blocking.bin");
+waiting = false;

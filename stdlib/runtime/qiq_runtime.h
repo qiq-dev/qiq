@@ -28,6 +28,8 @@ typedef enum {
     QIQ_PROCESS_EXCEPTION = 15,
     QIQ_REGEX_EXCEPTION = 16,
     QIQ_CSV_EXCEPTION = 17,
+    // std/async's: a task's wait when the task was cancelled.
+    QIQ_CANCELLED_EXCEPTION = 18,
 } QiqExceptionKind;
 
 // Raises a qiq exception of `kind` and abandons the current runtime call: the

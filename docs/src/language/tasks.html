@@ -77,6 +77,53 @@ working on resize photo
 working on send email
 ```
 
+<h2>Cancelling, and time limits</h2>
+<p><code>task-&gt;cancel()</code> stops a task: what it's waiting for, or the next thing it waits for, throws <code>CancelledException</code> in it, which ends the task unless it catches that. A task that hasn't started yet doesn't run at all. <code>await</code> then throws <code>CancelledException</code> too. A cancelled task isn't reported when the program ends, since it was stopped on purpose.</p>
+<p><code>with_timeout(seconds, f)</code> runs <code>f</code> as a task and returns its result, cancelling it if it takes longer than the limit; then it throws <code>TimeoutException</code>. Both exceptions come from <code>std/async</code>:</p>
+
+```qiq
+import with_timeout, TimeoutException from "std/async";
+import usleep from "std/time";
+
+function slowAnswer(): int {
+    usleep(2000000);
+    return 42;
+}
+
+try {
+    print(with_timeout(0.1, fn() => slowAnswer()));
+} catch (TimeoutException e) {
+    print(e->getMessage());
+}
+print(with_timeout(1.0, fn() => 7));
+```
+```output
+timed out after 0.1 seconds
+7
+```
+
+<p>Anything that lets other tasks run can be cancelled: <code>await</code>, channels, <code>sleep</code>, network requests and database queries, and commands, which are stopped. Work running on a helper thread (an SQLite query, reading a file) finishes first, and the task hears of the cancellation straight after.</p>
+
+<h2>Waiting on several channels</h2>
+<p><code>receive_any(channels)</code> waits until one of several channels has a value, and returns which one and the value, as a <a href="tuples.html">tuple</a>:</p>
+
+```qiq
+import launch, receive_any, Channel from "std/async";
+import usleep from "std/time";
+
+Channel<string> emails = new Channel<string>(1);
+Channel<string> texts = new Channel<string>(1);
+launch(function(): void {
+    usleep(20000);
+    texts->send("running late");
+});
+(int which, string message) = receive_any([emails, texts]);
+print(which, message);
+```
+```output
+1 running late
+```
+
 <h2>The end of the program</h2>
 <p>The program ends when its main code and every task have ended: tasks still running when the main code finishes are waited for. <code>exit()</code> ends the program at once, tasks and all.</p>
 
@@ -86,7 +133,8 @@ working on send email
 <h2>What waits, and what doesn't</h2>
 <p>A task lets others run whenever it waits for something outside the program:</p>
 <ul>
-<li>network I/O: the <a href="ref.http.html">HTTP client</a>, <a href="class.socket.html">sockets</a> (including TLS), and <a href="class.database.html">PostgreSQL and MySQL</a> queries;</li>
+<li>network I/O: the <a href="ref.http.html">HTTP client</a>, <a href="class.socket.html">sockets</a> (including TLS), looking up host names, and <a href="class.database.html">PostgreSQL and MySQL</a> queries;</li>
+<li>SQLite queries, and reading and writing whole files (<code>file_get_contents</code>, <code>file_put_contents</code>, <code>file_get_bytes</code>, <code>file_put_bytes</code>), which run on a helper thread meanwhile;</li>
 <li>running commands with <a href="function.exec.html">exec</a> and <a href="function.shell.html">shell</a>, while the command runs;</li>
 <li><code>sleep</code> and <code>usleep</code> from <code>std/time</code>;</li>
 <li>and, within the program, <code>await</code>, <code>join</code>, and a channel's <code>send</code> and <code>receive</code>.</li>
@@ -106,5 +154,5 @@ foreach (requests as request) {
 }
 ```
 
-<p>Timeouts work as before: a request that times out throws in its own task while the others go on. A few things still make every task wait while they run: looking up a host name (DNS), reading and writing files, SQLite queries, and code that computes without waiting (which can call <a href="function.yield-now.html">yield_now</a> to let others run).</p>
+<p>Timeouts work as before: a request that times out throws in its own task while the others go on. Database work from several tasks takes turns: one query runs at a time, each with its own values and results, and a task waiting its turn lets the others run. A few things still make every task wait while they run: reading and writing a file a line or a chunk at a time with <a href="class.file.html">File</a>, the other file functions (such as <code>scandir</code> and <code>copy</code>), and code that computes without waiting (which can call <a href="function.yield-now.html">yield_now</a> to let others run).</p>
 <p>Tasks are concurrent, not parallel: they share one processor core. For work that needs several cores, run several processes, as the <a href="ref.http-server.html">HTTP server</a> does.</p>

@@ -11,14 +11,17 @@
 //
 // spawn(f) starts a function that returns a value, as a Task<T>; launch(f)
 // starts one that returns nothing, as a Job. await (or join) waits for it to
-// end and rethrows any exception it threw. A Channel<T> passes values from
-// one task to another. The program ends when its main code and every task
+// end and rethrows any exception it threw; cancel() stops it at its next
+// wait, and with_timeout(seconds, f) runs f within a time limit. A
+// Channel<T> passes values from one task to another, and receive_any waits
+// on several. The program ends when its main code and every task
 // have ended; a task that threw, when nothing awaited it, is then reported
 // as an uncaught exception.
 
-import Exception, RuntimeException from "exceptions";
+import Exception, RuntimeException, InvalidArgumentException from "exceptions";
 import Iterator, Iterable from "iterators";
 import Deque from "collections";
+import usleep from "date";
 
 extern function __fiber_spawn(function(): void body): void;
 extern function __fiber_current(): int;
@@ -27,10 +30,18 @@ extern function __fiber_wake(int fiber): void;
 extern function __fiber_yield(): void;
 extern function __fiber_failed(Exception error): void;
 extern function __fiber_observed(Exception error): void;
+extern function __fiber_cancel(int fiber): void;
 
 // Thrown by sending on a closed channel, and by receiving from one that's
 // closed and empty.
 class ChannelClosedException extends RuntimeException {}
+
+// Thrown in a task that was cancelled, by what it was waiting for (await, a
+// channel, sleep, I/O, a database query) or will next wait for.
+class CancelledException extends RuntimeException {}
+
+// Thrown by with_timeout when the function takes longer than the limit.
+class TimeoutException extends RuntimeException {}
 
 // What tasks and jobs share: whether they've ended, waiting for them to, and
 // the exception they ended with, if any.
@@ -40,6 +51,34 @@ abstract class __Completion {
     // Whether an await or join has seen the outcome.
     protected bool observed = false;
     private int[] waiters = [];
+    // The fiber running it, once it has started (0 before, and after it ends).
+    private int fiber = 0;
+    private bool cancelRequested = false;
+
+    // Stops it: what it's waiting for, or will next wait for, throws
+    // CancelledException in it, which ends it unless it catches that. One
+    // that hasn't started doesn't. await and join then throw
+    // CancelledException. Nothing happens if it has ended.
+    function cancel(): void {
+        if (this->finished || this->cancelRequested) {
+            return;
+        }
+        this->cancelRequested = true;
+        if (this->fiber != 0) {
+            __fiber_cancel(this->fiber);
+        }
+    }
+
+    // Whether cancel() was called before it ended.
+    function isCancelled(): bool {
+        return this->cancelRequested;
+    }
+
+    // As it starts, in its fiber: false if it was cancelled already.
+    function __start(): bool {
+        this->fiber = __fiber_current();
+        return !this->cancelRequested;
+    }
 
     // Whether it has ended (returned or thrown).
     function isDone(): bool {
@@ -65,13 +104,17 @@ abstract class __Completion {
 
     function __fail(Exception error): void {
         this->error = error;
-        // Reported at the end of the program unless an await sees it.
-        __fiber_failed(error);
+        // Reported at the end of the program unless an await sees it, or it
+        // was cancelled (as asked).
+        if (!(this->cancelRequested && error instanceof CancelledException)) {
+            __fiber_failed(error);
+        }
         this->end();
     }
 
     protected function end(): void {
         this->finished = true;
+        this->fiber = 0;
         int[] waiting = this->waiters;
         this->waiters = [];
         foreach (waiting as fiber) {
@@ -115,6 +158,9 @@ function spawn<T>(function(): T body): Task<T> {
     Task<T> task = new Task<T>();
     __fiber_spawn(function(): void {
         try {
+            if (!task->__start()) {
+                throw new CancelledException("the task was cancelled before it started");
+            }
             task->__complete(body());
         } catch (Exception error) {
             task->__fail(error);
@@ -129,6 +175,9 @@ function launch(function(): void body): Job {
     Job job = new Job();
     __fiber_spawn(function(): void {
         try {
+            if (!job->__start()) {
+                throw new CancelledException("the job was cancelled before it started");
+            }
             body();
             job->__complete();
         } catch (Exception error) {
@@ -136,6 +185,40 @@ function launch(function(): void body): Job {
         }
     });
     return job;
+}
+
+// Runs `body` as a task and returns its result, cancelling it if it takes
+// longer than `seconds`: then this throws TimeoutException. Its exceptions
+// come through as they are. If the code waiting here is cancelled itself,
+// so is `body`.
+function with_timeout<T>(double seconds, function(): T body): T {
+    if (seconds < 0.0) {
+        throw new InvalidArgumentException(f"with_timeout: the time limit {seconds} is negative");
+    }
+    Task<T> task = spawn(body);
+    bool timedOut = false;
+    Job timer = launch(function(): void {
+        usleep(to_int(seconds * 1000000.0));
+        if (!task->isDone()) {
+            timedOut = true;
+            task->cancel();
+        }
+    });
+    try {
+        T result = task->await();
+        timer->cancel();
+        return result;
+    } catch (CancelledException cancelled) {
+        timer->cancel();
+        if (timedOut) {
+            throw new TimeoutException(f"timed out after {seconds} seconds");
+        }
+        task->cancel();
+        throw cancelled;
+    } catch (Exception error) {
+        timer->cancel();
+        throw error;
+    }
 }
 
 // Lets the other tasks that are ready run before this one goes on, in a
@@ -250,10 +333,45 @@ final class Channel<T> implements Iterable<T>, __Receiver<T> {
         return true;
     }
 
+    // For receive_any: wakes `fiber` when a value is sent or the channel
+    // closes.
+    function __waitToReceive(int fiber): void {
+        array_push(this->receivers, fiber);
+    }
+
     private static function wakeAll(int[] waiting): int[] {
         foreach (waiting as fiber) {
             __fiber_wake(fiber);
         }
         return [];
+    }
+}
+
+// Waits until one of `channels` has a value, and receives it: the channel's
+// index in the array, and the value. When several have values, the first in
+// the array wins. Throws ChannelClosedException once every channel is closed
+// and empty.
+function receive_any<T>(Channel<T>[] channels): (int, T) {
+    if (len(channels) == 0) {
+        throw new InvalidArgumentException("receive_any: there are no channels to receive from");
+    }
+    while (true) {
+        bool open = false;
+        foreach (channels as index => channel) {
+            if (channel->size() > 0) {
+                return (index, channel->receive());
+            }
+            if (!channel->isClosed()) {
+                open = true;
+            }
+        }
+        if (!open) {
+            throw new ChannelClosedException("receive_any: every channel is closed and empty");
+        }
+        int fiber = __fiber_current();
+        foreach (channels as channel) {
+            channel->__waitToReceive(fiber);
+        }
+        __fiber_park();
     }
 }

@@ -308,6 +308,13 @@ QIQ_GUARDED(int64_t, qiq_stdlib___process_run, 0,
     qiq_close(&out[0]);
     qiq_close(&err[0]);
     sigaction(SIGPIPE, &previous_pipe, NULL);
+    // The task was cancelled while it waited: the command is stopped.
+    if (qiq_pending_exception != NULL) {
+        kill(pid, SIGKILL);
+        while (waitpid(pid, NULL, 0) < 0 && errno == EINTR) {}
+        for (int stream = 0; stream < 2; stream++) qiq_buffer_free(&outputs[stream]);
+        qiq_throw(QIQ_CANCELLED_EXCEPTION, "the task was cancelled");
+    }
 
     // Wait for it to exit, within the deadline. With other tasks, it checks
     // every few milliseconds, letting them run in between.
@@ -324,6 +331,12 @@ QIQ_GUARDED(int64_t, qiq_stdlib___process_run, 0,
             }
             if (tasks) {
                 qiq_fiber_sleep(2 * 1000000);
+                if (qiq_pending_exception != NULL) {
+                    kill(pid, SIGKILL);
+                    while (waitpid(pid, NULL, 0) < 0 && errno == EINTR) {}
+                    for (int stream = 0; stream < 2; stream++) qiq_buffer_free(&outputs[stream]);
+                    qiq_throw(QIQ_CANCELLED_EXCEPTION, "the task was cancelled");
+                }
             } else {
                 struct timespec pause = {0, 5 * 1000000};
                 nanosleep(&pause, NULL);

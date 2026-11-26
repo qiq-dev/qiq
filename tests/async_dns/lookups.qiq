@@ -1,0 +1,20 @@
+// Three host name lookups as tasks, against a DNS server that answers after
+// 0.3 seconds: they take about 0.3 seconds together. Run by run.sh, which
+// sets up the DNS and HTTP servers in a private namespace.
+import spawn, launch, Task from "std/async";
+import http_get from "std/net/http";
+import hrtime, usleep from "std/time";
+int t = hrtime();
+string one = http_get("http://first.test:8080/")->text();
+print(one, "alone:", (hrtime() - t) / 1000000, "ms");
+t = hrtime();
+int ticks = 0;
+bool waiting = true;
+launch(function(): void { while (waiting) { usleep(10000); ticks++; } });
+Task<string>[] requests = [];
+foreach (["a.test", "b.test", "c.test"] as host) {
+    array_push(requests, spawn(fn() => http_get("http://" + host + ":8080/")->text()));
+}
+foreach (requests as r) { print(r->await()); }
+waiting = false;
+print("three lookups at once:", (hrtime() - t) / 1000000, "ms; ticks while waiting:", ticks);

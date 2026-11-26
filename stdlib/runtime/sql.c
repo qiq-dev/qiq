@@ -95,6 +95,16 @@ QiqSqlValue *qiq_sql_pending;
 size_t qiq_sql_pending_count;
 static size_t qiq_sql_pending_capacity;
 
+// From fiber.c. With tasks (std/async), the shared state here (the values
+// bound for the next statement, and the results being read) belongs to one
+// task at a time: binding values takes the database lock, and the statement
+// that uses them gives it back; a statement without values takes it itself.
+// Another task waits for it, letting the rest run. SQLite's stepping runs on
+// a helper thread meanwhile (qiq_offload).
+bool qiq_database_lock_take(void);
+void qiq_database_lock_give(void);
+void qiq_offload(void (*work)(void *), void *context);
+
 void qiq_sql_drop_pending(void) {
     for (size_t index = 0; index < qiq_sql_pending_count; index++) {
         QiqSqlValue *value = &qiq_sql_pending[index];
@@ -104,6 +114,8 @@ void qiq_sql_drop_pending(void) {
 }
 
 void qiq_bind_values(const char *types, const uint64_t *payloads, int64_t count) {
+    // Held until the statement these values are for ends (see above).
+    if (!qiq_database_lock_take()) return;
     qiq_sql_drop_pending();
     qiq_sql_pending = qiq_sql_grow(qiq_sql_pending, &qiq_sql_pending_capacity, (size_t)count, sizeof(QiqSqlValue));
     for (int64_t index = 0; index < count; index++) {
@@ -442,6 +454,33 @@ static void qiq_sql_add_row(sqlite3_stmt *statement, int columns) {
     }
 }
 
+// Steps a statement through its rows (up to `limit`), adding them to the
+// results unless `mode` is 0 (execute), stopping after the first for mode 2
+// (queryOne). Plain C, run on a helper thread when there are tasks: it
+// leaves `code` (SQLITE_DONE at the end, SQLITE_ROW when it stopped at
+// `limit`, or an error) for the caller to act on.
+typedef struct {
+    sqlite3_stmt *statement;
+    int columns;
+    int64_t mode;
+    int64_t limit;
+    int64_t rows;
+    int code;
+} QiqSqlSteps;
+
+static void qiq_sql_steps(void *context) {
+    QiqSqlSteps *steps = context;
+    while (steps->rows < steps->limit && (steps->code = sqlite3_step(steps->statement)) == SQLITE_ROW) {
+        if (steps->mode == 0) continue;
+        qiq_sql_add_row(steps->statement, steps->columns);
+        steps->rows++;
+        if (steps->mode == 2) {
+            steps->code = SQLITE_DONE;
+            break;
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Connections.
 
@@ -464,7 +503,7 @@ static sqlite3 *qiq_sql_connect(const char *filename) {
     return db;
 }
 
-QIQ_GUARDED(int64_t, qiq_stdlib___sql_open, 0, (const char *dsn), (dsn)) {
+QIQ_GUARDED(int64_t, qiq_sql_held_open, 0, (const char *dsn), (dsn)) {
     static bool registered = false;
     if (!registered) {
         pthread_atfork(NULL, NULL, qiq_sql_after_fork);
@@ -571,7 +610,7 @@ static void qiq_sql_remember(QiqSqlConnection *connection, sqlite3_stmt *stateme
     connection->pragmas = grown;
 }
 
-QIQ_GUARDED_VOID(qiq_stdlib___sql_close, (int64_t handle), (handle)) {
+QIQ_GUARDED_VOID(qiq_sql_held_close, (int64_t handle), (handle)) {
     QiqSqlConnection *connection = qiq_sql_find(handle);
     if (connection == NULL) return;
     qiq_sql_close_cursors(handle);
@@ -663,7 +702,7 @@ static void qiq_sql_close_cursors(int64_t connection) {
     }
 }
 
-QIQ_GUARDED(int64_t, qiq_stdlib___sql_cursor, 0, (int64_t handle, const char *sql), (handle, sql)) {
+QIQ_GUARDED(int64_t, qiq_sql_held_cursor, 0, (int64_t handle, const char *sql), (handle, sql)) {
     qiq_sql_clear_results();
     QiqSqlConnection *connection = qiq_sql_find(handle) != NULL ? qiq_sql_connection(handle) : NULL;
     if (connection == NULL) {
@@ -729,7 +768,7 @@ QIQ_GUARDED(int64_t, qiq_stdlib___sql_cursor, 0, (int64_t handle, const char *sq
 
 // Reads up to `count` more rows into the buffers; fewer means the end, after
 // which the cursor is closed.
-QIQ_GUARDED(int64_t, qiq_stdlib___sql_fetch, 0, (int64_t handle, int64_t count), (handle, count)) {
+QIQ_GUARDED(int64_t, qiq_sql_held_fetch, 0, (int64_t handle, int64_t count), (handle, count)) {
     qiq_sql_clear_results();
     QiqSqlCursor *cursor = qiq_sql_find_cursor(handle);
     if (cursor == NULL) qiq_throw(QIQ_DATABASE_EXCEPTION, "the cursor's database is closed");
@@ -738,11 +777,10 @@ QIQ_GUARDED(int64_t, qiq_stdlib___sql_fetch, 0, (int64_t handle, int64_t count),
     if (!cursor->open) return 0;
     int64_t rows = 0;
     if (cursor->statement != NULL) {
-        int code = SQLITE_ROW;
-        while (rows < count && (code = sqlite3_step(cursor->statement)) == SQLITE_ROW) {
-            qiq_sql_add_row(cursor->statement, (int)cursor->column_count);
-            rows++;
-        }
+        QiqSqlSteps steps = {cursor->statement, (int)cursor->column_count, 1, count, 0, SQLITE_ROW};
+        qiq_offload(qiq_sql_steps, &steps);
+        rows = steps.rows;
+        int code = steps.code;
         if (code != SQLITE_ROW) {
             QiqSqlConnection *connection = qiq_sql_find(cursor->connection);
             int error = connection != NULL ? sqlite3_extended_errcode(connection->db) : 0;
@@ -778,7 +816,7 @@ QIQ_GUARDED(int64_t, qiq_stdlib___sql_fetch, 0, (int64_t handle, int64_t count),
     return rows;
 }
 
-QIQ_GUARDED_VOID(qiq_stdlib___sql_close_cursor, (int64_t handle), (handle)) {
+QIQ_GUARDED_VOID(qiq_sql_held_close_cursor, (int64_t handle), (handle)) {
     QiqSqlCursor *cursor = qiq_sql_find_cursor(handle);
     if (cursor == NULL) return;
     jmp_buf environment;
@@ -884,7 +922,7 @@ static void qiq_sql_bind(sqlite3_stmt *statement, sqlite3_destructor_type keep) 
 // Runs `sql` with the pending values. `mode` 0 (execute) returns the number
 // of rows changed; 1 (query) collects every row and 2 (queryOne) the first,
 // returning how many were collected.
-QIQ_GUARDED(int64_t, qiq_stdlib___sql_run, 0, (int64_t handle, const char *sql, int64_t mode), (handle, sql, mode)) {
+QIQ_GUARDED(int64_t, qiq_sql_held_run, 0, (int64_t handle, const char *sql, int64_t mode), (handle, sql, mode)) {
     const char *caller = mode == 0 ? "execute" : mode == 1 ? "query" : "queryOne";
     qiq_sql_clear_results();
     QiqSqlConnection *connection = qiq_sql_find(handle) != NULL ? qiq_sql_connection(handle) : NULL;
@@ -939,17 +977,11 @@ QIQ_GUARDED(int64_t, qiq_stdlib___sql_run, 0, (int64_t handle, const char *sql, 
         qiq_retain(kept);
         qiq_sql_columns_array = kept;
     }
-    int64_t rows = 0;
-    int code;
-    while ((code = sqlite3_step(statement)) == SQLITE_ROW) {
-        if (mode == 0) continue;
-        qiq_sql_add_row(statement, columns);
-        rows++;
-        if (mode == 2) {
-            code = SQLITE_DONE;
-            break;
-        }
-    }
+    // Stepped on a helper thread when there are tasks (see qiq_sql_steps).
+    QiqSqlSteps steps = {statement, columns, mode, INT64_MAX, 0, SQLITE_ROW};
+    qiq_offload(qiq_sql_steps, &steps);
+    int64_t rows = steps.rows;
+    int code = steps.code;
     // A statement that changes nothing (a SELECT) would report the last change's count.
     int64_t result = mode != 0 ? rows : sqlite3_stmt_readonly(statement) ? 0 : (int64_t)sqlite3_changes64(connection->db);
     char message[512];
@@ -967,7 +999,7 @@ QIQ_GUARDED(int64_t, qiq_stdlib___sql_run, 0, (int64_t handle, const char *sql, 
 }
 
 // Runs several statements separated by semicolons, without values.
-QIQ_GUARDED_VOID(qiq_stdlib___sql_execute_script, (int64_t handle, const char *sql), (handle, sql)) {
+QIQ_GUARDED_VOID(qiq_sql_held_execute_script, (int64_t handle, const char *sql), (handle, sql)) {
     QiqSqlConnection *connection = qiq_sql_connection(handle);
     if (connection->pg != NULL) {
         qiq_sql_check_idle(connection);
@@ -1091,4 +1123,55 @@ void *qiq_stdlib___sql_slice(void *data, int64_t start, int64_t end) {
     void *array = qiq_array_create(end - start, 1, 0);
     if (end > start) memcpy(QIQ_ARRAY_DATA(array), (const char *)QIQ_ARRAY_DATA(data) + start, (size_t)(end - start));
     return array;
+}
+
+// ---------------------------------------------------------------------------
+// The entry points that use the shared state, each holding the database
+// lock while it runs (see qiq_bind_values). The guarded functions they call
+// return normally even when they throw, so the lock is always given back.
+
+int64_t qiq_stdlib___sql_open(const char *dsn) {
+    if (!qiq_database_lock_take()) return 0;
+    int64_t result = qiq_sql_held_open(dsn);
+    qiq_database_lock_give();
+    return result;
+}
+
+void qiq_stdlib___sql_close(int64_t handle) {
+    if (!qiq_database_lock_take()) return;
+    qiq_sql_held_close(handle);
+    qiq_database_lock_give();
+}
+
+int64_t qiq_stdlib___sql_cursor(int64_t handle, const char *sql) {
+    if (!qiq_database_lock_take()) return 0;
+    int64_t result = qiq_sql_held_cursor(handle, sql);
+    qiq_database_lock_give();
+    return result;
+}
+
+int64_t qiq_stdlib___sql_fetch(int64_t handle, int64_t count) {
+    if (!qiq_database_lock_take()) return 0;
+    int64_t result = qiq_sql_held_fetch(handle, count);
+    qiq_database_lock_give();
+    return result;
+}
+
+void qiq_stdlib___sql_close_cursor(int64_t handle) {
+    if (!qiq_database_lock_take()) return;
+    qiq_sql_held_close_cursor(handle);
+    qiq_database_lock_give();
+}
+
+int64_t qiq_stdlib___sql_run(int64_t handle, const char *sql, int64_t mode) {
+    if (!qiq_database_lock_take()) return 0;
+    int64_t result = qiq_sql_held_run(handle, sql, mode);
+    qiq_database_lock_give();
+    return result;
+}
+
+void qiq_stdlib___sql_execute_script(int64_t handle, const char *sql) {
+    if (!qiq_database_lock_take()) return;
+    qiq_sql_held_execute_script(handle, sql);
+    qiq_database_lock_give();
 }

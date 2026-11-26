@@ -82,26 +82,48 @@ static void qiq_check_text(const unsigned char *bytes, size_t length, const char
 
 // Reads the whole file. Works for regular files and for files whose size
 // isn't known in advance, such as pipes.
-QIQ_GUARDED(char *, qiq_stdlib_file_get_contents, NULL, (const char *path), (path)) {
-    qiq_require_path(path);
+// ---------------------------------------------------------------------------
+// Reading and writing whole files. With tasks (std/async), the I/O runs on a
+// helper thread (qiq_offload) while other tasks run, so it works on copies
+// and C memory only; qiq strings and arrays are made, and errors thrown,
+// back on the task's own thread.
+
+int qiq_fibers_active(void);
+void qiq_offload(void (*work)(void *), void *context);
+
+typedef struct {
+    char *path;      // a copy
+    size_t reserve;  // bytes kept free before the contents (a string's header)
+    char *block;     // malloc'd: reserve, the contents, and room for a NUL
+    size_t length;
+    int error;       // errno, or 0
+} QiqFileRead;
+
+static void qiq_file_read_work(void *context) {
+    QiqFileRead *job = context;
     struct stat info;
-    if (stat(path, &info) == 0 && S_ISDIR(info.st_mode)) qiq_throw_file_error(EISDIR, "read", path);
-    FILE *file = fopen(path, "rb");
-    if (file == NULL) qiq_throw_file_error(errno, "read", path);
-    // Read straight into a string's memory: the header, the text, and a NUL.
+    if (stat(job->path, &info) == 0 && S_ISDIR(info.st_mode)) {
+        job->error = EISDIR;
+        return;
+    }
+    FILE *file = fopen(job->path, "rb");
+    if (file == NULL) {
+        job->error = errno;
+        return;
+    }
     size_t capacity = 4096;
+    if (fstat(fileno(file), &info) == 0 && S_ISREG(info.st_mode) && info.st_size > 0) capacity = (size_t)info.st_size + 1;
     size_t length = 0;
-    char *block = malloc(sizeof(QiqHeader) + capacity + 1);
+    char *block = malloc(job->reserve + capacity + 1);
     if (block == NULL) qiq_fatal("out of memory");
     for (;;) {
         if (length == capacity) {
             capacity *= 2;
-            char *grown = realloc(block, sizeof(QiqHeader) + capacity + 1);
+            char *grown = realloc(block, job->reserve + capacity + 1);
             if (grown == NULL) qiq_fatal("out of memory");
             block = grown;
         }
-        char *contents = block + sizeof(QiqHeader);
-        size_t read = fread(contents + length, 1, capacity - length, file);
+        size_t read = fread(block + job->reserve + length, 1, capacity - length, file);
         length += read;
         if (read == 0) break;
     }
@@ -110,13 +132,74 @@ QIQ_GUARDED(char *, qiq_stdlib_file_get_contents, NULL, (const char *path), (pat
     fclose(file);
     if (failed) {
         free(block);
-        qiq_throw_file_error(error, "read", path);
+        job->error = error;
+        return;
     }
-    char *shrunk = realloc(block, sizeof(QiqHeader) + length + 1);
+    job->block = block;
+    job->length = length;
+}
+
+// Reads the file at `path` into a block with `reserve` bytes free at the
+// start; throws if it can't be read.
+static QiqFileRead qiq_file_read(const char *path, size_t reserve) {
+    QiqFileRead job = {strdup(path), reserve, NULL, 0, 0};
+    if (job.path == NULL) qiq_fatal("out of memory");
+    qiq_offload(qiq_file_read_work, &job);
+    free(job.path);
+    if (job.error != 0) qiq_throw_file_error(job.error, "read", path);
+    return job;
+}
+
+typedef struct {
+    char *path;          // a copy
+    const void *data;    // retained by the caller meanwhile
+    size_t length;
+    bool append;
+    size_t written;
+    int error;
+    bool opened;
+} QiqFileWrite;
+
+static void qiq_file_write_work(void *context) {
+    QiqFileWrite *job = context;
+    FILE *file = fopen(job->path, job->append ? "ab" : "wb");
+    if (file == NULL) {
+        job->error = errno;
+        return;
+    }
+    job->opened = true;
+    job->written = fwrite(job->data, 1, job->length, file);
+    job->error = errno;
+    if (fclose(file) != 0 && job->written == job->length) {
+        job->error = errno;
+        job->written = 0;
+    }
+}
+
+// Writes `length` bytes of `data` (a qiq string or array's memory, held by
+// `owner`) to the file; throws if it can't.
+static int64_t qiq_file_write(const char *path, void *owner, const void *data, size_t length, bool append) {
+    QiqFileWrite job = {strdup(path), data, length, append, 0, 0, false};
+    if (job.path == NULL) qiq_fatal("out of memory");
+    // Another task can't free the data while a helper thread writes it.
+    qiq_retain(owner);
+    qiq_offload(qiq_file_write_work, &job);
+    qiq_release(owner);
+    free(job.path);
+    if (job.written != length) qiq_throw_file_error(job.error, "write", path);
+    return (int64_t)job.written;
+}
+
+QIQ_GUARDED(char *, qiq_stdlib_file_get_contents, NULL, (const char *path), (path)) {
+    qiq_require_path(path);
+    // Read straight into a string's memory: the header, the text, and a NUL.
+    QiqFileRead read = qiq_file_read(path, sizeof(QiqHeader));
+    char *block = read.block;
+    char *shrunk = realloc(block, sizeof(QiqHeader) + read.length + 1);
     if (shrunk != NULL) block = shrunk;
     // Throws for text that isn't valid UTF-8 (leaking the block).
-    qiq_check_text((const unsigned char *)block + sizeof(QiqHeader), length, path);
-    return qiq_string_adopt(block, length);
+    qiq_check_text((const unsigned char *)block + sizeof(QiqHeader), read.length, path);
+    return qiq_string_adopt(block, read.length);
 }
 
 // Writes `data` to the file, replacing it (or adding to the end when
@@ -124,17 +207,7 @@ QIQ_GUARDED(char *, qiq_stdlib_file_get_contents, NULL, (const char *path), (pat
 QIQ_GUARDED(int64_t, qiq_stdlib_file_put_contents, 0, (const char *path, const char *data, bool append), (path, data, append)) {
     qiq_require_path(path);
     if (data == NULL) qiq_throw(QIQ_RUNTIME_EXCEPTION, "data is null");
-    FILE *file = fopen(path, append ? "ab" : "wb");
-    if (file == NULL) qiq_throw_file_error(errno, "write", path);
-    size_t length = strlen(data);
-    size_t written = fwrite(data, 1, length, file);
-    int error = errno;
-    if (fclose(file) != 0 && written == length) {
-        error = errno;
-        written = 0;
-    }
-    if (written != length) qiq_throw_file_error(error, "write", path);
-    return (int64_t)written;
+    return qiq_file_write(path, (void *)data, data, strlen(data), append);
 }
 
 QIQ_GUARDED(bool, qiq_stdlib_file_exists, false, (const char *path), (path)) {
@@ -224,6 +297,14 @@ QIQ_GUARDED(void *, qiq_stdlib_scandir, NULL, (const char *path), (path)) {
 // The file's raw bytes, for binary files.
 QIQ_GUARDED(void *, qiq_stdlib_file_get_bytes, NULL, (const char *path), (path)) {
     qiq_require_path(path);
+    if (qiq_fibers_active()) {
+        // On a helper thread, into C memory, then copied into the array.
+        QiqFileRead read = qiq_file_read(path, 0);
+        void *bytes = qiq_array_create((int64_t)read.length, 1, 0);
+        memcpy(QIQ_ARRAY_DATA(bytes), read.block, read.length);
+        free(read.block);
+        return bytes;
+    }
     struct stat info;
     if (stat(path, &info) == 0 && S_ISDIR(info.st_mode)) qiq_throw_file_error(EISDIR, "read", path);
     FILE *file = fopen(path, "rb");
@@ -277,17 +358,7 @@ QIQ_GUARDED(void *, qiq_stdlib_file_get_bytes, NULL, (const char *path), (path))
 QIQ_GUARDED(int64_t, qiq_stdlib_file_put_bytes, 0, (const char *path, void *data, bool append), (path, data, append)) {
     qiq_require_path(path);
     if (data == NULL) qiq_throw(QIQ_RUNTIME_EXCEPTION, "array is null (declared without a value)");
-    FILE *file = fopen(path, append ? "ab" : "wb");
-    if (file == NULL) qiq_throw_file_error(errno, "write", path);
-    size_t length = (size_t)QIQ_ARRAY_LENGTH(data);
-    size_t written = fwrite(QIQ_ARRAY_DATA(data), 1, length, file);
-    int error = errno;
-    if (fclose(file) != 0 && written == length) {
-        error = errno;
-        written = 0;
-    }
-    if (written != length) qiq_throw_file_error(error, "write", path);
-    return (int64_t)written;
+    return qiq_file_write(path, data, QIQ_ARRAY_DATA(data), (size_t)QIQ_ARRAY_LENGTH(data), append);
 }
 
 // ---------------------------------------------------------------------------

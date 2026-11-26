@@ -4725,7 +4725,7 @@ fn check_regex_literals(function: &str, arguments: &[(usize, &Expr)]) -> Result<
 
 /// Exception classes the runtime raises, indexed by QiqExceptionKind in
 /// stdlib/runtime/qiq_runtime.h; keep the two lists in the same order.
-const RUNTIME_EXCEPTION_CLASSES: [&str; 18] = [
+const RUNTIME_EXCEPTION_CLASSES: [&str; 19] = [
     "RuntimeException",
     "ArithmeticException",
     "DivisionByZeroException",
@@ -4744,6 +4744,8 @@ const RUNTIME_EXCEPTION_CLASSES: [&str; 18] = [
     "ProcessException",
     "RegexException",
     "CsvException",
+    // In std/async.
+    "CancelledException",
 ];
 
 /// Where `break` and `continue` go. Loops have both; a switch only has a
@@ -12426,7 +12428,10 @@ impl Emitter {
         let handler = self.handlers.last().cloned().unwrap_or_else(|| "unwind".to_string());
         let first_scope = self.handler_scopes.last().copied().unwrap_or(0);
         let mut cleanup = String::new();
-        if handler == "unwind" && self.current_method.is_none() {
+        // Only main's own unwinding ends the program, so needs no cleanup. An
+        // anonymous function written at the top level has no method either,
+        // but its caller goes on: its temporaries are released.
+        if handler == "unwind" && self.current_method.is_none() && !self.in_closure {
             return (handler, cleanup);
         }
         for scope in self.temporaries[first_scope.min(self.temporaries.len())..].iter().rev() {
