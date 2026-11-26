@@ -38,3 +38,42 @@ try {
 }
 function next(): int { print("evaluated once"); return 2; }
 print(match (next()) { 1 => "first", 2 => "second", 3 => "third" });
+
+// Nullable subjects and null arms. A ?int variable matched on is its int in
+// the arms null can't reach.
+function describeCode(?int code): string {
+    return match (code) {
+        null => "no code",
+        200, 204 => f"ok {code + 0}",
+        default => f"code {code * 1}",
+    };
+}
+print(describeCode(null), describeCode(200), describeCode(404));
+
+function labelOrUnknown(Status s): string {
+    return match (s) {
+        null => "unknown",
+        Status::Active => "on",
+        Status::Archived, Status::Draft => "off",
+    };
+}
+Status unset = null;
+print(labelOrUnknown(Status::Active), labelOrUnknown(unset));
+
+function wordScore(string w): int {
+    return match (w) { null => -1, "a" => 1, default => 0 };
+}
+string missing = null;
+print(wordScore("a"), wordScore(missing), wordScore("z"));
+
+// Without a null arm, null goes to the default, or throws.
+?double d = null;
+print(match (d) { 1.5 => "one and a half", default => "other" });
+?bool flag = true;
+print(match (flag) { true => "yes", false => "no", null => "unset" });
+?int nothing = null;
+try {
+    print(match (nothing) { 1 => "one" });
+} catch (UnhandledMatchException e) {
+    print(e->getMessage());
+}

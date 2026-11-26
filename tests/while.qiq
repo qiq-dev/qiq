@@ -82,3 +82,87 @@ while (len(text) > 0) {
         text = substr(text, end + 1);
     }
 }
+
+// do-while, and break and continue with a number of levels.
+// do-while runs once even when the condition is false.
+int start = 10;
+do {
+    print("once", start);
+    start++;
+} while (start < 5);
+
+int tries = 0;
+do {
+    tries++;
+    if (tries == 2) {
+        continue;
+    }
+    print("try", tries);
+} while (tries < 4);
+
+// break 2 leaves both loops.
+foreach ([1, 2, 3] as i) {
+    foreach ([10, 20, 30] as j) {
+        if (j == 20 && i == 2) {
+            break 2;
+        }
+        print(i, j);
+    }
+}
+print("after");
+
+// continue 2 goes on with the outer loop.
+foreach ([1, 2] as i) {
+    int k = 0;
+    while (k < 3) {
+        k++;
+        if (k == 2) {
+            continue 2;
+        }
+        print("i", i, "k", k);
+    }
+    print("never");
+}
+
+// A switch counts for break, not for continue.
+foreach ([1, 2, 3] as i) {
+    switch (i) {
+        case 2:
+            continue;
+        case 3:
+            break 2;
+        default:
+            print("case", i);
+    }
+    print("end of", i);
+}
+print("done");
+
+function firstPair(int[][] rows, int target): string {
+    string found = "none";
+    foreach (rows as r => row) {
+        foreach (row as c => value) {
+            if (value == target) {
+                found = f"{r},{c}";
+                break 2;
+            }
+        }
+    }
+    return found;
+}
+print(firstPair([[1, 2], [3, 4]], 3));
+
+function spin(): int {
+    int x = 0;
+    do {
+        x++;
+        if (x > 3) {
+            return x;
+        }
+    } while (true);
+}
+print(spin());
+
+// `do` is a keyword only before {, so it can still be a name.
+int do = 3;
+print(do);

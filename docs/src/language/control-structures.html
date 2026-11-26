@@ -54,6 +54,28 @@ while (i < 3) {
 
 <p>A function can end with <code>while (true) { ... }</code> instead of a <code>return</code> when the loop has no <code>break</code> and only leaves by returning or throwing.</p>
 
+<h2 id="do-while">do-while</h2>
+<p><code>do { ... } while (condition);</code> tests the condition after each iteration instead of before, so the body always runs at least once. <code>continue</code> goes to the test.</p>
+
+```qiq
+int attempts = 0;
+do {
+    attempts++;
+    print("attempt", attempts);
+} while (attempts < 2);
+
+do {
+    print("runs once");
+} while (false);
+```
+```output
+attempt 1
+attempt 2
+runs once
+```
+
+<p><code>do</code> is a keyword only before <code>{</code>, so it can still name a function or variable.</p>
+
 <h2>foreach</h2>
 <p><code>foreach (collection as value)</code> visits each element of an array, each value of a map, each character of a string, or each value of an <a href="#iterating-objects">object that can be iterated</a>. <code>foreach (collection as key =&gt; value)</code> also binds the index (for arrays and strings, counting from <code>0</code>) or the map key.</p>
 
@@ -248,8 +270,25 @@ off not found
 <li>The value can be an <code>int</code>, <code>double</code>, <code>bool</code>, <code>byte</code>, <code>string</code>, <code>char</code>, or <a href="enums.html">enum</a>, as for <code>switch</code>. It's evaluated once, and only the chosen arm's result is.</li>
 <li>The arms' results must have the same type. The match has the type it's used as, such as a variable's or a return type, or else its first arm's; an arm can be <code>null</code> where that type allows it.</li>
 <li>Without a <code>default</code>, a match on an enum must handle every case, as a switch must. Any other value that matches no arm throws <code>UnhandledMatchException</code>, as in <code>no match arm for 7</code>.</li>
+<li>The value can also be one that may be null: a <code>?int</code>, <code>?double</code>, <code>?bool</code> or <code>?byte</code>, or a <code>string</code> or enum, which can always be null. A <code>null</code> arm handles null; without one, null goes to the <code>default</code>, or throws <code>no match arm for null</code>.</li>
+<li>A <code>?int</code> (or other nullable scalar) variable matched on is its <code>int</code> in the arms null can't reach: every arm but the one listing <code>null</code>, and the <code>default</code> when there's a <code>null</code> arm. See the example below.</li>
 <li><code>match</code> is a keyword only before <code>(...) {</code>, so it can still name a function or variable.</li>
 </ul>
+
+```qiq
+function describe(?int code): string {
+    return match (code) {
+        null => "no code",
+        200, 204 => f"ok {code + 1000}",
+        default => f"code {code * 2}",
+    };
+}
+
+print(describe(null), describe(200), describe(404));
+```
+```output
+no code ok 1200 code 808
+```
 
 <h2>break and continue</h2>
 <p><code>break</code> leaves the innermost loop or switch. <code>continue</code> skips to the next iteration of the innermost loop; inside a switch inside a loop, it goes to the loop.</p>
@@ -268,6 +307,28 @@ foreach ([1, 2, 3, 4, 5] as n) {
 ```output
 1
 3
+```
+
+<p>A number after <code>break</code> or <code>continue</code> says how many levels to go out, as in PHP. <code>break 2</code> leaves the innermost loop or switch and the one around it. <code>continue 2</code> goes on with the next iteration of the loop around the innermost one. For <code>break</code> a switch counts as a level, since a plain <code>break</code> leaves a switch; for <code>continue</code> it doesn't, since a plain <code>continue</code> skips switches already. That's one difference from PHP, where <code>continue 2</code> inside a switch goes on with the loop around it.</p>
+
+```qiq
+int[][] grid = [[1, 2], [3, 4], [5, 6]];
+foreach (grid as row) {
+    foreach (row as value) {
+        if (value == 2) {
+            continue 2;
+        }
+        if (value == 5) {
+            break 2;
+        }
+        print(value);
+    }
+}
+```
+```output
+1
+3
+4
 ```
 
 <p>When <code>break</code>, <code>continue</code>, or <code>return</code> leaves a <code>try</code> block, its <code>finally</code> block runs first; see <a href="exceptions.html">Exceptions</a>.</p>

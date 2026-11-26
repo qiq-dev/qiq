@@ -8,3 +8,9 @@ UnhandledMatchException no match arm for 7
 no match arm for "q"
 evaluated once
 second
+no code ok 200 code 404
+on unknown
+1 -1 0
+other
+yes
+no match arm for null

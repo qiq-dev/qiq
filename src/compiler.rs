@@ -1500,8 +1500,12 @@ enum StatementKind {
     Print(Vec<Expr>, bool),
     Expression(Expr),
     Return(Option<Expr>),
-    Break,
-    Continue,
+    /// `break;` or `break 2;`: leaves that many enclosing loops and
+    /// switches (1 for a plain break).
+    Break(usize),
+    /// `continue;` or `continue 2;`: goes on with the loop that many loops
+    /// out (switches don't count).
+    Continue(usize),
     /// `throw value;` where value is an Exception.
     Throw(Expr),
     /// `try { ... } catch (Type name) { ... } ... finally { ... }`.
@@ -1527,6 +1531,12 @@ enum StatementKind {
     While {
         condition: Expr,
         body: Vec<Statement>,
+    },
+    /// `do { ... } while (condition);`: the body, then the condition, so the
+    /// body runs at least once.
+    DoWhile {
+        body: Vec<Statement>,
+        condition: Expr,
     },
     Foreach {
         iterable: Expr,
@@ -2841,13 +2851,22 @@ impl Parser {
             }
             TokenKind::Break => {
                 self.advance();
+                let levels = self.parse_jump_levels("break")?;
                 self.expect(TokenKind::Semicolon, "expected ';' after break")?;
-                Ok(StatementKind::Break)
+                Ok(StatementKind::Break(levels))
             }
             TokenKind::Continue => {
                 self.advance();
+                let levels = self.parse_jump_levels("continue")?;
                 self.expect(TokenKind::Semicolon, "expected ';' after continue")?;
-                Ok(StatementKind::Continue)
+                Ok(StatementKind::Continue(levels))
+            }
+            // `do { ... } while (...);`. `do` is a keyword only before `{`,
+            // so a variable or function named `do` keeps working.
+            TokenKind::Identifier(name)
+                if name == "do" && matches!(self.tokens.get(self.cursor + 1).map(|token| &token.kind), Some(TokenKind::LeftBrace)) =>
+            {
+                self.parse_do_while()
             }
             TokenKind::If => self.parse_if(before),
             TokenKind::Foreach => self.parse_foreach(),
@@ -3188,6 +3207,32 @@ impl Parser {
             return Err(self.error("a switch needs at least one case"));
         }
         Ok(StatementKind::Switch { subject, cases, default })
+    }
+
+    /// The `2` in `break 2;`: how many levels to leave (1 when absent).
+    fn parse_jump_levels(&mut self, keyword: &str) -> Result<usize, String> {
+        let TokenKind::Number(levels) = self.current().kind else {
+            return Ok(1);
+        };
+        if levels < 1 {
+            return Err(self.error(&format!("{keyword} {levels} leaves nothing; the levels count from 1, as in {keyword} 2")));
+        }
+        self.advance();
+        usize::try_from(levels).map_err(|_| self.error(&format!("{keyword} {levels} is too many levels")))
+    }
+
+    fn parse_do_while(&mut self) -> Result<StatementKind, String> {
+        self.advance(); // do
+        let body = self.parse_statement_block("expected '{' after 'do'")?;
+        if !matches!(self.current().kind, TokenKind::While) {
+            return Err(self.error("expected 'while (condition);' after the do block"));
+        }
+        self.advance();
+        self.expect(TokenKind::LeftParen, "expected '(' after 'while'")?;
+        let condition = self.parse_expression()?;
+        self.expect(TokenKind::RightParen, "expected ')' after the do-while condition")?;
+        self.expect(TokenKind::Semicolon, "expected ';' after do { ... } while (...)")?;
+        Ok(StatementKind::DoWhile { body, condition })
     }
 
     fn parse_while(&mut self) -> Result<StatementKind, String> {
@@ -5633,13 +5678,16 @@ impl Emitter {
                         ));
                     }
                 }
-                StatementKind::Break => {
-                    // The innermost loop or switch.
-                    let target_index = self
-                        .loop_targets
-                        .len()
-                        .checked_sub(1)
-                        .ok_or_else(|| "break is only valid inside a loop or switch".to_string())?;
+                StatementKind::Break(levels) => {
+                    // The innermost loop or switch, or the one `levels` out.
+                    let levels = *levels;
+                    let available = self.loop_targets.len();
+                    if available == 0 {
+                        return Err("break is only valid inside a loop or switch".to_string());
+                    }
+                    let target_index = available.checked_sub(levels).ok_or_else(|| {
+                        format!("break {levels} needs {levels} loops or switches around it, but there {}", count_of(available, "is", "are", "one", "loop or switch", "loops or switches"))
+                    })?;
                     let target = self.loop_targets[target_index].break_label.clone();
                     // Run the finally blocks of try statements inside the target.
                     let down_to = self
@@ -5655,13 +5703,23 @@ impl Emitter {
                     }
                     terminated = true;
                 }
-                StatementKind::Continue => {
-                    // The innermost loop, skipping any switches inside it.
-                    let target_index = self
+                StatementKind::Continue(levels) => {
+                    // The innermost loop, or the one `levels` loops out,
+                    // skipping any switches.
+                    let levels = *levels;
+                    let loops: Vec<usize> = self
                         .loop_targets
                         .iter()
-                        .rposition(|targets| targets.continue_label.is_some())
-                        .ok_or_else(|| "continue is only valid inside a loop".to_string())?;
+                        .enumerate()
+                        .filter(|(_, targets)| targets.continue_label.is_some())
+                        .map(|(index, _)| index)
+                        .collect();
+                    if loops.is_empty() {
+                        return Err("continue is only valid inside a loop".to_string());
+                    }
+                    let target_index = *loops.len().checked_sub(levels).and_then(|at| loops.get(at)).ok_or_else(|| {
+                        format!("continue {levels} needs {levels} loops around it, but there {} (a switch doesn't count)", count_of(loops.len(), "is", "are", "one", "loop", "loops"))
+                    })?;
                     let target = self.loop_targets[target_index]
                         .continue_label
                         .clone()
@@ -6042,7 +6100,7 @@ impl Emitter {
                         if !case_terminated {
                             body.push_str(&format!("  br label %{end_label}\n"));
                         }
-                        if !case_terminated || contains_break(statements) {
+                        if !case_terminated || breaks_to(statements, 0) {
                             reaches_end = true;
                         }
                     }
@@ -6050,6 +6108,40 @@ impl Emitter {
                         body.push_str(&format!("{end_label}:\n"));
                     } else {
                         // Every case and the default return or throw.
+                        terminated = true;
+                    }
+                }
+                StatementKind::DoWhile { body: loop_body, condition } => {
+                    let label_id = self.next_label;
+                    self.next_label += 1;
+                    let body_label = format!("do.body{label_id}");
+                    let test_label = format!("do.test{label_id}");
+                    let end_label = format!("do.end{label_id}");
+                    body.push_str(&format!("  br label %{body_label}\n{body_label}:\n"));
+                    self.loop_targets.push(LoopTargets {
+                        continue_label: Some(test_label.clone()),
+                        break_label: end_label.clone(),
+                    });
+                    let (loop_ir, body_terminated) = self.emit_block(loop_body, &variables, return_type, is_main)?;
+                    self.loop_targets.pop();
+                    body.push_str(&loop_ir);
+                    if !body_terminated {
+                        body.push_str(&format!("  br label %{test_label}\n"));
+                    }
+                    // The test, reached from the body's end or a continue.
+                    body.push_str(&format!("{test_label}:\n"));
+                    let tested = self.emit_expression(condition, &variables, &mut body)?;
+                    if tested.value_type != ValueType::Bool {
+                        return Err(format!(
+                            "do-while condition must be a bool, found {}{}",
+                            self.type_name(tested.value_type),
+                            self.null_hint(tested.value_type)
+                        ));
+                    }
+                    self.release_current(&mut body);
+                    body.push_str(&format!("  br i1 {}, label %{body_label}, label %{end_label}\n{end_label}:\n", tested.operand));
+                    if matches!(condition, Expr::Boolean(true)) && !breaks_to(loop_body, 0) {
+                        body.push_str("  unreachable\n");
                         terminated = true;
                     }
                 }
@@ -6087,7 +6179,7 @@ impl Emitter {
                     body.push_str(&format!("{end_label}:\n"));
                     // `while (true)` without a break never falls through, so a
                     // function can end with it instead of a return.
-                    if matches!(condition, Expr::Boolean(true)) && !contains_break(loop_body) {
+                    if matches!(condition, Expr::Boolean(true)) && !breaks_to(loop_body, 0) {
                         body.push_str("  unreachable\n");
                         terminated = true;
                     }
@@ -9656,17 +9748,78 @@ impl Emitter {
         body: &mut String,
     ) -> Result<Value, String> {
         let subject = self.emit_expression(subject_expression, variables, body)?;
+        // What the message for an unmatched value describes: the subject as
+        // given, before any unboxing below.
+        let given = subject.clone();
         let enum_subject = match subject.value_type {
             ValueType::Class(class_id) if self.classes[class_id as usize].enumeration.is_some() => Some(class_id),
             _ => None,
         };
-        if !subject.value_type.is_scalar() && enum_subject.is_none() {
+        let nullable_scalar = subject.value_type.non_null().is_some();
+        if !subject.value_type.is_scalar() && enum_subject.is_none() && !nullable_scalar {
             return Err(format!(
-                "match requires an int, double, bool, byte, string, char, or enum, found {}{}",
-                self.type_name(subject.value_type),
-                self.null_hint(subject.value_type)
+                "match requires an int, double, bool, byte, string, char, or enum, found {}",
+                self.type_name(subject.value_type)
             ));
         }
+        // A `null` value: tested first, by itself, and only where the
+        // subject can be null.
+        let mut null_arm = None;
+        for (index, arm) in arms.iter().enumerate() {
+            let nulls = arm.values.iter().filter(|value| matches!(value, Expr::Null)).count();
+            if nulls == 0 {
+                continue;
+            }
+            if nulls > 1 || null_arm.is_some() {
+                return Err("duplicate match value null".to_string());
+            }
+            if !nullable_scalar && !is_reference(subject.value_type) {
+                let type_name = self.type_name(subject.value_type);
+                let article = if type_name.starts_with(['a', 'e', 'i', 'o', 'u']) { "an" } else { "a" };
+                return Err(format!("a match value can't be null here: {article} {type_name} can't be null"));
+            }
+            null_arm = Some(index);
+        }
+        let id = self.next_label;
+        let end_label = format!("match.end{id}");
+        let unmatched = format!("match.unmatched{id}");
+        let arm_label = |index: usize| format!("match.arm{id}.{index}");
+        self.next_label += 1;
+        let mut subject = subject;
+        if nullable_scalar || null_arm.is_some() {
+            let null_target = null_arm.map_or(unmatched.clone(), arm_label);
+            let is_null = self.new_register();
+            body.push_str(&format!(
+                "  {is_null} = icmp eq ptr {}, null\n  br i1 {is_null}, label %{null_target}, label %match.present{id}\nmatch.present{id}:\n",
+                subject.operand
+            ));
+            if nullable_scalar {
+                subject = self.emit_unbox(&subject, body);
+            }
+        }
+        // A variable matched on is its scalar in the arms only a value
+        // reaches: all but the null arm, and the default when null has its
+        // own arm.
+        let mut narrowed = None;
+        if let (true, Expr::Variable(name)) = (nullable_scalar, subject_expression) {
+            if !self.boxed.contains(name) {
+                let mut scope = variables.clone();
+                scope.insert(name.clone(), subject.clone());
+                narrowed = Some(scope);
+            }
+        }
+        let arm_variables = |index: Option<usize>| -> &HashMap<String, Value> {
+            match (&narrowed, index) {
+                (Some(scope), Some(index)) if null_arm != Some(index) => scope,
+                (Some(scope), None) if null_arm.is_some() => scope,
+                _ => variables,
+            }
+        };
+        let arms_without_null: Vec<MatchArm> = arms
+            .iter()
+            .map(|arm| MatchArm { values: arm.values.iter().filter(|value| !matches!(value, Expr::Null)).cloned().collect(), ..arm.clone() })
+            .collect();
+        let arms = &arms_without_null[..];
         let cases: Vec<SwitchCase> = arms.iter().map(|arm| SwitchCase { values: arm.values.clone(), body: Vec::new() }).collect();
         let exhaustive = match enum_subject {
             Some(class_id) if default.is_none() => {
@@ -9679,11 +9832,6 @@ impl Emitter {
             }
             None => false,
         };
-        let id = self.next_label;
-        self.next_label += 1;
-        let end_label = format!("match.end{id}");
-        let unmatched = format!("match.unmatched{id}");
-        let arm_label = |index: usize| format!("match.arm{id}.{index}");
         // Tests, in order; the first value equal to the subject picks its arm.
         let mut seen: Vec<String> = Vec::new();
         let tests: Vec<(usize, &Expr)> = arms.iter().enumerate().flat_map(|(index, arm)| arm.values.iter().map(move |value| (index, value))).collect();
@@ -9732,22 +9880,22 @@ impl Emitter {
             Expr::MapLiteral(entries) => entries.is_empty(),
             _ => false,
         };
-        let mut results: Vec<(String, &Expr)> = arms.iter().enumerate().map(|(index, arm)| (arm_label(index), &arm.result)).collect();
+        let mut results: Vec<(String, &Expr, Option<usize>)> = arms.iter().enumerate().map(|(index, arm)| (arm_label(index), &arm.result, Some(index))).collect();
         if let Some(default) = default {
-            results.push((unmatched.clone(), default));
+            results.push((unmatched.clone(), default, None));
         }
         let expected = expected.filter(|expected| !matches!(expected, ValueType::Void | ValueType::Null));
         let mut result_type = expected;
         let slot = self.new_register();
         let mut slot_declared = false;
         for later in [false, true] {
-            for (label, expression) in &results {
+            for (label, expression, index) in &results {
                 if needs_type(expression) != later {
                     continue;
                 }
                 body.push_str(&format!("{label}:\n"));
                 self.open_scope();
-                let value = self.emit_expecting(expression, result_type, variables, body)?;
+                let value = self.emit_expecting(expression, result_type, arm_variables(*index), body)?;
                 if value.value_type == ValueType::Void || (value.value_type == ValueType::Null && !matches!(expression, Expr::Null)) {
                     return Err("an arm of match has no value (it calls a void function)".to_string());
                 }
@@ -9788,7 +9936,7 @@ impl Emitter {
                 self.use_class(class_id);
                 // The message's temporaries are released here, on this path only.
                 self.open_scope();
-                let described = self.emit_described(&subject, body)?;
+                let described = self.emit_described(&given, body)?;
                 let mut scope = variables.clone();
                 scope.insert("#match.value".to_string(), described);
                 let message = Expr::Binary(BinaryOp::Add, Box::new(Expr::Text("no match arm for ".to_string())), Box::new(Expr::Variable("#match.value".to_string())));
@@ -10732,7 +10880,7 @@ impl Emitter {
             "map_map" => vec![statement(StatementKind::AssignIndex(variable("#fn.result"), variable("#fn.key"), call(vec![item.clone()])))],
             _ => vec![statement(StatementKind::If {
                 condition: call(vec![item.clone()]),
-                then_body: vec![statement(StatementKind::Assign("#fn.result".to_string(), item.clone())), statement(StatementKind::Break)],
+                then_body: vec![statement(StatementKind::Assign("#fn.result".to_string(), item.clone())), statement(StatementKind::Break(1))],
                 else_body: Vec::new(),
             })],
         };
@@ -14153,7 +14301,7 @@ impl Monomorphizer<'_> {
                     self.subst_expr(value, bindings)?;
                 }
             }
-            StatementKind::Break | StatementKind::Continue => {}
+            StatementKind::Break(_) | StatementKind::Continue(_) => {}
             StatementKind::Try { body, catches, finally } => {
                 self.subst_statements(body, bindings)?;
                 for catch in catches {
@@ -14180,7 +14328,7 @@ impl Monomorphizer<'_> {
                     self.subst_statements(default, bindings)?;
                 }
             }
-            StatementKind::While { condition, body } => {
+            StatementKind::While { condition, body } | StatementKind::DoWhile { body, condition } => {
                 self.subst_expr(condition, bindings)?;
                 self.subst_statements(body, bindings)?;
             }
@@ -14604,7 +14752,7 @@ fn statement_names(statement: &Statement, used: &mut std::collections::BTreeSet<
                 expressions(expression, used, declared);
             }
         }
-        StatementKind::Break | StatementKind::Continue => {}
+        StatementKind::Break(_) | StatementKind::Continue(_) => {}
         StatementKind::Try { body, catches, finally } => {
             for statement in body {
                 statement_names(statement, used, declared);
@@ -14639,7 +14787,7 @@ fn statement_names(statement: &Statement, used: &mut std::collections::BTreeSet<
                 statement_names(statement, used, declared);
             }
         }
-        StatementKind::While { condition, body } => {
+        StatementKind::While { condition, body } | StatementKind::DoWhile { body, condition } => {
             expressions(condition, used, declared);
             for statement in body {
                 statement_names(statement, used, declared);
@@ -14803,7 +14951,7 @@ fn assigns(statements: &[Statement], name: &str) -> bool {
     statements.iter().any(|statement| match &statement.kind {
         StatementKind::Assign(target, _) => target == name,
         StatementKind::If { then_body, else_body, .. } => assigns(then_body, name) || assigns(else_body, name),
-        StatementKind::While { body, .. } | StatementKind::Foreach { body, .. } => assigns(body, name),
+        StatementKind::While { body, .. } | StatementKind::DoWhile { body, .. } | StatementKind::Foreach { body, .. } => assigns(body, name),
         StatementKind::Switch { cases, default, .. } => {
             cases.iter().any(|case| assigns(&case.body, name))
                 || default.as_deref().is_some_and(|body| assigns(body, name))
@@ -14817,17 +14965,33 @@ fn assigns(statements: &[Statement], name: &str) -> bool {
     })
 }
 
-fn contains_break(statements: &[Statement]) -> bool {
+/// Whether a break in `statements` leaves the loop or switch they're the
+/// body of: a plain break outside any inner loop or switch, or `break n`
+/// inside `depth` = n - 1 of them.
+fn breaks_to(statements: &[Statement], depth: usize) -> bool {
     statements.iter().any(|statement| match &statement.kind {
-        StatementKind::Break => true,
-        StatementKind::If { then_body, else_body, .. } => contains_break(then_body) || contains_break(else_body),
+        StatementKind::Break(levels) => *levels == depth + 1,
+        StatementKind::If { then_body, else_body, .. } => breaks_to(then_body, depth) || breaks_to(else_body, depth),
         StatementKind::Try { body, catches, finally } => {
-            contains_break(body)
-                || catches.iter().any(|clause| contains_break(&clause.body))
-                || finally.as_deref().is_some_and(contains_break)
+            breaks_to(body, depth)
+                || catches.iter().any(|clause| breaks_to(&clause.body, depth))
+                || finally.as_deref().is_some_and(|body| breaks_to(body, depth))
+        }
+        StatementKind::While { body, .. } | StatementKind::DoWhile { body, .. } | StatementKind::Foreach { body, .. } => breaks_to(body, depth + 1),
+        StatementKind::Switch { cases, default, .. } => {
+            cases.iter().any(|case| breaks_to(&case.body, depth + 1)) || default.as_deref().is_some_and(|body| breaks_to(body, depth + 1))
         }
         _ => false,
     })
+}
+
+/// "is one loop" or "are 2 loops", for errors that count.
+fn count_of(count: usize, is: &str, are: &str, one: &str, singular: &str, plural: &str) -> String {
+    if count == 1 {
+        format!("{is} {one} {singular}")
+    } else {
+        format!("{are} {count} {plural}")
+    }
 }
 
 /// `declare` line for an extern function. C `bool` crosses the ABI as a
@@ -18056,6 +18220,28 @@ mod tests {
     }
 
     #[test]
+    fn loops_and_numbered_jumps() {
+        assert!(compile_source("int n = 0; do { n++; if (n == 2) { continue; } } while (n < 3); foreach ([1] as i) { foreach ([2] as j) { break 2; } } int do = 1; print(do);").is_ok());
+        // A function can end with a do-while(true) it only leaves by returning.
+        assert!(compile_source("function f(): int { int x = 0; do { x++; if (x > 2) { return x; } } while (true); } print(f());").is_ok());
+        // ...but not one a break 2 from an inner loop leaves.
+        let error = compile_source("function f(): int { while (true) { foreach ([1] as i) { break 2; } } } print(f());").unwrap_err();
+        assert!(error.contains("must return"), "{error}");
+        let cases = [
+            ("foreach ([1] as i) { break 2; }", "break 2 needs 2 loops or switches around it, but there is one loop or switch"),
+            ("foreach ([1] as i) { switch (i) { case 1: continue 2; } }", "continue 2 needs 2 loops around it, but there is one loop (a switch doesn't count)"),
+            ("foreach ([1] as i) { break 0; }", "break 0 leaves nothing; the levels count from 1"),
+            ("do { print(1); } while (1);", "do-while condition must be a bool, found int"),
+            ("do { print(1); }", "expected 'while (condition);' after the do block"),
+            ("do { print(1); } while (false)", "expected ';' after do { ... } while (...)"),
+        ];
+        for (code, message) in cases {
+            let error = compile_source(code).err().unwrap_or_else(|| panic!("{code}: compiled"));
+            assert!(error.contains(message), "{code}: expected '{message}', got '{error}'");
+        }
+    }
+
+    #[test]
     fn explicit_type_arguments() {
         let declared = "function emptyList<T>(): T[] { return []; } function first<T>(T[] items, T fallback): T { return fallback; } function plain(int x): int { return x; } class C { function m(int x): int { return x; } static function s(): int { return 1; } function g<U>(U x): U { return x; } static function make<U>(): U[] { return []; } } ";
         // Where inference can't decide, the call says; `<` stays less-than elsewhere.
@@ -18167,6 +18353,12 @@ mod tests {
     fn rejects_invalid_matches() {
         let declared = "enum S { case A; case B; } ";
         let cases = [
+            // null: only where the subject can be null, and once.
+            ("int x = 1; print(match (x) { null => 1, default => 2 });", "a match value can't be null here: an int can't be null"),
+            ("?int x = 1; print(match (x) { null => 1, null => 2, default => 3 });", "duplicate match value null"),
+            // Narrowed only in arms that null can't reach.
+            ("?int x = 1; print(match (x) { 1 => 0, default => x + 1 });", "a ?int may be null"),
+            ("?int x = 1; print(match (x) { null, 1 => x + 1, default => 0 });", "a ?int may be null"),
             ("function f(S s): int { return match (s) { S::A => 1 }; }", "match on enum S doesn't handle S::B; add a case for it, or a default"),
             ("print(match (1) { 1 => \"a\", 2 => 3 });", "the arms of match must have the same type: string and int"),
             ("print(match (1) { 1 => \"a\", 1 => \"b\" });", "duplicate match value 1"),
