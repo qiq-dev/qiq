@@ -16,6 +16,7 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
+#include <sys/eventfd.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -1038,8 +1039,11 @@ typedef struct {
 static QiqIdleConnection *qiq_idle = NULL;
 static size_t qiq_idle_count = 0;
 static size_t qiq_idle_capacity = 0;
-static struct pollfd *qiq_idle_pollers = NULL;
 static size_t qiq_next_idle = 0;   // where the next search starts, so each connection gets its turn
+// With http_serve's `concurrency`, requests are served by tasks while
+// __server_next waits for the next one: a task handing back a connection
+// (__server_keep) signals this, so the wait starts again with it included.
+static int qiq_idle_changed = -1;
 
 // Idle connections a worker keeps; when there are more, the one idle the
 // longest is closed. And how long one may be idle before it's closed.
@@ -1068,13 +1072,18 @@ static void qiq_add_idle(int64_t handle) {
     if (qiq_idle_count == qiq_idle_capacity) {
         qiq_idle_capacity = qiq_idle_capacity ? qiq_idle_capacity * 2 : 16;
         QiqIdleConnection *grown = realloc(qiq_idle, qiq_idle_capacity * sizeof *grown);
-        struct pollfd *pollers = realloc(qiq_idle_pollers, (qiq_idle_capacity + 1) * sizeof *pollers);
-        if (grown == NULL || pollers == NULL) qiq_fatal("out of memory");
+        if (grown == NULL) qiq_fatal("out of memory");
         qiq_idle = grown;
-        qiq_idle_pollers = pollers;
     }
     qiq_idle[qiq_idle_count++] = (QiqIdleConnection){handle, qiq_now_ms()};
+    if (qiq_idle_changed >= 0) {
+        uint64_t one = 1;
+        while (write(qiq_idle_changed, &one, sizeof one) < 0 && errno == EINTR) {}
+    }
 }
+
+// From fiber.c.
+int qiq_fibers_active(void);
 
 // The next connection with a request to read: one of the idle connections
 // once data (or its close) arrives, or a new one, which waits with the idle
@@ -1082,9 +1091,8 @@ static void qiq_add_idle(int64_t handle) {
 // connections' reads and writes wait at most `timeout` seconds.
 QIQ_GUARDED(int64_t, qiq_stdlib___server_next, -1, (int64_t handle, int64_t timeout), (handle, timeout)) {
     QiqSocket *listener = qiq_socket(handle);
-    if (qiq_idle_pollers == NULL) {
-        qiq_idle_pollers = malloc(sizeof *qiq_idle_pollers);
-        if (qiq_idle_pollers == NULL) qiq_fatal("out of memory");
+    if (qiq_idle_changed < 0 && qiq_fibers_active()) {
+        qiq_idle_changed = eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC);
     }
     for (;;) {
         if (qiq_stopping) return -1;
@@ -1108,29 +1116,62 @@ QIQ_GUARDED(int64_t, qiq_stdlib___server_next, -1, (int64_t handle, int64_t time
             if (left < wait_ms) wait_ms = left;
             index++;
         }
-        qiq_idle_pollers[0] = (struct pollfd){listener->fd, POLLIN, 0};
-        for (size_t index = 0; index < qiq_idle_count; index++) {
-            qiq_idle_pollers[index + 1] = (struct pollfd){qiq_lookup(qiq_idle[index].handle)->fd, POLLIN, 0};
+        // What to wait on: the listener, the idle connections, and (with
+        // tasks) the signal that a task kept one. A copy, since tasks can add
+        // idle connections while this waits.
+        size_t count = qiq_idle_count;
+        struct pollfd *pollers = malloc((count + 2) * sizeof *pollers);
+        int64_t *handles = malloc((count + 1) * sizeof *handles);
+        if (pollers == NULL || handles == NULL) qiq_fatal("out of memory");
+        pollers[0] = (struct pollfd){listener->fd, POLLIN, 0};
+        for (size_t index = 0; index < count; index++) {
+            handles[index] = qiq_idle[index].handle;
+            pollers[index + 1] = (struct pollfd){qiq_lookup(handles[index])->fd, POLLIN, 0};
         }
-        int ready = poll(qiq_idle_pollers, (nfds_t)qiq_idle_count + 1, (int)wait_ms);
-        if (ready <= 0) continue;  // a timeout or a signal: look again
+        nfds_t watched = (nfds_t)count + 1;
+        if (qiq_idle_changed >= 0) pollers[watched++] = (struct pollfd){qiq_idle_changed, POLLIN, 0};
+        int ready = qiq_poll(pollers, watched, (int)wait_ms);
+        if (ready < 0 && qiq_pending_exception != NULL) {
+            free(pollers);
+            free(handles);
+            return -1;
+        }
+        if (qiq_idle_changed >= 0 && pollers[watched - 1].revents != 0) {
+            uint64_t drained;
+            while (read(qiq_idle_changed, &drained, sizeof drained) < 0 && errno == EINTR) {}
+        }
+        if (ready <= 0) {  // a timeout or a signal: look again
+            free(pollers);
+            free(handles);
+            continue;
+        }
         // A connection with something to read, starting after the last one
-        // served so that none waits behind the others.
-        for (size_t step = 0; step < qiq_idle_count; step++) {
-            size_t index = (qiq_next_idle + step) % qiq_idle_count;
-            if (qiq_idle_pollers[index + 1].revents != 0) {
-                int64_t chosen = qiq_idle[index].handle;
-                qiq_forget_idle(index);
-                qiq_next_idle = index + 1;
-                return chosen;
+        // served so that none waits behind the others. (The idle list may
+        // have changed meanwhile, so it's found by its handle.)
+        int64_t chosen = -1;
+        for (size_t step = 0; step < count && chosen < 0; step++) {
+            size_t index = (qiq_next_idle + step) % count;
+            if (pollers[index + 1].revents == 0) continue;
+            for (size_t now_at = 0; now_at < qiq_idle_count; now_at++) {
+                if (qiq_idle[now_at].handle == handles[index]) {
+                    chosen = handles[index];
+                    qiq_forget_idle(now_at);
+                    qiq_next_idle = index + 1;
+                    break;
+                }
             }
         }
+        bool listener_ready = pollers[0].revents != 0;
+        free(pollers);
+        free(handles);
+        if (chosen >= 0) return chosen;
+        if (!listener_ready) continue;
         // Otherwise a new connection. Its request has usually arrived with
         // it: read what's there without waiting, and serve it straight away
         // (the parser then starts from this buffer, so this costs no extra
         // system call). A client that hasn't sent anything yet waits with
         // the idle connections instead of holding the worker.
-        if (qiq_idle_pollers[0].revents != 0) {
+        {
             int64_t connection = qiq_accept_connection(listener, timeout);
             if (connection < 0) continue;
             QiqSocket *socket = qiq_lookup(connection);
@@ -1138,7 +1179,7 @@ QIQ_GUARDED(int64_t, qiq_stdlib___server_next, -1, (int64_t handle, int64_t time
             if (got < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
                 // Not here yet: give it a moment, as it's usually on its way.
                 struct pollfd arriving = {socket->fd, POLLIN, 0};
-                if (poll(&arriving, 1, 2) > 0) got = recv(socket->fd, socket->buffer, QIQ_SOCKET_BUFFER, MSG_DONTWAIT);
+                if (qiq_poll(&arriving, 1, 2) > 0) got = recv(socket->fd, socket->buffer, QIQ_SOCKET_BUFFER, MSG_DONTWAIT);
             }
             if (got > 0) {
                 socket->start = 0;

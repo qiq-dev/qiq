@@ -2443,14 +2443,19 @@ $ curl localhost:8080/hello/Ada
 Hello, Ada!</pre>
 <h2>How the server works</h2>
 <ul>
-<li><strong>Pre-forked workers.</strong> <code>http_serve</code> opens the listening socket, then forks worker processes (one per CPU by default) that each accept and serve one connection at a time, like Apache's prefork or PHP-FPM. The first process supervises them and starts a new worker if one exits or crashes, so a handler that crashes takes down one worker, never the server.</li>
+<li><strong>Pre-forked workers.</strong> <code>http_serve</code> opens the listening socket, then forks worker processes (one per CPU by default) that each accept and serve one request at a time, like Apache's prefork or PHP-FPM, or several at a time with <a href="#concurrency"><code>concurrency</code></a>. The first process supervises them and starts a new worker if one exits or crashes, so a handler that crashes takes down one worker, never the server.</li>
 <li><strong>No shared memory between requests in different workers.</strong> Each worker is a separate process with its own copy of the program's variables, so a counter incremented by a handler counts per worker. Keep shared state in a file or a database.</li>
-<li><strong>Stopping.</strong> Ctrl-C (SIGINT) or SIGTERM stops the server gracefully: workers finish the request in progress and exit, and <code>http_serve</code> returns in the first process.</li>
+<li><strong>Stopping.</strong> Ctrl-C (SIGINT) or SIGTERM stops the server gracefully: workers finish the requests in progress and exit, and <code>http_serve</code> returns in the first process.</li>
 <li><strong>Errors.</strong> An exception thrown by a handler becomes a <code>500 Internal Server Error</code> response, logged to stderr as <code>qiq: 500 GET /path: file.qiq:12: message</code>, with its <a href=\"exceptions.html\">stack trace</a> on the lines after when it passed through more than one function; the worker carries on.</li>
 <li><strong>Connections.</strong> HTTP/1.1 with keep-alive (and HTTP/1.0). A worker closes an idle connection after 5 seconds, or sooner when another client is waiting for a worker. Request bodies can be sent with <code>Content-Length</code> or chunked, up to 64 MB; <code>Expect: 100-continue</code> is answered.</li>
 <li><strong>Responses</strong> are collected in memory and sent with a <code>Content-Length</code> when the handler returns, with a <code>Date</code> header and, unless the handler sets one, <code>Content-Type: text/plain; charset=utf-8</code>. Responses to <code>HEAD</code> requests have no body.</li>
 <li>Not supported yet: HTTPS (put a proxy such as Caddy or nginx in front), streaming responses, WebSockets, HTTP/2, and compression.</li>
 </ul>
+<h2 id="concurrency">Several requests per worker</h2>
+<p>By default a worker serves one request at a time, so while a handler waits (for a database query, another service's API, or a slow client) its worker waits too, and the next request waits for a worker. With 8 workers and handlers that wait 200 milliseconds for an API, the server serves at most 40 requests a second, however idle the processor is. A proxy such as nginx can't help: it can only queue the requests.</p>
+<p>With <code>concurrency: 100</code>, each worker serves up to 100 requests at once, each as a <a href="tasks.html">task</a>: while one handler waits, the worker goes on with others, so the server is limited by the processor rather than by the waiting. Requests beyond the limit wait for one to finish. It suits handlers that call other services or slow queries, and connections held open for long (long polling). For handlers that mostly compute, more workers help instead, as the work needs more processor cores.</p>
+<p>Requests in the same worker then share its variables, as tasks do. That's fine for a cache or a counter, and for a <a href="class.database.html">Database</a> opened once, whose queries from different requests take turns. But a transaction isn't private to its request: another request's statements run inside it if its handler waits partway through one. Open a connection per request (or keep one per task) for transactions, or leave <code>concurrency</code> at 1.</p>
+<pre class="code">http_serve("unix:/run/app/app.sock", http_log(router-&gt;handler()), trustProxy: true, concurrency: 100);</pre>
 <h2>Behind nginx</h2>
 <p>In production, put the server behind nginx (or Caddy), as Go and Node apps are deployed: the proxy handles HTTPS, HTTP/2, compression, and static files, and it buffers slow clients, so a worker is busy only while your code runs. The program needs no special mode: listen where only the proxy can connect, and set <code>trustProxy</code> so requests show the visitor's address rather than the proxy's.</p>
 <pre class="code">http_serve("unix:/run/app/app.sock", http_log(router-&gt;handler()), trustProxy: true);
@@ -2489,9 +2494,10 @@ Serving public at http://127.0.0.1:8080/ (press Ctrl-C to stop)
                 param("handler", "function(Request, ResponseWriter): void", "Called for each request; usually <code>router-&gt;handler()</code>."),
                 param("workers", "int", "The number of worker processes; <code>0</code> means one per CPU. With <code>1</code>, the server runs in this process without forking.", "0"),
                 param("trustProxy", "bool", "Whether the server is behind a proxy such as nginx. If so, <code>Request::remoteAddress</code> is the client address the proxy forwarded (the last entry of <code>X-Forwarded-For</code>, or <code>X-Real-IP</code>), and <code>Request::scheme</code> comes from <code>X-Forwarded-Proto</code>. Only set it when clients can't reach the server except through the proxy, because anyone else could send those headers.", "false"),
+                param("concurrency", "int", "How many requests each worker serves at once. With more than <code>1</code>, each request is a <a href=\"tasks.html\">task</a>, so a worker serves other requests while a handler waits for a database, another service, or a slow client; see <a href=\"ref.http-server.html#concurrency\">Several requests per worker</a>.", "1"),
             ],
             "returns": "void",
-            "description": "Listens on the address, starts the workers, and serves requests until the program gets SIGINT (Ctrl-C) or SIGTERM. Each worker serves one connection at a time; see <a href=\"ref.http-server.html\">How the server works</a>.",
+            "description": "Listens on the address, starts the workers, and serves requests until the program gets SIGINT (Ctrl-C) or SIGTERM. Each worker serves one request at a time, or <code>concurrency</code> at a time; see <a href=\"ref.http-server.html\">How the server works</a>.",
             "return_description": "Returns in the first process once the workers have finished their requests and stopped; worker processes exit without returning.",
             "errors": [
                 "<code>NetworkException</code> if the address can't be used, for example because another program is listening on the port (<code>could not listen on :8080: Address in use</code>) or on the socket file.",
@@ -2501,6 +2507,7 @@ Serving public at http://127.0.0.1:8080/ (press Ctrl-C to stop)
                 {"title": "Hello, world", "code": 'http_serve(":8080", fn(Request r, ResponseWriter w) => w->write("Hello, world!\\n"));'},
                 {"title": "Behind nginx, on a Unix socket", "code": 'http_serve("unix:/run/app/app.sock", http_log(router->handler()), trustProxy: true);'},
                 {"title": "Two workers on localhost", "code": 'Router router = new Router();\nrouter->handle("GET /time", fn(Request r, ResponseWriter w) => w->write(date("H:i:s") + "\\n"));\nhttp_serve("127.0.0.1:3000", http_log(router->handler()), workers: 2);\nprint("stopped");'},
+                {"title": "Handlers that wait on other services", "code": 'Router router = new Router();\nrouter->handle("GET /weather", fn(Request r, ResponseWriter w) => w->write(http_get("https://api.example.com/weather")->text()));\n// Each worker serves up to 100 requests at once while they wait.\nhttp_serve("127.0.0.1:3000", router->handler(), concurrency: 100);'},
             ],
             "see_also": ["http_file_server", "http_log"],
         },

@@ -1,0 +1,4 @@
+["ok /r1", "ok /r2", "ok /r3", "ok /r4", "ok /r5", "ok /r6", "ok /r7", "ok /r8", "ok /r9", "ok /r10"]
+ten 0.2-second requests at once took under a second: true
+a failing handler's status: 500
+the server stopped

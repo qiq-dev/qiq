@@ -1,0 +1,38 @@
+// The HTTP server with `concurrency`: one worker serves several requests at
+// once, each as a task, while its handler waits. The server runs as a task
+// of this program, and stops when the program sends itself SIGTERM.
+import launch, spawn, Task, Job from "std/async";
+import http_serve, Request, ResponseWriter from "std/net/http/server";
+import http_get from "std/net/http";
+import exec, getpid from "std/os";
+import hrtime, usleep from "std/time";
+
+Job server = launch(function(): void {
+    http_serve("127.0.0.1:18763", function(Request r, ResponseWriter w): void {
+        if (r->rawPath == "/fail") {
+            throw new RuntimeException("this handler fails");
+        }
+        usleep(200000);
+        w->write("ok " + r->rawPath);
+    }, workers: 1, concurrency: 10);
+});
+usleep(100000);
+
+int start = hrtime();
+Task<string>[] requests = [];
+foreach (range(1, 10) as n) {
+    array_push(requests, spawn(fn() => http_get("http://127.0.0.1:18763/r" + to_string(n))->text()));
+}
+Task<int> failing = spawn(fn() => http_get("http://127.0.0.1:18763/fail")->status);
+string[] bodies = [];
+foreach (requests as request) {
+    array_push(bodies, request->await());
+}
+int took = (hrtime() - start) / 1000000;
+print(bodies);
+print("ten 0.2-second requests at once took under a second:", took < 1000);
+print("a failing handler's status:", failing->await());
+
+exec(["kill", "-TERM", to_string(getpid())]);
+server->join();
+print("the server stopped");

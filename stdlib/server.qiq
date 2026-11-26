@@ -20,6 +20,7 @@ import Exception, InvalidArgumentException, NetworkException, InvalidUtf8Excepti
 import File, is_dir, is_file, file_get_bytes, scandir from "file";
 import gmdate, date, time, microtime from "date";
 import exit from "program";
+import launch, Channel from "async";
 import strtolower, strtoupper, substr, strpos, str_contains, str_starts_with, str_ends_with, explode, implode, trim, string_to_bytes, bytes_to_string, htmlspecialchars from "string";
 import urldecode, rawurldecode, rawurlencode, __http_hex from "http";
 import Url from "net";
@@ -728,12 +729,18 @@ function __server_log(Request r, int status, double started): void {
 //   "127.0.0.1:8080"     this machine only; "[::1]:8080" for IPv6
 //   "unix:/run/app.sock" a Unix socket file, for a proxy such as nginx
 //
-// `workers` processes (by default one per CPU) each serve one connection at
-// a time. With `trustProxy`, the server is behind a proxy such as nginx,
-// and Request::remoteAddress and Request::scheme come from the proxy's
-// X-Forwarded-For (or X-Real-IP) and X-Forwarded-Proto headers. Returns
-// after SIGINT or SIGTERM, once the workers have finished their requests.
-function http_serve(string address, function(Request, ResponseWriter): void handler, int workers = 0, bool trustProxy = false): void {
+// `workers` processes (by default one per CPU) each serve `concurrency`
+// requests at a time (by default one): with more, each request is a task
+// (std/async), so a worker serves others while a handler waits for a
+// database, another service, or a slow client. With `trustProxy`, the
+// server is behind a proxy such as nginx, and Request::remoteAddress and
+// Request::scheme come from the proxy's X-Forwarded-For (or X-Real-IP) and
+// X-Forwarded-Proto headers. Returns after SIGINT or SIGTERM, once the
+// workers have finished their requests.
+function http_serve(string address, function(Request, ResponseWriter): void handler, int workers = 0, bool trustProxy = false, int concurrency = 1): void {
+    if (concurrency < 1) {
+        throw new InvalidArgumentException("http_serve: concurrency must be at least 1");
+    }
     int listener = __server_open(address);
     int count = workers;
     if (count <= 0) {
@@ -745,19 +752,20 @@ function http_serve(string address, function(Request, ResponseWriter): void hand
         __server_close(listener);
         return;
     }
-    // Each worker serves one request at a time, from whichever of its open
-    // connections sends one first (see __server_next), so connections kept
-    // open between requests don't hold a worker while they're idle.
-    while (true) {
-        int connection = __server_next(listener, 30);
-        if (connection < 0) {
-            break;
+    if (concurrency == 1) {
+        // Each worker serves one request at a time, from whichever of its
+        // open connections sends one first (see __server_next), so
+        // connections kept open between requests don't hold a worker while
+        // they're idle.
+        while (true) {
+            int connection = __server_next(listener, 30);
+            if (connection < 0) {
+                break;
+            }
+            __server_finish(connection, __server_serve_one(connection, handler, trustProxy));
         }
-        if (__server_serve_one(connection, handler, trustProxy)) {
-            __server_keep(connection);
-        } else {
-            __socket_close(connection);
-        }
+    } else {
+        __server_serve_concurrently(listener, handler, trustProxy, concurrency);
     }
     __server_close_idle();
     if (count > 1) {
@@ -766,6 +774,45 @@ function http_serve(string address, function(Request, ResponseWriter): void hand
         exit(0);
     }
     __server_close(listener);
+}
+
+// A connection after its request: kept open for the next, or closed.
+function __server_finish(int connection, bool keep): void {
+    if (keep) {
+        __server_keep(connection);
+    } else {
+        __socket_close(connection);
+    }
+}
+
+// http_serve with `concurrency` above 1, in a worker: each request a task,
+// at most `concurrency` at once (a channel of that many slots: a new
+// request takes one, and waits when there are none, until a request
+// ends). Returns once the server is stopping and every request has ended.
+function __server_serve_concurrently(int listener, function(Request, ResponseWriter): void handler, bool trustProxy, int concurrency): void {
+    Channel<bool> slots = new Channel<bool>(concurrency);
+    while (true) {
+        int connection = __server_next(listener, 30);
+        if (connection < 0) {
+            break;
+        }
+        slots->send(true);
+        launch(function(): void {
+            try {
+                __server_finish(connection, __server_serve_one(connection, handler, trustProxy));
+            } catch (Exception e) {
+                // Sending the response failed: the connection is done.
+                __socket_close(connection);
+            }
+            slots->receive();
+        });
+    }
+    // Wait for the requests still running: every slot free again.
+    int free = 0;
+    while (free < concurrency) {
+        slots->send(true);
+        free++;
+    }
 }
 
 // Listens on an http_serve address.

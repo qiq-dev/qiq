@@ -317,20 +317,25 @@ static void qiq_pool_after_fork(void) {
     qiq_io_waiting = 0;
 }
 
-static void qiq_pool_start(void) {
-    if (qiq_epoll < 0) {
-        qiq_epoll = epoll_create1(EPOLL_CLOEXEC);
-        if (qiq_epoll < 0) qiq_fatal("could not create an epoll instance");
-    }
-    qiq_pool_signal = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
-    if (qiq_pool_signal < 0) qiq_fatal("could not create an eventfd for helper threads");
-    struct epoll_event event = {.events = EPOLLIN, .data.ptr = &qiq_pool_marker};
-    if (epoll_ctl(qiq_epoll, EPOLL_CTL_ADD, qiq_pool_signal, &event) != 0) qiq_fatal("could not watch the helper threads' eventfd");
+// The epoll instance, made when first needed. A forked child (the HTTP
+// server's workers) gets one of its own (see qiq_pool_after_fork).
+static void qiq_epoll_ready(void) {
+    if (qiq_epoll >= 0) return;
+    qiq_epoll = epoll_create1(EPOLL_CLOEXEC);
+    if (qiq_epoll < 0) qiq_fatal("could not create an epoll instance");
     static int registered = 0;
     if (!registered) {
         pthread_atfork(NULL, NULL, qiq_pool_after_fork);
         registered = 1;
     }
+}
+
+static void qiq_pool_start(void) {
+    qiq_epoll_ready();
+    qiq_pool_signal = eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK);
+    if (qiq_pool_signal < 0) qiq_fatal("could not create an eventfd for helper threads");
+    struct epoll_event event = {.events = EPOLLIN, .data.ptr = &qiq_pool_marker};
+    if (epoll_ctl(qiq_epoll, EPOLL_CTL_ADD, qiq_pool_signal, &event) != 0) qiq_fatal("could not watch the helper threads' eventfd");
     for (int index = 0; index < QIQ_POOL_THREADS; index++) {
         pthread_t thread;
         pthread_attr_t attributes;
@@ -801,10 +806,7 @@ static int qiq_poll_with(struct pollfd *fds, nfds_t count, int timeout_ms, bool 
             errno = ECANCELED;
             return -1;
         }
-        if (qiq_epoll < 0) {
-            qiq_epoll = epoll_create1(EPOLL_CLOEXEC);
-            if (qiq_epoll < 0) qiq_fatal("could not create an epoll instance");
-        }
+        qiq_epoll_ready();
         uint64_t wait = qiq_begin_wait();
         nfds_t registered = 0;
         for (nfds_t index = 0; index < count; index++) {
