@@ -326,3 +326,25 @@ History history = new History();
 history->add("x");
 print(counting->pop(), counting->pushes, describe(counting), describe(history));
 print(Collection<string>::made);
+
+// Type arguments given with the call, where inference has nothing to go on.
+function emptyOf<T>(): T[] {
+    return [];
+}
+
+function firstOrElse<T>(T[] items, T fallback): T {
+    return len(items) > 0 ? items[0] : fallback;
+}
+
+class Repeat {
+    static function times<T>(T value, int count): T[] {
+        T[] result = [];
+        while (len(result) < count) {
+            array_push(result, value);
+        }
+        return result;
+    }
+}
+
+print(len(emptyOf<string>()), firstOrElse<int>([], -1), firstOrElse<string>([], "none"));
+print(Repeat::times<char>('x', 3));

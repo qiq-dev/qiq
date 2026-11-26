@@ -62,7 +62,7 @@ one Pair<string, int>
 ```
 
 <h2>Generic functions</h2>
-<p>A function's type parameters come after its name. Calls never write type arguments: they come from the arguments' types, and when those don't decide (as for a function that only returns a <code>T[]</code>), from the type the result is used as.</p>
+<p>A function's type parameters come after its name. A call usually leaves the type arguments out: they come from the arguments' types, and when those don't decide (as for a function that only returns a <code>T[]</code>), from the type the result is used as. A call can also <a href="#giving-type-arguments">give them</a>.</p>
 
 ```qiq
 function firstOr<T>(T[] values, T fallback): T {
@@ -88,6 +88,35 @@ print(transform(["a", "bb"], fn(string s) => len(s)));
 ```
 
 <p>An anonymous function argument, like <code>fn(n) =&gt; n * 10</code> above, takes its parameter types from the other arguments, and its return type decides <code>U</code>. Arguments that need a type to have one (<code>[]</code>, <code>{}</code>, <code>null</code>) take it from the other arguments too. When an argument gives a different type for a parameter than an earlier one did, the call is an error: <code>T is int from an earlier argument, but string here</code>.</p>
+
+<h2 id="giving-type-arguments">Giving type arguments</h2>
+<p>A call can give its type arguments between the name and the <code>(</code>, as <code>new</code> can. That's needed when neither the arguments nor the use of the result say what a type parameter is, as for a function with no arguments whose result is passed straight on. It works the same way for functions, methods, and static methods.</p>
+
+```qiq
+function emptyOf<T>(): T[] {
+    return [];
+}
+
+class Repeat {
+    static function times<T>(T value, int count): T[] {
+        T[] result = [];
+        while (len(result) < count) {
+            array_push(result, value);
+        }
+        return result;
+    }
+}
+
+print(len(emptyOf<string>()));
+print(Repeat::times<char>('x', 3));
+```
+```output
+0
+['x', 'x', 'x']
+```
+
+<p>Given type arguments decide their parameters before the arguments are looked at, so <code>[]</code>, <code>null</code> and anonymous functions take their types from them. An argument of another type is an error: <code>firstOr&lt;int&gt;([], "none")</code> gives <code>T is int from the type arguments, but string here</code>. A call gives all of the type arguments or none of them, and a function or method that isn't generic takes none.</p>
+<p>A <code>&lt;</code> after a name is read as type arguments only when what follows can only be a type, closed by <code>&gt;</code>, and followed by <code>(</code>. So <code>a &lt; b</code> is still a comparison.</p>
 
 <h2>Generic methods</h2>
 <p>A method can have type parameters of its own, alongside its class's. Like a generic function's, they come from the arguments at each call. Static methods can be generic too.</p>
@@ -259,6 +288,6 @@ print(largest([new Money(5), new Money(12), new Money(7)])->cents);
 <li>A generic class's static property can be read with its type arguments (<code>Box&lt;int&gt;::count</code>), but only assigned inside the class, with <code>self::</code>.</li>
 <li>Interface and abstract methods can't have type parameters of their own yet, and generic methods can't be overridden. A constructor's type parameters are its class's.</li>
 <li><code>?T</code> isn't allowed, since <code>T</code> may already be a type that can be null. <code>instanceof</code> can't test for a generic class.</li>
-<li>Calls can't write type arguments (<code>first&lt;int&gt;(xs)</code>); a generic function can't be used as a function value.</li>
+<li>A generic function can't be used as a function value. The standard library's callback functions (<code>array_map</code>, <code>array_filter</code> and the like) aren't generic functions, so they can't be given type arguments.</li>
 <li>Type arguments are exact: a <code>Stack&lt;Dog&gt;</code> isn't a <code>Stack&lt;Animal&gt;</code>, even when a <code>Dog</code> is an <code>Animal</code>.</li>
 </ul>

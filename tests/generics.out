@@ -18,3 +18,5 @@ true
 false
 b 2 counting stack of 1 history of 1
 2
+0 -1 none
+['x', 'x', 'x']

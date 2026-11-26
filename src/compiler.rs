@@ -1392,6 +1392,23 @@ enum Expr {
     /// of a variadic parameter. Only valid as the last positional argument
     /// of a call to a function with one (see pack_variadic_arguments).
     Spread(Box<Expr>),
+    /// `first<int>(items)`, `box->map<string>(f)`, `Maker::make<int>()`: a
+    /// call (a Call, MethodCall, or StaticCall) of a generic function or
+    /// method with its type arguments given rather than inferred.
+    TypeArguments(Vec<ValueType>, Box<Expr>),
+}
+
+/// The error for type arguments given to `callee`, which has no type parameters.
+fn not_generic(callee: &str) -> String {
+    format!("{callee} isn't generic, so it takes no type arguments")
+}
+
+/// `call`, with its type arguments if the call gave some.
+fn with_type_arguments(type_arguments: Option<Vec<ValueType>>, call: Expr) -> Expr {
+    match type_arguments {
+        Some(types) => Expr::TypeArguments(types, Box::new(call)),
+        None => call,
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -3757,11 +3774,12 @@ impl Parser {
             }
             TokenKind::Identifier(name) => {
                 self.advance();
+                let type_arguments = self.parse_call_type_arguments()?;
                 if matches!(self.current().kind, TokenKind::LeftParen) {
                     self.advance();
                     let arguments = self.parse_arguments()?;
                     self.expect(TokenKind::RightParen, "expected ')' after arguments")?;
-                    Expr::Call(name, arguments)
+                    with_type_arguments(type_arguments, Expr::Call(name, arguments))
                 } else {
                     Expr::Variable(name)
                 }
@@ -3804,11 +3822,12 @@ impl Parser {
             } else if matches!(self.current().kind, TokenKind::Arrow) {
                 self.advance();
                 let member = self.expect_identifier("expected member name after '.'")?;
+                let type_arguments = self.parse_call_type_arguments()?;
                 if matches!(self.current().kind, TokenKind::LeftParen) {
                     self.advance();
                     let arguments = self.parse_arguments()?;
                     self.expect(TokenKind::RightParen, "expected ')' after method arguments")?;
-                    expression = Expr::MethodCall(Box::new(expression), member, arguments);
+                    expression = with_type_arguments(type_arguments, Expr::MethodCall(Box::new(expression), member, arguments));
                 } else {
                     expression = Expr::Member(Box::new(expression), member);
                 }
@@ -3819,11 +3838,12 @@ impl Parser {
                 self.next_hidden += 1;
                 let placeholder = format!("#{}", self.next_hidden);
                 let member = self.expect_identifier("expected a property or method name after '?->'")?;
+                let type_arguments = self.parse_call_type_arguments()?;
                 let first = if matches!(self.current().kind, TokenKind::LeftParen) {
                     self.advance();
                     let arguments = self.parse_arguments()?;
                     self.expect(TokenKind::RightParen, "expected ')' after method arguments")?;
-                    Expr::MethodCall(Box::new(Expr::Variable(placeholder.clone())), member, arguments)
+                    with_type_arguments(type_arguments, Expr::MethodCall(Box::new(Expr::Variable(placeholder.clone())), member, arguments))
                 } else {
                     Expr::Member(Box::new(Expr::Variable(placeholder.clone())), member)
                 };
@@ -3891,13 +3911,68 @@ impl Parser {
             return Ok(Expr::ClassName(target));
         }
         let member = self.expect_identifier("expected a method or property name after '::'")?;
+        let type_arguments = self.parse_call_type_arguments()?;
         if !matches!(self.current().kind, TokenKind::LeftParen) {
             return Ok(Expr::StaticProperty(target, member));
         }
         self.advance();
         let arguments = self.parse_arguments()?;
         self.expect(TokenKind::RightParen, "expected ')' after arguments")?;
-        Ok(Expr::StaticCall(target, member, arguments))
+        Ok(with_type_arguments(type_arguments, Expr::StaticCall(target, member, arguments)))
+    }
+
+    /// `<int, string>` between a function's or method's name and its `(`:
+    /// the call's type arguments. `<` is also less-than, so this reads them
+    /// only when the token after `<` can only start a type (a built-in type,
+    /// a class, a type parameter in scope, `?`, `map`, or `function(`), and
+    /// the list is closed by `>` and followed by `(`; otherwise it leaves
+    /// the tokens as they were and returns None.
+    fn parse_call_type_arguments(&mut self) -> Result<Option<Vec<ValueType>>, String> {
+        if !matches!(self.current().kind, TokenKind::Less) {
+            return Ok(None);
+        }
+        let starts_type = match &self.tokens.get(self.cursor + 1).map(|token| &token.kind) {
+            Some(TokenKind::Int | TokenKind::Double | TokenKind::Bool | TokenKind::String | TokenKind::CharType | TokenKind::ByteType | TokenKind::Map | TokenKind::Question | TokenKind::Void) => true,
+            Some(TokenKind::Identifier(name)) => self.class_names.contains_key(name) || self.type_scope.iter().any(|(param, _)| param == name),
+            _ => {
+                let saved = self.cursor;
+                self.cursor += 1;
+                let function = self.at_function_type();
+                self.cursor = saved;
+                function
+            }
+        };
+        if !starts_type {
+            return Ok(None);
+        }
+        // Reading types may split a `>>`, so a failed attempt puts the
+        // tokens back.
+        let (start, tokens) = (self.cursor, self.tokens.clone());
+        let attempt = (|| -> Result<Vec<ValueType>, String> {
+            self.advance();
+            let mut types = Vec::new();
+            loop {
+                if matches!(self.current().kind, TokenKind::Void) {
+                    return Err(self.error("a type argument can't be void"));
+                }
+                types.push(self.parse_value_type()?);
+                if !matches!(self.current().kind, TokenKind::Comma) {
+                    break;
+                }
+                self.advance();
+            }
+            self.expect_closing_angle("expected '>' after the type arguments")?;
+            Ok(types)
+        })();
+        match attempt {
+            Ok(types) if matches!(self.current().kind, TokenKind::LeftParen) => Ok(Some(types)),
+            Err(error) if error.contains("can't be void") => Err(error),
+            _ => {
+                self.cursor = start;
+                self.tokens = tokens;
+                Ok(None)
+            }
+        }
     }
 
     /// `<T, U: Bound>` after a generic class's or function's name: registers
@@ -4424,6 +4499,10 @@ struct Emitter {
     /// The type a call to a generic function is used as, for inferring type
     /// arguments its arguments don't decide (see infer_type_arguments).
     generic_expectation: Option<ValueType>,
+    /// The type arguments a call gave (`first<int>(items)`), set by
+    /// Expr::TypeArguments for the call it wraps, which takes them before
+    /// evaluating anything else.
+    explicit_type_arguments: Option<Vec<ValueType>>,
     /// Numbers the hidden variables that hold generic calls' arguments.
     next_generic_argument: usize,
     /// The stand-ins for type parameters without a bound, while checking
@@ -4581,6 +4660,7 @@ impl Emitter {
             late_parents: Vec::new(),
             late_parent_generics: Vec::new(),
             generic_expectation: None,
+            explicit_type_arguments: None,
             next_generic_argument: 0,
             unbounded_stand_ins: Vec::new(),
             signatures,
@@ -5472,6 +5552,7 @@ impl Emitter {
                     fn ends_in_call(expression: &Expr) -> bool {
                         match expression {
                             Expr::Call(..) | Expr::MethodCall(..) | Expr::StaticCall(..) | Expr::CallValue(..) => true,
+                            Expr::TypeArguments(_, call) => ends_in_call(call),
                             // `logger?->log(message);`
                             Expr::Nullsafe(_, _, rest) => ends_in_call(rest),
                             _ => false,
@@ -6909,7 +6990,7 @@ impl Emitter {
                     stand_ins.insert(*param, ValueType::Class(class_id));
                 }
             }
-            let bindings = Bindings { types: stand_ins.iter().map(|(param, value_type)| (*param, *value_type)).collect(), own_class: None, parent: None };
+            let bindings = Bindings { given: false, types: stand_ins.iter().map(|(param, value_type)| (*param, *value_type)).collect(), own_class: None, parent: None };
             for param in params {
                 let Some(bound) = this.generics.params[*param as usize].bound else { continue };
                 let ValueType::Class(stand_in) = stand_ins[param] else { continue };
@@ -7102,12 +7183,30 @@ impl Emitter {
         callee: &str,
         arguments: &[Expr],
         expected: Option<(ValueType, ValueType)>,
+        explicit: Option<Vec<ValueType>>,
         variables: &HashMap<String, Value>,
         body: &mut String,
     ) -> Result<(Vec<ValueType>, HashMap<String, Value>, Vec<Expr>), String> {
         let packed = Self::pack_variadic_arguments(parameters, arguments, callee)?.into_owned();
         Self::resolve_arguments(parameters, &packed, callee)?;
         let mut bindings = Bindings::default();
+        // Given type arguments decide their parameters before any argument
+        // is looked at; an argument that disagrees is an error.
+        if let Some(explicit) = explicit {
+            if explicit.len() != type_params.len() {
+                let names: Vec<&str> = type_params.iter().map(|param| self.generics.params[*param as usize].name.as_str()).collect();
+                return Err(format!(
+                    "{callee} takes {} type argument{} ({}), but {} {} given",
+                    names.len(),
+                    if names.len() == 1 { "" } else { "s" },
+                    names.join(", "),
+                    explicit.len(),
+                    if explicit.len() == 1 { "was" } else { "were" }
+                ));
+            }
+            bindings.types = type_params.iter().copied().zip(explicit).collect();
+            bindings.given = true;
+        }
         let mut scope = variables.clone();
         let mut rewritten = packed.clone();
         // Values that need a type to have one: decided by the others first.
@@ -7168,8 +7267,16 @@ impl Emitter {
                 Some((_, value_type)) => types.push(*value_type),
                 None => {
                     let name = &self.generics.params[*param as usize].name;
+                    // A constructor's caller adds how to give them to `new`.
+                    let give = match callee.split('\'').nth(1) {
+                        Some(called) if !callee.starts_with("constructor") => {
+                            let names: Vec<&str> = type_params.iter().map(|param| self.generics.params[*param as usize].name.as_str()).collect();
+                            format!(", or give the type arguments with the call, as in {called}<{}>(...)", names.join(", "))
+                        }
+                        _ => String::new(),
+                    };
                     return Err(format!(
-                        "{callee}: can't tell what {name} is from the arguments; use the result where its type is known, as in a declaration"
+                        "{callee}: can't tell what {name} is from the arguments; use the result where its type is known, as in a declaration{give}"
                     ));
                 }
             }
@@ -7187,9 +7294,10 @@ impl Emitter {
                 match bindings.types.iter().find(|(bound, _)| *bound == param) {
                     Some((_, existing)) if *existing != actual => {
                         return Err(format!(
-                            "{callee}: {} is {} from an earlier argument, but {} here",
+                            "{callee}: {} is {} from {}, but {} here",
                             self.generics.params[param as usize].name,
                             self.type_name(*existing),
+                            if bindings.given { "the type arguments" } else { "an earlier argument" },
                             self.type_name(actual)
                         ));
                     }
@@ -7263,7 +7371,7 @@ impl Emitter {
         function.name = format!("{}<{}>", template.name, names.join(", "));
         function.symbol = format!("{}.g{copies}", template.symbol);
         function.type_params = Vec::new();
-        let bindings = Bindings { types: template.type_params.iter().copied().zip(types.clone()).collect(), own_class: None, parent: None };
+        let bindings = Bindings { given: false, types: template.type_params.iter().copied().zip(types.clone()).collect(), own_class: None, parent: None };
         let module = template.module;
         let owner = template.name.clone();
         self.monomorphize(|m| {
@@ -7302,7 +7410,7 @@ impl Emitter {
         let mut method = template.clone();
         method.name = format!("{}.g{copies}", template.name);
         method.type_params = Vec::new();
-        let bindings = Bindings { types: template.type_params.iter().copied().zip(types.clone()).collect(), own_class: None, parent: None };
+        let bindings = Bindings { given: false, types: template.type_params.iter().copied().zip(types.clone()).collect(), own_class: None, parent: None };
         let owner = format!("{class_name}::{}", template.name);
         self.monomorphize(|m| {
             m.check_bounds(&owner, &template.type_params, &types)?;
@@ -7352,7 +7460,7 @@ impl Emitter {
             (None, None) => {
                 let parameters = template.methods.iter().find(|method| method.name == "__construct").map(|method| method.parameters.clone()).unwrap_or_default();
                 let callee = format!("constructor '{}'", template.name);
-                self.infer_type_arguments(&parameters, &template.type_params, &callee, arguments, None, variables, body).map_err(|error| {
+                self.infer_type_arguments(&parameters, &template.type_params, &callee, arguments, None, None, variables, body).map_err(|error| {
                     format!("{error}; or give the type arguments, as in new {}<...>(...)", template.name)
                 })?
             }
@@ -12601,12 +12709,21 @@ impl Emitter {
                 // Only this call, not the ones in its receiver or arguments.
                 let expectation = self.call_expectation.take();
                 let generic_expectation = self.generic_expectation.take();
+                let explicit = self.explicit_type_arguments.take();
                 let object = self.emit_expression(object_expression, variables, body)?;
                 let class_id = match object.value_type {
                     ValueType::Class(class_id) => class_id,
                     _ => return Err("method call requires a class instance".to_string()),
                 };
                 self.emit_null_check(&object, object_expression, &format!("cannot call method '{method_name}' on null"), body);
+                if explicit.is_some() {
+                    let generic = self.find_method(class_id, method_name).ok().is_some_and(|(.., owner, _)| {
+                        self.classes[owner as usize].methods.iter().any(|method| method.name == *method_name && !method.type_params.is_empty())
+                    });
+                    if !generic {
+                        return Err(not_generic(&format!("method '{}->{method_name}'", self.classes[class_id as usize].name)));
+                    }
+                }
                 // std/testing's assertions: given their caller's file:line,
                 // and equal and notEqual compiled for the types given.
                 if self.stdlib_class("Test") == Some(class_id) {
@@ -12645,7 +12762,7 @@ impl Emitter {
                     let callee = format!("method '{method_name}'");
                     let expected = generic_expectation.map(|expected| (template.return_type, expected));
                     let (types, mut scope, rewritten) =
-                        self.infer_type_arguments(&template.parameters, &template.type_params, &callee, arguments, expected, variables, body)?;
+                        self.infer_type_arguments(&template.parameters, &template.type_params, &callee, arguments, expected, explicit, variables, body)?;
                     let copy = self.generic_method_instance(method_owner, &template, types)?;
                     let receiver = format!("#generic.receiver{}", self.next_generic_argument);
                     self.next_generic_argument += 1;
@@ -12786,6 +12903,7 @@ impl Emitter {
             Expr::StaticCall(target, method_name, arguments) => {
                 let target = *target;
                 let generic_expectation = self.generic_expectation.take();
+                let explicit = self.explicit_type_arguments.take();
                 self.note_database_open(target, method_name, arguments);
                 let class_id = Self::static_target_class(target);
                 let class_name = self.classes[class_id as usize].name.clone();
@@ -12819,9 +12937,12 @@ impl Emitter {
                     let callee = format!("method '{owner_name}::{method_name}'");
                     let expected = generic_expectation.map(|expected| (method.return_type, expected));
                     let (types, scope, rewritten) =
-                        self.infer_type_arguments(&method.parameters, &method.type_params, &callee, arguments, expected, variables, body)?;
+                        self.infer_type_arguments(&method.parameters, &method.type_params, &callee, arguments, expected, explicit, variables, body)?;
                     let copy = self.generic_method_instance(owner, &method, types)?;
                     return self.emit_expression(&Expr::StaticCall(target, copy, rewritten), &scope, body);
+                }
+                if explicit.is_some() {
+                    return Err(not_generic(&format!("method '{owner_name}::{method_name}'")));
                 }
                 let callee_name = format!("method '{owner_name}::{method_name}'");
                 let mismatch = format!("argument type mismatch calling '{owner_name}::{method_name}'");
@@ -13183,8 +13304,9 @@ impl Emitter {
                     Some(template) => {
                         let callee = format!("function '{name}'");
                         let expected = self.generic_expectation.take().map(|expected| (template.return_type, expected));
+                        let explicit = self.explicit_type_arguments.take();
                         let (types, scope, rewritten) =
-                            self.infer_type_arguments(&template.parameters, &template.type_params, &callee, arguments, expected, variables, body)?;
+                            self.infer_type_arguments(&template.parameters, &template.type_params, &callee, arguments, expected, explicit, variables, body)?;
                         symbol = self.generic_function_instance(&template, types)?;
                         generic_call = (rewritten, scope);
                         (&generic_call.0[..], &generic_call.1)
@@ -13438,6 +13560,25 @@ impl Emitter {
             Expr::MapLiteral(entries) => self.emit_map_literal(entries, None, variables, body),
             Expr::NamedArgument(name, _) => {
                 Err(format!("named argument '{name}' is only valid in a call"))
+            }
+            Expr::TypeArguments(types, call) => {
+                // A function's are checked here, since some calls by name
+                // (conversions, function values) never reach inference.
+                if let Expr::Call(name, _) = &**call {
+                    let symbol = self.module_functions[self.current_module].get(name);
+                    if symbol.is_none() && !variables.contains_key(name) && !CONVERSION_FUNCTIONS.contains(&name.as_str()) {
+                        // Reports that it isn't declared.
+                        return self.emit_expression(call, variables, body);
+                    }
+                    let generic = !variables.contains_key(name) && symbol.is_some_and(|symbol| self.generics.function_templates.contains_key(symbol));
+                    if !generic {
+                        return Err(not_generic(&format!("function '{name}'")));
+                    }
+                }
+                self.explicit_type_arguments = Some(types.clone());
+                let result = self.emit_expression(call, variables, body);
+                self.explicit_type_arguments = None;
+                result
             }
             Expr::Spread(_) => Err(
                 "a '...' argument can only fill the variadic parameter of a function, method, or constructor declared with one".to_string(),
@@ -13715,6 +13856,8 @@ fn class_is_a(classes: &[ClassDef], class_id: u32, ancestor: u32) -> bool {
 #[derive(Debug, Clone, Default)]
 struct Bindings {
     types: Vec<(u32, ValueType)>,
+    /// Whether `types` were given with the call rather than inferred.
+    given: bool,
     own_class: Option<(u32, u32)>,
     /// The generic parent class `parent::` names in a class that extends one,
     /// and the copy that's its parent.
@@ -13846,7 +13989,7 @@ impl Monomorphizer<'_> {
         // mentions itself (a Node<T> with a Node<T> next) finds this copy.
         self.classes.push(class.clone());
         self.generics.class_instances.push((generic, arguments.clone(), class_id));
-        let bindings = Bindings {
+        let bindings = Bindings { given: false,
             types: template.type_params.iter().copied().zip(arguments).collect(),
             own_class: Some((generic, class_id)),
             parent: None,
@@ -13871,7 +14014,7 @@ impl Monomorphizer<'_> {
     /// implement it). A bound can mention the parameters, as in
     /// `T: Comparable<T>`: it's checked with them filled in.
     fn check_bounds(&mut self, owner: &str, params: &[u32], arguments: &[ValueType]) -> Result<(), String> {
-        let bindings = Bindings { types: params.iter().copied().zip(arguments.iter().copied()).collect(), own_class: None, parent: None };
+        let bindings = Bindings { given: false, types: params.iter().copied().zip(arguments.iter().copied()).collect(), own_class: None, parent: None };
         for (param, argument) in params.iter().zip(arguments) {
             let definition = self.generics.params[*param as usize].clone();
             if definition.objects_only && !matches!(argument, ValueType::Class(_)) {
@@ -14070,6 +14213,12 @@ impl Monomorphizer<'_> {
                 self.subst_expr(rest, bindings)?;
             }
             Expr::Call(_, arguments) => self.subst_exprs(arguments, bindings)?,
+            Expr::TypeArguments(types, call) => {
+                for value_type in types.iter_mut() {
+                    *value_type = self.subst(*value_type, bindings)?;
+                }
+                self.subst_expr(call, bindings)?;
+            }
             Expr::CallValue(callee, arguments) | Expr::MethodCall(callee, _, arguments) => {
                 self.subst_expr(callee, bindings)?;
                 self.subst_exprs(arguments, bindings)?;
@@ -14573,7 +14722,7 @@ fn expression_names(expression: &Expr, used: &mut std::collections::BTreeSet<Str
             each(&arguments.iter().collect::<Vec<_>>(), used, declared);
         }
         Expr::NewObject(_, arguments) | Expr::NewGeneric(_, _, arguments) | Expr::ArrayLiteral(arguments) => each(&arguments.iter().collect::<Vec<_>>(), used, declared),
-        Expr::OnApplied(_, member) => expression_names(member, used, declared),
+        Expr::OnApplied(_, member) | Expr::TypeArguments(_, member) => expression_names(member, used, declared),
         Expr::Match(subject, arms, default) => {
             expression_names(subject, used, declared);
             for arm in arms {
@@ -17876,6 +18025,31 @@ mod tests {
         for (code, message) in cases {
             let source = format!("{declared}{code}");
             let error = compile_source(&source).unwrap_err();
+            assert!(error.contains(message), "{code}: expected '{message}', got '{error}'");
+        }
+    }
+
+    #[test]
+    fn explicit_type_arguments() {
+        let declared = "function emptyList<T>(): T[] { return []; } function first<T>(T[] items, T fallback): T { return fallback; } function plain(int x): int { return x; } class C { function m(int x): int { return x; } static function s(): int { return 1; } function g<U>(U x): U { return x; } static function make<U>(): U[] { return []; } } ";
+        // Where inference can't decide, the call says; `<` stays less-than elsewhere.
+        let source = "int[] a = emptyList<int>(); print(len(emptyList<string>()), first<int>([], 7)); C c = new C(); print(c->g<double>(1.5), len(C::make<char>())); int i = 1; int n = 2; print(i < n, i < n && n > i); emptyList<map[string, int[]]>(); C none = null; print(none?->g<int>(1) ?? 0);";
+        assert!(compile_source(&format!("{declared}{source}")).is_ok(), "{:?}", compile_source(&format!("{declared}{source}")).err());
+        let cases = [
+            ("print(first<int, string>([1], 1));", "function 'first' takes 1 type argument (T), but 2 were given"),
+            ("print(first<int>([], \"z\"));", "function 'first': T is int from the type arguments, but string here"),
+            ("print(plain<int>(1));", "function 'plain' isn't generic, so it takes no type arguments"),
+            ("print(to_string<int>(1));", "function 'to_string' isn't generic"),
+            ("C c = new C(); print(c->m<int>(1));", "method 'C->m' isn't generic"),
+            ("print(C::s<int>());", "method 'C::s' isn't generic"),
+            ("C c = new C(); print(c->g<int, int>(1));", "method 'g' takes 1 type argument (U), but 2 were given"),
+            ("int[] x = emptyList<void>();", "a type argument can't be void"),
+            ("print(nothere<int>(1));", "function 'nothere' is not declared"),
+            ("string[] e = emptyList<int>();", "cannot initialize string[] variable 'e' with int[]"),
+        ];
+        for (code, message) in cases {
+            let source = format!("{declared}{code}");
+            let error = compile_source(&source).err().unwrap_or_else(|| panic!("{code}: compiled"));
             assert!(error.contains(message), "{code}: expected '{message}', got '{error}'");
         }
     }
