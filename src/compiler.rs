@@ -7217,6 +7217,14 @@ impl Emitter {
             _ => false,
         };
         for later in [false, true] {
+            // The type the result is used as decides what the arguments
+            // left open, before the values that need a type are evaluated:
+            // `int[][] groups = array_reduce(xs, fn(acc, x) => acc, [])`.
+            if later {
+                if let Some((pattern, expected)) = expected {
+                    self.unify_unbound(pattern, expected, type_params, &mut bindings, callee)?;
+                }
+            }
             for (position, argument) in packed.iter().enumerate() {
                 let (index, expression) = match argument {
                     Expr::NamedArgument(name, value) => (parameters.iter().position(|parameter| parameter.name == *name).expect("resolved above"), &**value),
@@ -7225,7 +7233,9 @@ impl Emitter {
                 if needs_type(expression) != later {
                     continue;
                 }
-                let closures = matches!(expression, Expr::Closure(_));
+                // One whose parameter types are all written needs nothing
+                // from the others.
+                let closures = matches!(expression, Expr::Closure(closure) if closure.parameters.iter().any(|parameter| parameter.value_type == ValueType::Void));
                 let pattern = parameters[index].value_type;
                 let known = self.monomorphize(|m| m.subst(pattern, &bindings))?;
                 let hint = if !self.has_params(known) {
@@ -7238,13 +7248,47 @@ impl Emitter {
                     }
                 };
                 if closures && hint.is_none() {
+                    let unknown: Vec<&str> = type_params
+                        .iter()
+                        .filter(|param| !bindings.types.iter().any(|(bound, _)| bound == *param))
+                        .map(|param| self.generics.params[*param as usize].name.as_str())
+                        .collect();
                     return Err(format!(
-                        "{callee}: the parameter types of the anonymous function for '{}' aren't known yet; write them, as in fn(int x) => ...",
-                        parameters[index].name
+                        "{callee}: can't tell the parameter types of the anonymous function for '{}', since {} {} known yet; write them, as in fn(int x) => ...",
+                        parameters[index].name,
+                        unknown.join(" and "),
+                        if unknown.len() == 1 { "isn't" } else { "aren't" }
                     ));
                 }
                 let value = self.emit_expecting(expression, hint, &scope, body)?;
-                self.unify(pattern, value.value_type, &mut bindings, callee)?;
+                // The wrong kind of value: said plainly, rather than as a
+                // type parameter left undecided.
+                let wrong_kind = match pattern {
+                    ValueType::Array(_) => !matches!(value.value_type, ValueType::Array(_) | ValueType::Null),
+                    ValueType::Map(_) => !matches!(value.value_type, ValueType::Map(_) | ValueType::Null),
+                    ValueType::Function(_) => !matches!(value.value_type, ValueType::Function(_) | ValueType::Null),
+                    _ => false,
+                };
+                if wrong_kind {
+                    return Err(format!(
+                        "{callee} expects {} for '{}', found {}",
+                        self.type_name(known),
+                        parameters[index].name,
+                        self.type_name(value.value_type)
+                    ));
+                }
+                if let Err(error) = self.unify(pattern, value.value_type, &mut bindings, callee) {
+                    // A callback of the wrong type: both types, in full.
+                    if let ValueType::Function(_) = pattern {
+                        return Err(format!(
+                            "{callee} expects a callback of type {} for '{}', found {}",
+                            self.type_name(known),
+                            parameters[index].name,
+                            self.type_name(value.value_type)
+                        ));
+                    }
+                    return Err(error);
+                }
                 let hidden = format!("#generic.argument{}", self.next_generic_argument);
                 self.next_generic_argument += 1;
                 scope.insert(hidden.clone(), Value { slot: None, ..value });
@@ -7254,11 +7298,6 @@ impl Emitter {
                     _ if parameters[index].variadic => Expr::Spread(Box::new(Expr::Variable(hidden))),
                     _ => Expr::Variable(hidden),
                 };
-            }
-        }
-        if let Some((pattern, expected)) = expected {
-            if type_params.iter().any(|param| !bindings.types.iter().any(|(bound, _)| bound == param)) {
-                self.unify(pattern, expected, &mut bindings, callee)?;
             }
         }
         let mut types = Vec::new();
@@ -7282,6 +7321,26 @@ impl Emitter {
             }
         }
         Ok((types, scope, rewritten))
+    }
+
+    /// Binds the type parameters of `type_params` that `bindings` leaves
+    /// open from matching `pattern` with `expected`, the type a call's result
+    /// is used as; parameters bound already keep their types (a result used
+    /// as a wider type isn't a conflict).
+    fn unify_unbound(&self, pattern: ValueType, expected: ValueType, type_params: &[u32], bindings: &mut Bindings, callee: &str) -> Result<(), String> {
+        if type_params.iter().all(|param| bindings.types.iter().any(|(bound, _)| bound == param)) {
+            return Ok(());
+        }
+        let mut from_expected = Bindings::default();
+        if self.unify(pattern, expected, &mut from_expected, callee).is_err() {
+            return Ok(());
+        }
+        for (param, value_type) in from_expected.types {
+            if type_params.contains(&param) && !bindings.types.iter().any(|(bound, _)| *bound == param) {
+                bindings.types.push((param, value_type));
+            }
+        }
+        Ok(())
     }
 
     /// Matches `pattern`, a parameter's type (which may mention type
@@ -18025,6 +18084,31 @@ mod tests {
         for (code, message) in cases {
             let source = format!("{declared}{code}");
             let error = compile_source(&source).unwrap_err();
+            assert!(error.contains(message), "{code}: expected '{message}', got '{error}'");
+        }
+    }
+
+    #[test]
+    fn inference_with_callbacks() {
+        let declared = "function mapAll<T, U>(T[] values, function(T): U change): U[] { U[] result = []; foreach (values as value) { array_push(result, change(value)); } return result; } function fold<T, U>(T[] values, function(U, T): U combine, U initial): U { U result = initial; foreach (values as value) { result = combine(result, value); } return result; } ";
+        // The declared type decides U before the callback and the [] are read;
+        // a callback with its types written needs nothing.
+        for source in [
+            "int[][] groups = fold([1, 2], fn(acc, x) => acc, []); print(len(groups));",
+            "int[][] groups = fold([1, 2], fn(int[][] acc, int x) => acc, []); print(len(groups));",
+            "print(fold([1, 2], fn(int a, int x) => a + x, 0));",
+            "?int[] maybe = mapAll([1, 2], fn(x) => x); print(maybe);",
+        ] {
+            let result = compile_source(&format!("{declared}{source}"));
+            assert!(result.is_ok(), "{source}: {:?}", result.err());
+        }
+        let cases = [
+            ("print(mapAll(5, fn(x) => x));", "function 'mapAll' expects T[] for 'values', found int"),
+            ("print(mapAll([1], fn(string s) => s));", "function 'mapAll' expects a callback of type function(int): U for 'change', found function(string): string"),
+            ("print(fold([1, 2], fn(a, x) => a + x, null));", "can't tell the parameter types of the anonymous function for 'combine', since U isn't known yet"),
+        ];
+        for (code, message) in cases {
+            let error = compile_source(&format!("{declared}{code}")).err().unwrap_or_else(|| panic!("{code}: compiled"));
             assert!(error.contains(message), "{code}: expected '{message}', got '{error}'");
         }
     }

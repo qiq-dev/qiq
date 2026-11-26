@@ -87,7 +87,8 @@ print(transform(["a", "bb"], fn(string s) => len(s)));
 [1, 2]
 ```
 
-<p>An anonymous function argument, like <code>fn(n) =&gt; n * 10</code> above, takes its parameter types from the other arguments, and its return type decides <code>U</code>. Arguments that need a type to have one (<code>[]</code>, <code>{}</code>, <code>null</code>) take it from the other arguments too. When an argument gives a different type for a parameter than an earlier one did, the call is an error: <code>T is int from an earlier argument, but string here</code>.</p>
+<p>An anonymous function argument, like <code>fn(n) =&gt; n * 10</code> above, takes its parameter types from the other arguments, and its return type decides <code>U</code>. An anonymous function whose parameter types are all written needs nothing from the others. Arguments that need a type to have one (<code>[]</code>, <code>{}</code>, <code>null</code>) take it from the other arguments too, or from the type the result is used as: in <code>int[][] groups = fold(values, fn(acc, x) =&gt; acc, [])</code>, the declaration says what the <code>[]</code> and <code>acc</code> are.</p>
+<p>When an argument gives a different type for a parameter than an earlier one did, the call is an error: <code>T is int from an earlier argument, but string here</code>. A callback of the wrong type shows both types (<code>expects a callback of type function(int): U for 'change', found function(string): string</code>), and so does a value of the wrong kind (<code>expects T[] for 'values', found int</code>).</p>
 
 <h2 id="giving-type-arguments">Giving type arguments</h2>
 <p>A call can give its type arguments between the name and the <code>(</code>, as <code>new</code> can. That's needed when neither the arguments nor the use of the result say what a type parameter is, as for a function with no arguments whose result is passed straight on. It works the same way for functions, methods, and static methods.</p>
