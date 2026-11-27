@@ -5764,7 +5764,7 @@ impl Emitter {
                     } else if self.tuple_elements(array.value_type).is_some() {
                         return Err(format!("a tuple's values can't be changed; make a new {} instead", self.type_name(array.value_type)));
                     } else {
-                        return Err("indexed assignment target is not an array or map".to_string());
+                        return Err(self.not_indexable("indexed assignment target", false, array.value_type));
                     }
                 }
                 StatementKind::AssignMember(object_expression, property_name, value_expression) => {
@@ -10138,7 +10138,7 @@ impl Emitter {
                         ));
                         Value { value_type: element_type, operand: loaded, slot: None }
                     } else {
-                        return Err("indexed value is not an array or map".to_string());
+                        return Err(self.not_indexable("indexed value", true, container.value_type));
                     }
                 }
             }
@@ -11993,6 +11993,50 @@ impl Emitter {
         type_name(value_type, &self.map_types, &self.array_types, &self.function_types, &self.classes, &self.generics)
     }
 
+    /// The error for `[]` on something that isn't an array, map, or tuple:
+    /// names the type found and, for an object, the methods that read it
+    /// instead (`row["name"]` on a Row is a common slip from PHP).
+    fn not_indexable(&self, what: &str, reading: bool, value_type: ValueType) -> String {
+        let name = self.type_name(value_type);
+        let article = if name.starts_with(['a', 'e', 'i', 'o', 'u', 'A', 'E', 'I', 'O', 'U']) { "an" } else { "a" };
+        let mut message = format!("{what} is {article} {name}, not an array or map");
+        let ValueType::Class(class_id) = value_type else {
+            return message;
+        };
+        message.push_str("; objects can't be indexed with []");
+        if !reading {
+            return message;
+        }
+        let mut getters = Vec::new();
+        let mut has_to_map = false;
+        let mut seen = std::collections::HashSet::new();
+        let mut pending = vec![class_id];
+        while let Some(id) = pending.pop() {
+            let Some(class) = self.classes.get(id as usize) else { continue };
+            for method in &class.methods {
+                if method.visibility != Visibility::Public || method.is_static || !seen.insert(method.name.clone()) {
+                    continue;
+                }
+                if method.name == "toMap" && method.parameters.is_empty() {
+                    has_to_map = true;
+                } else if method.name.starts_with("get") && method.name.len() > 3 && method.parameters.len() == 1 {
+                    getters.push(method.name.clone());
+                }
+            }
+            pending.extend(class.parent_class);
+        }
+        // getString first: it reads any column or field as text.
+        getters.sort_by_key(|name| name != "getString");
+        let shown: Vec<String> = getters.iter().take(3).map(|name| format!("->{name}(...)")).collect();
+        match (shown.is_empty(), has_to_map) {
+            (false, true) => message.push_str(&format!("; read a value with a method such as {}, or call ->toMap() for a map", shown.join(", "))),
+            (false, false) => message.push_str(&format!("; read a value with a method such as {}", shown.join(", "))),
+            (true, true) => message.push_str("; call ->toMap() for a map"),
+            (true, false) => {}
+        }
+        message
+    }
+
     fn array_of(&mut self, element: ValueType) -> ValueType {
         array_type_of(&mut self.array_types, element)
     }
@@ -13417,7 +13461,7 @@ impl Emitter {
                     let value = self.decode_payload(signature.value_type, &loaded_bits, body)?;
                     Ok(if borrow { value } else { self.retained(value, body) })
                 } else {
-                    Err("indexed value is not an array or map".to_string())
+                    Err(self.not_indexable("indexed value", true, array.value_type))
                 }
             }
             Expr::Member(object_expression, property_name) => {
@@ -17170,6 +17214,20 @@ mod tests {
         assert!(ir.contains("load double, ptr"));
         assert!(ir.contains("load i1, ptr"));
         assert!(ir.contains("store ptr getelementptr"));
+    }
+
+    #[test]
+    fn names_the_type_when_indexing_something_that_is_not_an_array_or_map() {
+        assert!(compile_source("int x = 1; print(x[0]);")
+            .unwrap_err()
+            .contains("indexed value is an int, not an array or map"));
+        let class = "class Record { function getString(string key): string { return key; } function toMap(): map[string, string] { return {\"a\" => \"b\"}; } } Record r = new Record();";
+        let read = compile_source(&format!("{class} string s = r[\"a\"];")).unwrap_err();
+        assert!(read.contains("indexed value is a Record, not an array or map; objects can't be indexed with []; read a value with a method such as ->getString(...), or call ->toMap() for a map"), "{read}");
+        let fallback = compile_source(&format!("{class} string s = r[\"a\"] ?? \"x\";")).unwrap_err();
+        assert!(fallback.contains("indexed value is a Record"), "{fallback}");
+        let write = compile_source(&format!("{class} r[\"a\"] = \"b\";")).unwrap_err();
+        assert!(write.ends_with("indexed assignment target is a Record, not an array or map; objects can't be indexed with []"), "{write}");
     }
 
     #[test]
